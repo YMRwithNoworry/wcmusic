@@ -28,9 +28,23 @@ class SourcesView extends StatelessWidget {
           ? const _SourceEmptyState()
           : Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      viewModel.selectedSource == null
+                          ? '当前自动使用全部音源；点选音源可指定整曲解析来源'
+                          : '整曲解析优先使用：${viewModel.selectedSource!.name}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
                 for (final source in viewModel.sources)
                   _SourceRow(
                     source: source,
+                    selected: viewModel.selectedSourceId == source.id,
+                    onSelect: () => viewModel.selectSource(source.id),
                     onDelete: source.isBuiltIn
                         ? null
                         : () => _deleteSource(context, source),
@@ -115,9 +129,16 @@ class SourcesView extends StatelessWidget {
 }
 
 class _SourceRow extends StatelessWidget {
-  const _SourceRow({required this.source, required this.onDelete});
+  const _SourceRow({
+    required this.source,
+    required this.selected,
+    required this.onSelect,
+    required this.onDelete,
+  });
 
   final SourceScript source;
+  final bool selected;
+  final VoidCallback onSelect;
   final VoidCallback? onDelete;
 
   @override
@@ -131,6 +152,25 @@ class _SourceRow extends StatelessWidget {
       ),
       child: Row(
         children: [
+          InkWell(
+            onTap: onSelect,
+            borderRadius: BorderRadius.circular(22),
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Tooltip(
+                message: selected ? '当前整曲解析音源' : '选择该音源用于整曲解析',
+                child: Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: selected
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Container(
             width: 44,
             height: 44,
@@ -177,12 +217,30 @@ class _SourceRow extends StatelessWidget {
               icon: const Icon(Icons.more_horiz),
               tooltip: '音源菜单',
               onSelected: (action) {
-                if (action == _SourceAction.delete) onDelete?.call();
+                switch (action) {
+                  case _SourceAction.select:
+                    onSelect();
+                    break;
+                  case _SourceAction.delete:
+                    onDelete?.call();
+                    break;
+                }
               },
-              itemBuilder: (context) => const [
+              itemBuilder: (context) => [
+                if (!selected)
+                  const PopupMenuItem(
+                    value: _SourceAction.select,
+                    child: Row(
+                      children: [
+                        Icon(Icons.radio_button_checked),
+                        SizedBox(width: 12),
+                        Text('设为整曲解析音源'),
+                      ],
+                    ),
+                  ),
                 PopupMenuItem(
                   value: _SourceAction.delete,
-                  child: Row(
+                  child: const Row(
                     children: [
                       Icon(Icons.delete_outline),
                       SizedBox(width: 12),
@@ -198,7 +256,7 @@ class _SourceRow extends StatelessWidget {
   }
 }
 
-enum _SourceAction { delete }
+enum _SourceAction { select, delete }
 
 class _SourceEmptyState extends StatelessWidget {
   const _SourceEmptyState();

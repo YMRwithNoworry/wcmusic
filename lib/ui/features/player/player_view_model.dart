@@ -59,6 +59,7 @@ class PlayerViewModel extends ChangeNotifier {
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
   List<SourceScript> sources = const [];
+  String? selectedSourceId;
   Track? current;
   bool isLoading = true;
   bool isPlaying = false;
@@ -97,6 +98,19 @@ class PlayerViewModel extends ChangeNotifier {
   Duration get playbackDuration =>
       duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
 
+  SourceScript? get selectedSource {
+    for (final source in sources) {
+      if (source.id == selectedSourceId) return source;
+    }
+    return null;
+  }
+
+  Set<String> get _activeSourceKeys {
+    final selected = selectedSource;
+    if (selected != null) return selected.sourceKeys.toSet();
+    return sources.expand((source) => source.sourceKeys).toSet();
+  }
+
   Future<void> load() async {
     isLoading = true;
     notifyListeners();
@@ -104,6 +118,7 @@ class PlayerViewModel extends ChangeNotifier {
       tracks = await musicRepository.loadTracks();
       playlists = await musicRepository.loadPlaylists();
       sources = await sourceRepository.loadSources();
+      selectedSourceId = await sourceRepository.loadSelectedSourceId();
       unawaited(refreshPlatformPlaylists());
       unawaited(refreshRecentTracks());
       unawaited(_upgradeEmptyPlatformFavorites());
@@ -284,9 +299,7 @@ class PlayerViewModel extends ChangeNotifier {
     var playbackTrack = track;
     if (track.source != TrackSource.local && sources.isNotEmpty) {
       try {
-        final sourceKeys = sources
-            .expand((source) => source.sourceKeys)
-            .toSet();
+        final sourceKeys = _activeSourceKeys;
         if (!sourceKeys.contains(playbackTrack.source.name)) {
           final matched = await onlineSearchService.matchTrackToSources(
             track,
@@ -567,10 +580,31 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> selectSource(String? id) async {
+    String? name;
+    if (id != null) {
+      for (final source in sources) {
+        if (source.id == id) {
+          name = source.name;
+          break;
+        }
+      }
+    }
+    try {
+      await sourceRepository.selectSource(id);
+      selectedSourceId = id;
+      message = id == null ? '已恢复自动选择所有音源' : '已选择 $name 用于整曲解析';
+    } on Object catch (error) {
+      message = '选择音源失败：$error';
+    }
+    notifyListeners();
+  }
+
   Future<void> deleteSource(String id) async {
     try {
       await sourceRepository.deleteSource(id);
       sources = await sourceRepository.loadSources();
+      selectedSourceId = await sourceRepository.loadSelectedSourceId();
       message = '已删除音源';
     } on Object catch (error) {
       message = '删除失败：$error';

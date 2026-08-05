@@ -21,12 +21,29 @@ class MemorySourceRepository implements SourceRepository {
   final String? builtInScript;
   final String builtInSourceName;
   final List<SourceScript> _sources = [];
+  String? _selectedSourceId;
   bool _loaded = false;
 
   @override
   Future<List<SourceScript>> loadSources() async {
     await _ensureLoaded();
     return List.unmodifiable(_sources);
+  }
+
+  @override
+  Future<String?> loadSelectedSourceId() async {
+    await _ensureLoaded();
+    return _selectedSourceId;
+  }
+
+  @override
+  Future<void> selectSource(String? id) async {
+    await _ensureLoaded();
+    if (id != null && !_sources.any((source) => source.id == id)) {
+      throw StateError('没有找到要选择的音源');
+    }
+    _selectedSourceId = id;
+    await _persist();
   }
 
   @override
@@ -54,6 +71,7 @@ class MemorySourceRepository implements SourceRepository {
     await _ensureLoaded();
     if (id == builtInSourceId) throw StateError('内置音源不可删除');
     _sources.removeWhere((source) => source.id == id);
+    if (_selectedSourceId == id) _selectedSourceId = null;
     await _persist();
   }
 
@@ -65,6 +83,24 @@ class MemorySourceRepository implements SourceRepository {
       throw StateError('${track.title} 缺少平台歌曲 ID');
     }
     final sourceKey = track.source.name;
+    SourceScript? selected;
+    for (final source in _sources) {
+      if (source.id == _selectedSourceId) {
+        selected = source;
+        break;
+      }
+    }
+    if (selected != null) {
+      if (!selected.sourceKeys.contains(sourceKey)) {
+        throw StateError('所选音源 ${selected.name} 不支持 $sourceKey');
+      }
+      return _nativeCore.resolveSourceUrl(
+        script: selected.rawScript,
+        source: sourceKey,
+        songId: sourceId,
+        quality: quality,
+      );
+    }
     final candidates = _sources
         .where((source) => source.sourceKeys.contains(sourceKey))
         .toList(growable: false);
@@ -79,7 +115,9 @@ class MemorySourceRepository implements SourceRepository {
 
   Future<void> _ensureLoaded() async {
     if (_loaded) return;
-    final stored = await _storage?.read() ?? const [];
+    final storage = _storage;
+    final stored = await storage?.read() ?? const [];
+    _selectedSourceId = await storage?.readSelectedSourceId();
     _sources
       ..clear()
       ..addAll(stored.map(_decode));
@@ -111,11 +149,18 @@ class MemorySourceRepository implements SourceRepository {
         ),
       );
     }
+    if (_selectedSourceId != null &&
+        !_sources.any((source) => source.id == _selectedSourceId)) {
+      _selectedSourceId = null;
+    }
     _loaded = true;
   }
 
   Future<void> _persist() async {
-    await _storage?.write(_sources.map(_encode).toList(growable: false));
+    await _storage?.write(
+      _sources.map(_encode).toList(growable: false),
+      selectedSourceId: _selectedSourceId,
+    );
   }
 
   static Map<String, dynamic> _encode(SourceScript source) => {

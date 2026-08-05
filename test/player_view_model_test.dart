@@ -268,6 +268,29 @@ void main() {
     expect(viewModel.backgroundPlayback, isFalse);
     expect(lifecycle.closeToTray, isFalse);
   });
+
+  test('selects a loaded source for full-track resolution', () async {
+    final sourceRepository = _FullTrackSourceRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.selectSource('source');
+
+    expect(viewModel.selectedSourceId, 'source');
+    expect(viewModel.selectedSource?.name, '测试音源');
+    expect(sourceRepository.selectedId, 'source');
+
+    await viewModel.selectSource(null);
+
+    expect(viewModel.selectedSourceId, isNull);
+    expect(sourceRepository.selectedId, isNull);
+  });
 }
 
 class _SynchronousTogglePlayerService extends FakePlayerService {
@@ -339,6 +362,7 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
 
 class _FullTrackSourceRepository implements SourceRepository {
   Track? resolvedTrack;
+  String? selectedId;
 
   @override
   Future<List<SourceScript>> loadSources() async => const [
@@ -352,6 +376,14 @@ class _FullTrackSourceRepository implements SourceRepository {
       rawScript: '',
     ),
   ];
+
+  @override
+  Future<String?> loadSelectedSourceId() async => selectedId;
+
+  @override
+  Future<void> selectSource(String? id) async {
+    selectedId = id;
+  }
 
   @override
   Future<String> resolveUrl(Track track, {String quality = '320k'}) async {

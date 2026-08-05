@@ -19,6 +19,18 @@ globalThis.lx.send(globalThis.lx.EVENT_NAMES.inited, {
 })
 ''';
 
+const _secondScript = r'''
+/**
+ * @name 二号测试源
+ * @description 选择测试
+ * @version 1.0.0
+ * @author WCMusic
+ */
+globalThis.lx.send(globalThis.lx.EVENT_NAMES.inited, {
+  sources: { kw: { actions: ['musicUrl'] } }
+})
+''';
+
 void main() {
   test('uses the Rust manifest as the authoritative source list', () {
     final source = const SourceScriptParser().parse(
@@ -78,6 +90,50 @@ void main() {
     },
   );
 
+  test('persists the selected source across restarts', () async {
+    final directory = await Directory.systemTemp.createTemp('wcmusic-source-');
+    addTearDown(() => directory.delete(recursive: true));
+    final storage = FileSourceStorage(directoryProvider: () async => directory);
+    final first = MemorySourceRepository(storage: storage);
+    final imported = await first.importScript(_secondScript);
+
+    await first.selectSource(imported.id);
+    final restored = MemorySourceRepository(storage: storage);
+
+    expect(await restored.loadSelectedSourceId(), imported.id);
+  });
+
+  test('resolves through the user-selected source', () async {
+    final repository = MemorySourceRepository(nativeCore: _FakeNativeCore());
+    await repository.importScript(_script);
+    final second = await repository.importScript(_secondScript);
+    await repository.selectSource(second.id);
+    const track = Track(
+      id: 'online-123',
+      title: '整曲测试',
+      artist: '测试歌手',
+      album: '测试专辑',
+      duration: Duration(minutes: 4),
+      uri: '',
+      source: TrackSource.kw,
+      sourceId: '123',
+    );
+
+    final url = await repository.resolveUrl(track);
+
+    expect(url, 'https://audio.example/second.flac');
+  });
+
+  test('clears the selection when the selected source is deleted', () async {
+    final repository = MemorySourceRepository(nativeCore: _FakeNativeCore());
+    final imported = await repository.importScript(_secondScript);
+    await repository.selectSource(imported.id);
+
+    await repository.deleteSource(imported.id);
+
+    expect(await repository.loadSelectedSourceId(), isNull);
+  });
+
   test('loads the bundled source with its internal display name', () async {
     final repository = MemorySourceRepository(
       nativeCore: _FakeNativeCore(),
@@ -108,5 +164,7 @@ class _FakeNativeCore extends NativeCoreBridge {
     required String source,
     required String songId,
     required String quality,
-  }) => 'https://audio.example/full.flac';
+  }) => script.contains('二号测试源')
+      ? 'https://audio.example/second.flac'
+      : 'https://audio.example/full.flac';
 }
