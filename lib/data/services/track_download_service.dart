@@ -8,6 +8,18 @@ import '../../domain/models/track.dart';
 typedef DownloadPathResolver =
     Future<String?> Function(Track track, String extension);
 
+const _audioExtensions = {
+  'mp3',
+  'flac',
+  'm4a',
+  'wav',
+  'ogg',
+  'aac',
+  'opus',
+  'ape',
+  'wma',
+};
+
 class TrackDownloadService {
   TrackDownloadService({
     HttpClient Function()? clientFactory,
@@ -101,7 +113,8 @@ class TrackDownloadService {
       final last = segments.last;
       final dot = last.lastIndexOf('.');
       if (dot > 0 && last.length - dot <= 5) {
-        return last.substring(dot).toLowerCase();
+        final extension = last.substring(dot).toLowerCase();
+        if (_audioExtensions.contains(extension)) return extension;
       }
     }
     return fallback;

@@ -91,4 +91,31 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+
+  test('uses the fallback extension for php-like audio urls', () async {
+    String? capturedExtension;
+    final service = TrackDownloadService(
+      pathResolver: (track, extension) async {
+        capturedExtension = extension;
+        return null;
+      },
+    );
+
+    await expectLater(
+      service.download(
+        Track(
+          id: 'php-url',
+          title: 'PHP 地址',
+          artist: '歌手',
+          album: '专辑',
+          duration: const Duration(minutes: 3),
+          uri: 'https://audio.example/wy.php?type=mp3&id=42',
+        ),
+        onProgress: (_) {},
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(capturedExtension, '.mp3');
+  });
 }
