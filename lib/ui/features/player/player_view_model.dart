@@ -148,8 +148,9 @@ class PlayerViewModel extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final shouldPlay = !isPlaying;
     await playerService.toggle();
-    isPlaying = !isPlaying;
+    isPlaying = shouldPlay;
     notifyListeners();
   }
 
