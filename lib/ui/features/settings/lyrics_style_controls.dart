@@ -56,7 +56,7 @@ class LyricsStyleControls extends StatelessWidget {
           onChanged: (value) =>
               viewModel.updateLyricsStyle(style.copyWith(locked: value)),
           title: const Text('固定歌词窗口'),
-          subtitle: const Text('关闭后为解锁状态，可拖动调整位置，位置会自动保存'),
+          subtitle: const Text('固定时可拖动左侧把手；关闭后可拖动整个歌词面板'),
         ),
         ListTile(
           title: const Text('对齐方式'),
@@ -146,10 +146,7 @@ class LyricsStyleControls extends StatelessWidget {
         ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: Text(
-            '解锁歌词窗口后，直接拖动屏幕上的歌词即可调整位置。',
-            style: TextStyle(fontSize: 12),
-          ),
+          child: Text('拖动位置会自动保存。', style: TextStyle(fontSize: 12)),
         ),
       ],
     );
