@@ -29,8 +29,7 @@ if (mobileDevice) {
   androidCard.classList.add('recommended');
   androidCard.insertAdjacentHTML('afterbegin', '<div class="recommend-label">为此设备推荐</div>');
   const primary = document.querySelector('[data-primary-cta]');
-  primary.href = 'downloads/wcmusic-android-arm64.apk';
-  primary.setAttribute('download', '');
+  primary.href = 'https://github.com/YMRwithNoworry/wcmusic-releases/releases/download/v1.0.0/wcmusic-android-arm64.apk';
   primary.querySelector('span').textContent = '下载 Android 版';
 }
 
