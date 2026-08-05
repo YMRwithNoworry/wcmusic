@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,86 +7,146 @@ import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/domain/models/track.dart';
 
 void main() {
-  test('searches online and maps playable tracks', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    final requestFuture = server.first.then((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'resultCount': 1,
-          'results': [
-            {
-              'trackId': 42,
-              'trackName': '晴天',
-              'artistName': '测试歌手',
-              'collectionName': '测试专辑',
-              'trackTimeMillis': 245000,
-              'previewUrl': 'https://audio.example/preview.m4a',
-              'artworkUrl100': 'https://image.example/100x100bb.jpg',
-            },
-          ],
-        }),
-      );
-      await request.response.close();
-      return request.uri;
+  test('searches Kuwo and maps its source id', () async {
+    final server = await _jsonServer({
+      'abslist': [
+        {
+          'DC_TARGETID': '42',
+          'SONGNAME': '<em>晴天</em>',
+          'ARTIST': '测试歌手',
+          'ALBUM': '测试专辑',
+          'DURATION': '245',
+        },
+      ],
     });
-    final service = AppleOnlineSearchService(
-      endpoint: Uri.parse('http://127.0.0.1:${server.port}/search'),
+    addTearDown(() => server.close(force: true));
+    final requestFuture = server.firstRequest;
+    final service = MultiSourceOnlineSearchService(
+      kuwoSearchEndpoint: server.endpoint,
     );
 
     final tracks = await service.search('  晴天  ', limit: 80);
     final requestUri = await requestFuture;
 
-    expect(requestUri.queryParameters['term'], '晴天');
-    expect(requestUri.queryParameters['entity'], 'song');
-    expect(requestUri.queryParameters['limit'], '50');
-    expect(tracks, hasLength(1));
+    expect(requestUri.queryParameters['all'], '晴天');
+    expect(requestUri.queryParameters['rn'], '50');
     expect(tracks.single.title, '晴天');
     expect(tracks.single.duration, const Duration(minutes: 4, seconds: 5));
-    expect(tracks.single.uri, 'https://audio.example/preview.m4a');
-    expect(tracks.single.artworkUri, 'https://image.example/300x300bb.jpg');
+    expect(tracks.single.source, TrackSource.kw);
     expect(tracks.single.sourceId, '42');
+    expect(tracks.single.uri, isEmpty);
+  });
+
+  test('searches Kugou and maps its hash', () async {
+    final server = await _jsonServer({
+      'data': {
+        'lists': [
+          {
+            'FileHash': 'HASH-9',
+            'SongName': '另一首歌',
+            'SingerName': '另一位歌手',
+            'AlbumName': '另一张专辑',
+            'Duration': 188,
+            'Image': 'https://image.example/{size}.jpg',
+          },
+        ],
+      },
+    });
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      kugouSearchEndpoint: server.endpoint,
+    );
+
+    final tracks = await service.search(
+      '另一首歌',
+      channel: OnlineSearchChannel.kugou,
+    );
+
+    expect(tracks.single.id, 'kg-HASH-9');
+    expect(tracks.single.source, TrackSource.kg);
+    expect(tracks.single.sourceId, 'HASH-9');
+    expect(tracks.single.artworkUri, 'https://image.example/400.jpg');
+  });
+
+  test('searches QQ Music and maps songmid', () async {
+    final server = await _jsonServer({
+      'data': {
+        'song': {
+          'list': [
+            {
+              'songmid': 'MID-7',
+              'songname': 'QQ 歌曲',
+              'singer': [
+                {'name': 'QQ 歌手'},
+              ],
+              'albumname': 'QQ 专辑',
+              'albummid': 'ALBUM-MID',
+              'interval': 201,
+            },
+          ],
+        },
+      },
+    });
+    addTearDown(() => server.close(force: true));
+    final requestFuture = server.firstRequest;
+    final service = MultiSourceOnlineSearchService(
+      qqSearchEndpoint: server.endpoint,
+    );
+
+    final tracks = await service.search(
+      'QQ 歌曲',
+      channel: OnlineSearchChannel.qqMusic,
+    );
+    final requestUri = await requestFuture;
+
+    expect(requestUri.queryParameters['w'], 'QQ 歌曲');
+    expect(tracks.single.source, TrackSource.tx);
+    expect(tracks.single.sourceId, 'MID-7');
+    expect(tracks.single.artist, 'QQ 歌手');
+  });
+
+  test('searches Netease and maps its song id', () async {
+    final server = await _jsonServer({
+      'result': {
+        'songs': [_neteaseSong],
+      },
+    });
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      neteaseSearchEndpoint: server.endpoint,
+    );
+
+    final tracks = await service.search(
+      '网易歌曲',
+      channel: OnlineSearchChannel.netease,
+    );
+
+    expect(tracks.single.source, TrackSource.wy);
+    expect(tracks.single.sourceId, '123');
+    expect(tracks.single.album, '网易专辑');
+    expect(tracks.single.duration, const Duration(minutes: 3));
   });
 
   test('does not send a request for an empty keyword', () async {
-    final service = AppleOnlineSearchService();
+    final service = MultiSourceOnlineSearchService();
 
     expect(await service.search('   '), isEmpty);
   });
 
-  test('matches an online track to a supported source song id', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    final requestFuture = server.first.then((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'result': {
-            'songs': [
-              {
-                'id': 123,
-                'name': '目标歌曲',
-                'artists': [
-                  {'name': '目标歌手'},
-                ],
-              },
-            ],
-          },
-        }),
-      );
-      await request.response.close();
-      return request.uri;
+  test('matches a legacy online track to Netease', () async {
+    final server = await _jsonServer({
+      'result': {
+        'songs': [_neteaseSong],
+      },
     });
-    final service = AppleOnlineSearchService(
-      neteaseSearchEndpoint: Uri.parse(
-        'http://127.0.0.1:${server.port}/search',
-      ),
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      neteaseSearchEndpoint: server.endpoint,
     );
     const track = Track(
-      id: 'apple-42',
-      title: '目标歌曲',
-      artist: '目标歌手',
+      id: 'legacy-42',
+      title: '网易歌曲',
+      artist: '网易歌手',
       album: '测试专辑',
       duration: Duration(minutes: 3),
       uri: 'https://audio.example/preview.m4a',
@@ -94,31 +155,21 @@ void main() {
     );
 
     final matched = await service.matchTrackToSources(track, const {'wy'});
-    final requestUri = await requestFuture;
 
-    expect(requestUri.queryParameters['s'], contains('目标歌曲'));
-    expect(requestUri.queryParameters['s'], contains('目标歌手'));
     expect(matched?.source, TrackSource.wy);
     expect(matched?.sourceId, '123');
-    expect(matched?.quality, '洛雪音源 · 整曲');
+    expect(matched?.quality, '网易云音乐 · 整曲');
   });
 
   test('retries directly when the configured proxy is unavailable', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.first.then((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'results': [
-            {'trackId': 7, 'trackName': '直连歌曲', 'artistName': '测试歌手'},
-          ],
-        }),
-      );
-      await request.response.close();
+    final server = await _jsonServer({
+      'abslist': [
+        {'DC_TARGETID': '7', 'SONGNAME': '直连歌曲', 'ARTIST': '测试歌手'},
+      ],
     });
-    final service = AppleOnlineSearchService(
-      endpoint: Uri.parse('http://127.0.0.1:${server.port}/search'),
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      kuwoSearchEndpoint: server.endpoint,
       proxyResolver: (_) => 'PROXY 127.0.0.1:1',
     );
 
@@ -127,237 +178,104 @@ void main() {
     expect(tracks.single.title, '直连歌曲');
   });
 
-  test('loads platform playlists from the public chart feed', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.first.then((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'feed': {
-            'results': [
-              {
-                'id': 'playlist-42',
-                'name': '今日热门',
-                'artworkUrl100': 'https://image.example/100x100SC.jpg',
-                'url': 'https://music.example/playlist-42',
-              },
-            ],
-          },
-        }),
-      );
-      await request.response.close();
+  test('loads hot Netease playlists', () async {
+    final server = await _jsonServer({
+      'playlists': [
+        {
+          'id': 42,
+          'name': '今日热门',
+          'coverImgUrl': 'https://image.example/playlist.jpg',
+        },
+      ],
     });
-    final service = AppleOnlineSearchService(
-      playlistEndpoint: Uri.parse('http://127.0.0.1:${server.port}/playlists'),
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      playlistEndpoint: server.endpoint,
     );
 
     final playlists = await service.discoverPlaylists();
 
     expect(playlists.single.name, '今日热门');
-    expect(playlists.single.platform, 'Apple Music');
-    expect(playlists.single.artworkUri, 'https://image.example/600x600SC.jpg');
-    expect(playlists.single.url, 'https://music.example/playlist-42');
+    expect(playlists.single.platform, '网易云音乐');
+    expect(playlists.single.url, 'https://music.163.com/#/playlist?id=42');
   });
 
-  test('loads playable tracks from an Apple Music playlist page', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    Uri? lookupRequest;
-    server.listen((request) async {
-      if (request.uri.path == '/playlist') {
-        request.response.headers.contentType = ContentType.html;
-        request.response.write('''
-<!doctype html><html><head>
-<script type="application/ld+json">
-${jsonEncode({
-          '@type': 'MusicPlaylist',
-          'track': [
-            {'url': 'https://music.apple.com/cn/song/first/11'},
-            {'url': 'https://music.apple.com/cn/song/second/22'},
-          ],
-        })}
-</script></head></html>
-''');
-      } else if (request.uri.path == '/lookup') {
-        lookupRequest = request.uri;
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(
-          jsonEncode({
-            'results': [
-              {
-                'trackId': 22,
-                'trackName': '第二首',
-                'artistName': '歌手二',
-                'previewUrl': 'https://audio.example/22.m4a',
-              },
-              {
-                'trackId': 11,
-                'trackName': '第一首',
-                'artistName': '歌手一',
-                'previewUrl': 'https://audio.example/11.m4a',
-              },
-            ],
-          }),
-        );
-      }
-      await request.response.close();
+  test('loads Netease playlist tracks with playable source ids', () async {
+    final server = await _jsonServer({
+      'result': {
+        'tracks': [_neteaseSong],
+      },
     });
-    final playlistUri = Uri.parse('http://127.0.0.1:${server.port}/playlist');
-    final service = AppleOnlineSearchService(
-      lookupEndpoint: Uri.parse('http://127.0.0.1:${server.port}/lookup'),
+    addTearDown(() => server.close(force: true));
+    final requestFuture = server.firstRequest;
+    final service = MultiSourceOnlineSearchService(
+      playlistDetailEndpoint: server.endpoint,
     );
-    final playlist = PlatformPlaylist(
-      id: 'playlist-42',
+    const playlist = PlatformPlaylist(
+      id: '42',
       name: '今日热门',
       artworkUri: '',
-      url: playlistUri.toString(),
-      platform: 'Apple Music',
+      url: 'https://music.163.com/#/playlist?id=42',
+      platform: '网易云音乐',
     );
 
     final tracks = await service.discoverPlaylistTracks(playlist);
+    final requestUri = await requestFuture;
 
-    expect(lookupRequest?.queryParameters['id'], '11,22');
-    expect(tracks.map((track) => track.sourceId), ['11', '22']);
-    expect(tracks.every((track) => track.uri.isNotEmpty), isTrue);
+    expect(requestUri.queryParameters['id'], '42');
+    expect(tracks.single.source, TrackSource.wy);
+    expect(tracks.single.sourceId, '123');
   });
 
-  test('loads recently released playable tracks from the chart feed', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    final recentDate = DateTime.now().toUtc().subtract(
-      const Duration(days: 10),
-    );
-    final oldDate = DateTime.now().toUtc().subtract(const Duration(days: 500));
-    Uri? lookupRequest;
-    server.listen((request) async {
-      request.response.headers.contentType = ContentType.json;
-      if (request.uri.path == '/feed') {
-        request.response.write(
-          jsonEncode({
-            'feed': {
-              'results': [
-                {'id': '42', 'releaseDate': recentDate.toIso8601String()},
-                {'id': 'old-7', 'releaseDate': oldDate.toIso8601String()},
-              ],
-            },
-          }),
-        );
-      } else if (request.uri.path == '/lookup') {
-        lookupRequest = request.uri;
-        request.response.write(
-          jsonEncode({
-            'results': [
-              {
-                'trackId': 42,
-                'trackName': '十天前的新歌',
-                'artistName': '新歌手',
-                'collectionName': '新专辑',
-                'trackTimeMillis': 180000,
-                'previewUrl': 'https://audio.example/new.m4a',
-                'artworkUrl100': 'https://image.example/100x100bb.jpg',
-                'releaseDate': recentDate.toIso8601String(),
-              },
-            ],
-          }),
-        );
-      }
-      await request.response.close();
+  test('loads recently released Netease tracks', () async {
+    final server = await _jsonServer({
+      'data': [_neteaseSong],
     });
-    final service = AppleOnlineSearchService(
-      newTracksEndpoint: Uri.parse('http://127.0.0.1:${server.port}/feed'),
-      lookupEndpoint: Uri.parse('http://127.0.0.1:${server.port}/lookup'),
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      newTracksEndpoint: server.endpoint,
     );
 
     final tracks = await service.discoverNewTracks();
 
-    expect(lookupRequest?.queryParameters['id'], '42');
-    expect(lookupRequest?.queryParameters['country'], 'CN');
-    expect(tracks, hasLength(1));
-    expect(tracks.single.title, '十天前的新歌');
-    expect(tracks.single.uri, 'https://audio.example/new.m4a');
-    expect(tracks.single.releaseDate, recentDate);
+    expect(tracks.single.title, '网易歌曲');
+    expect(tracks.single.releaseDate, isNotNull);
+    expect(tracks.single.source, TrackSource.wy);
   });
+}
 
-  test('maps Deezer search results into playable tracks', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.first.then((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'data': [
-            {
-              'id': 9,
-              'title': '另一首歌',
-              'duration': 188,
-              'preview': 'https://audio.example/deezer.mp3',
-              'artist': {'name': '另一位歌手'},
-              'album': {
-                'title': '另一张专辑',
-                'cover_big': 'https://image.example/deezer.jpg',
-              },
-            },
-          ],
-        }),
-      );
-      await request.response.close();
-    });
-    final service = AppleOnlineSearchService(
-      deezerEndpoint: Uri.parse('http://127.0.0.1:${server.port}/deezer'),
-    );
+const _neteaseSong = {
+  'id': 123,
+  'name': '网易歌曲',
+  'artists': [
+    {'name': '网易歌手'},
+  ],
+  'album': {
+    'name': '网易专辑',
+    'picUrl': 'https://image.example/netease.jpg',
+    'publishTime': 1754006400000,
+  },
+  'duration': 180000,
+};
 
-    final tracks = await service.search(
-      '另一首歌',
-      channel: OnlineSearchChannel.deezer,
-    );
-
-    expect(tracks.single.id, 'deezer-9');
-    expect(tracks.single.artist, '另一位歌手');
-    expect(tracks.single.uri, 'https://audio.example/deezer.mp3');
-    expect(tracks.single.quality, 'Deezer · 试听');
+Future<_TestServer> _jsonServer(Object body) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final firstRequest = Completer<Uri>();
+  server.listen((request) async {
+    if (!firstRequest.isCompleted) firstRequest.complete(request.uri);
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(jsonEncode(body));
+    await request.response.close();
   });
+  return _TestServer(server, firstRequest.future);
+}
 
-  test('aggregates channels and removes duplicate songs', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.listen((request) async {
-      request.response.headers.contentType = ContentType.json;
-      if (request.uri.path == '/apple') {
-        request.response.write(
-          jsonEncode({
-            'results': [
-              {'trackId': 1, 'trackName': '同一首歌', 'artistName': '同一位歌手'},
-            ],
-          }),
-        );
-      } else {
-        request.response.write(
-          jsonEncode({
-            'data': [
-              {
-                'id': 2,
-                'title': '同一首歌',
-                'artist': {'name': '同一位歌手'},
-                'album': {'title': '聚合专辑'},
-              },
-            ],
-          }),
-        );
-      }
-      await request.response.close();
-    });
-    final service = AppleOnlineSearchService(
-      endpoint: Uri.parse('http://127.0.0.1:${server.port}/apple'),
-      deezerEndpoint: Uri.parse('http://127.0.0.1:${server.port}/deezer'),
-    );
+class _TestServer {
+  const _TestServer(this.server, this.firstRequest);
 
-    final tracks = await service.search(
-      '同一首歌',
-      channel: OnlineSearchChannel.aggregate,
-    );
+  final HttpServer server;
+  final Future<Uri> firstRequest;
+  Uri get endpoint => Uri.parse('http://127.0.0.1:${server.port}/api');
 
-    expect(tracks, hasLength(1));
-    expect(tracks.single.title, '同一首歌');
-  });
+  Future<void> close({required bool force}) => server.close(force: force);
 }

@@ -57,7 +57,7 @@ void main() {
             name: ['今日热门', '华语新声', '轻松周末', '流行精选'][index],
             artworkUri: '',
             url: 'https://music.example/$index',
-            platform: 'Apple Music',
+            platform: '网易云音乐',
           ),
         ),
         List.generate(

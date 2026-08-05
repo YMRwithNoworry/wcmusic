@@ -121,7 +121,7 @@ class FakeOnlineSearchService implements OnlineSearchService {
   Future<List<Track>> search(
     String query, {
     int limit = 30,
-    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+    OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   }) async {
     lastChannel = channel;
     return results;

@@ -17,7 +17,8 @@ class PlayerViewModel extends ChangeNotifier {
     OnlineSearchService? onlineSearchService,
     this.windowLifecycleService,
     AudioPlayerService? playerService,
-  }) : onlineSearchService = onlineSearchService ?? AppleOnlineSearchService(),
+  }) : onlineSearchService =
+           onlineSearchService ?? MultiSourceOnlineSearchService(),
        playerService = playerService ?? PlayerService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
@@ -59,7 +60,7 @@ class PlayerViewModel extends ChangeNotifier {
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
   String onlineQuery = '';
-  OnlineSearchChannel onlineSearchChannel = OnlineSearchChannel.appleMusic;
+  OnlineSearchChannel onlineSearchChannel = OnlineSearchChannel.kuwo;
   List<Track> onlineResults = const [];
   List<PlatformPlaylist> platformPlaylists = const [];
   List<PlatformPlaylist> _platformPlaylistCatalog = const [];
@@ -181,7 +182,7 @@ class PlayerViewModel extends ChangeNotifier {
         name: saved.name,
         artworkUri: saved.artworkUri ?? '',
         url: url,
-        platform: saved.platform ?? 'Apple Music',
+        platform: saved.platform ?? '网易云音乐',
       );
       loadingPlatformPlaylistIds.add(saved.id);
       notifyListeners();

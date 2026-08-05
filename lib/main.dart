@@ -28,7 +28,7 @@ Future<void> main() async {
           builtInScript: builtInSourceScript,
           builtInSourceName: '泡椒内部测试音源',
         ),
-        onlineSearchService: AppleOnlineSearchService(),
+        onlineSearchService: MultiSourceOnlineSearchService(),
         windowLifecycleService: windowService,
       )..load(),
       child: const WcMusicApp(),

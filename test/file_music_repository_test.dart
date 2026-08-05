@@ -67,12 +67,12 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final repository = FileMusicRepository(directoryProvider: () async => root);
     const favorite = Playlist(
-      id: 'platform-Apple Music-42',
+      id: 'platform-网易云音乐-42',
       name: '今日热门',
       tracks: [],
       artworkUri: 'https://image.example/playlist.jpg',
       externalUrl: 'https://music.example/playlist/42',
-      platform: 'Apple Music',
+      platform: '网易云音乐',
     );
 
     await repository.savePlaylist(favorite);

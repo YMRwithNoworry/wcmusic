@@ -144,7 +144,7 @@ void main() {
       name: '今日热门',
       artworkUri: 'https://image.example/playlist.jpg',
       url: 'https://music.example/playlist/42',
-      platform: 'Apple Music',
+      platform: '网易云音乐',
     );
     const playableTrack = Track(
       id: 'apple-7',

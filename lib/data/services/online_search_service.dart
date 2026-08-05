@@ -1,17 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:html/parser.dart' as html_parser;
+import 'package:json5/json5.dart';
 
 import '../../domain/models/track.dart';
 
-enum OnlineSearchChannel { appleMusic, deezer, aggregate }
+enum OnlineSearchChannel { kuwo, kugou, qqMusic, netease }
 
 extension OnlineSearchChannelLabel on OnlineSearchChannel {
   String get label => switch (this) {
-    OnlineSearchChannel.appleMusic => 'Apple Music',
-    OnlineSearchChannel.deezer => 'Deezer',
-    OnlineSearchChannel.aggregate => '聚合搜索',
+    OnlineSearchChannel.kuwo => '酷我音乐',
+    OnlineSearchChannel.kugou => '酷狗音乐',
+    OnlineSearchChannel.qqMusic => 'QQ 音乐',
+    OnlineSearchChannel.netease => '网易云音乐',
   };
 }
 
@@ -19,7 +20,7 @@ abstract interface class OnlineSearchService {
   Future<List<Track>> search(
     String query, {
     int limit = 30,
-    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+    OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   });
   Future<List<PlatformPlaylist>> discoverPlaylists();
   Future<List<Track>> discoverNewTracks();
@@ -27,16 +28,17 @@ abstract interface class OnlineSearchService {
   Future<Track?> matchTrackToSources(Track track, Set<String> sourceKeys);
 }
 
-class AppleOnlineSearchService implements OnlineSearchService {
-  AppleOnlineSearchService({
+class MultiSourceOnlineSearchService implements OnlineSearchService {
+  MultiSourceOnlineSearchService({
     HttpClient Function()? clientFactory,
     String Function(Uri)? proxyResolver,
-    Uri? endpoint,
-    Uri? deezerEndpoint,
-    Uri? playlistEndpoint,
-    Uri? newTracksEndpoint,
-    Uri? lookupEndpoint,
+    Uri? kuwoSearchEndpoint,
+    Uri? kugouSearchEndpoint,
+    Uri? qqSearchEndpoint,
     Uri? neteaseSearchEndpoint,
+    Uri? playlistEndpoint,
+    Uri? playlistDetailEndpoint,
+    Uri? newTracksEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
@@ -44,138 +46,263 @@ class AppleOnlineSearchService implements OnlineSearchService {
              uri,
              environment: Platform.environment,
            )),
-       _endpoint = endpoint ?? Uri.https('itunes.apple.com', '/search'),
-       _deezerEndpoint =
-           deezerEndpoint ?? Uri.https('api.deezer.com', '/search'),
-       _playlistEndpoint =
-           playlistEndpoint ??
-           Uri.https(
-             'rss.marketingtools.apple.com',
-             '/api/v2/cn/music/most-played/20/playlists.json',
-           ),
-       _newTracksEndpoint =
-           newTracksEndpoint ??
-           Uri.https(
-             'rss.marketingtools.apple.com',
-             '/api/v2/cn/music/most-played/100/songs.json',
-           ),
-       _lookupEndpoint =
-           lookupEndpoint ?? Uri.https('itunes.apple.com', '/lookup'),
+       _kuwoSearchEndpoint =
+           kuwoSearchEndpoint ?? Uri.https('search.kuwo.cn', '/r.s'),
+       _kugouSearchEndpoint =
+           kugouSearchEndpoint ??
+           Uri.https('songsearch.kugou.com', '/song_search_v2'),
+       _qqSearchEndpoint =
+           qqSearchEndpoint ??
+           Uri.https('c.y.qq.com', '/soso/fcgi-bin/client_search_cp'),
        _neteaseSearchEndpoint =
            neteaseSearchEndpoint ??
-           Uri.https('music.163.com', '/api/search/get');
+           Uri.https('music.163.com', '/api/search/get'),
+       _playlistEndpoint =
+           playlistEndpoint ?? Uri.https('music.163.com', '/api/playlist/list'),
+       _playlistDetailEndpoint =
+           playlistDetailEndpoint ??
+           Uri.https('music.163.com', '/api/playlist/detail'),
+       _newTracksEndpoint =
+           newTracksEndpoint ??
+           Uri.https('music.163.com', '/api/discovery/new/songs');
 
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
-  final Uri _endpoint;
-  final Uri _deezerEndpoint;
-  final Uri _playlistEndpoint;
-  final Uri _newTracksEndpoint;
-  final Uri _lookupEndpoint;
+  final Uri _kuwoSearchEndpoint;
+  final Uri _kugouSearchEndpoint;
+  final Uri _qqSearchEndpoint;
   final Uri _neteaseSearchEndpoint;
+  final Uri _playlistEndpoint;
+  final Uri _playlistDetailEndpoint;
+  final Uri _newTracksEndpoint;
 
   @override
   Future<List<Track>> search(
     String query, {
     int limit = 30,
-    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+    OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   }) async {
     final keyword = query.trim();
     if (keyword.isEmpty) return const [];
-
     return switch (channel) {
-      OnlineSearchChannel.appleMusic => _searchApple(keyword, limit),
-      OnlineSearchChannel.deezer => _searchDeezer(keyword, limit),
-      OnlineSearchChannel.aggregate => _searchAggregate(keyword, limit),
+      OnlineSearchChannel.kuwo => _searchKuwo(keyword, limit),
+      OnlineSearchChannel.kugou => _searchKugou(keyword, limit),
+      OnlineSearchChannel.qqMusic => _searchQq(keyword, limit),
+      OnlineSearchChannel.netease => _searchNetease(keyword, limit),
     };
   }
 
-  Future<List<Track>> _searchApple(String keyword, int limit) async {
-    final uri = _endpoint.replace(
+  Future<List<Track>> _searchKuwo(String keyword, int limit) async {
+    final uri = _kuwoSearchEndpoint.replace(
       queryParameters: {
-        ..._endpoint.queryParameters,
-        'term': keyword,
-        'media': 'music',
-        'entity': 'song',
-        'country': 'CN',
-        'limit': limit.clamp(1, 50).toString(),
+        ..._kuwoSearchEndpoint.queryParameters,
+        'all': keyword,
+        'ft': 'music',
+        'itemset': 'web_2013',
+        'client': 'kt',
+        'pn': '0',
+        'rn': limit.clamp(1, 50).toString(),
+        'rformat': 'json',
+        'encoding': 'utf8',
+      },
+    );
+    final decoded = await _getJson(uri, relaxed: true);
+    if (decoded is! Map || decoded['abslist'] is! List) {
+      throw const FormatException('酷我音乐返回了无法识别的数据');
+    }
+    final tracks = <Track>[];
+    for (final value in decoded['abslist'] as List) {
+      if (value is! Map) continue;
+      final musicRid = _text(value['MUSICRID'] ?? value['musicrid']);
+      final sourceId =
+          _text(value['DC_TARGETID']) ??
+          musicRid?.replaceFirst(RegExp(r'^MUSIC_'), '');
+      final title = _cleanHtml(_text(value['SONGNAME'] ?? value['NAME']));
+      final artist = _cleanHtml(_text(value['ARTIST']));
+      if (sourceId == null || title == null || artist == null) continue;
+      final durationSeconds = _integer(value['DURATION']);
+      tracks.add(
+        Track(
+          id: 'kw-$sourceId',
+          title: title,
+          artist: artist,
+          album: _cleanHtml(_text(value['ALBUM'])) ?? '单曲',
+          duration: Duration(seconds: durationSeconds ?? 0),
+          uri: '',
+          artworkUri: _secureUrl(
+            _text(value['web_albumpic_short'] ?? value['hts_MVPIC']),
+          ),
+          source: TrackSource.kw,
+          sourceId: sourceId,
+          quality: '酷我音乐 · 整曲',
+        ),
+      );
+    }
+    return tracks;
+  }
+
+  Future<List<Track>> _searchKugou(String keyword, int limit) async {
+    final uri = _kugouSearchEndpoint.replace(
+      queryParameters: {
+        ..._kugouSearchEndpoint.queryParameters,
+        'keyword': keyword,
+        'page': '1',
+        'pagesize': limit.clamp(1, 50).toString(),
+        'platform': 'WebFilter',
       },
     );
     final decoded = await _getJson(uri);
-    if (decoded is! Map<String, dynamic> || decoded['results'] is! List) {
-      throw const FormatException('在线搜索返回了无法识别的数据');
+    final data = decoded is Map ? decoded['data'] : null;
+    final values = data is Map ? data['lists'] : null;
+    if (values is! List) {
+      throw const FormatException('酷狗音乐返回了无法识别的数据');
     }
-    return _parseAppleResults(decoded['results'] as List);
+    final tracks = <Track>[];
+    for (final value in values) {
+      if (value is! Map) continue;
+      final sourceId = _text(value['FileHash'] ?? value['EMixSongID']);
+      final title = _cleanHtml(_text(value['SongName']));
+      final artist = _cleanHtml(_text(value['SingerName']));
+      if (sourceId == null || title == null || artist == null) continue;
+      tracks.add(
+        Track(
+          id: 'kg-$sourceId',
+          title: title,
+          artist: artist,
+          album: _cleanHtml(_text(value['AlbumName'])) ?? '单曲',
+          duration: Duration(seconds: _integer(value['Duration']) ?? 0),
+          uri: '',
+          artworkUri: _secureUrl(
+            _text(value['Image'])?.replaceFirst('{size}', '400'),
+          ),
+          source: TrackSource.kg,
+          sourceId: sourceId,
+          quality: '酷狗音乐 · 整曲',
+        ),
+      );
+    }
+    return tracks;
   }
 
-  Future<List<Track>> _searchDeezer(String keyword, int limit) async {
-    final uri = _deezerEndpoint.replace(
+  Future<List<Track>> _searchQq(String keyword, int limit) async {
+    final uri = _qqSearchEndpoint.replace(
       queryParameters: {
-        ..._deezerEndpoint.queryParameters,
-        'q': keyword,
-        'limit': limit.clamp(1, 50).toString(),
+        ..._qqSearchEndpoint.queryParameters,
+        'w': keyword,
+        'p': '1',
+        'n': limit.clamp(1, 50).toString(),
+        'format': 'json',
+        'new_json': '1',
       },
     );
     final decoded = await _getJson(uri);
-    if (decoded is! Map<String, dynamic> || decoded['data'] is! List) {
-      throw const FormatException('Deezer 返回了无法识别的数据');
+    final data = decoded is Map ? decoded['data'] : null;
+    final song = data is Map ? data['song'] : null;
+    final values = song is Map ? song['list'] : null;
+    if (values is! List) {
+      throw const FormatException('QQ 音乐返回了无法识别的数据');
     }
-    return _parseDeezerResults(decoded['data'] as List);
+    final tracks = <Track>[];
+    for (final value in values) {
+      if (value is! Map) continue;
+      final sourceId = _text(value['songmid'] ?? value['mid']);
+      final title = _text(value['songname'] ?? value['name'] ?? value['title']);
+      final singers = value['singer'];
+      final artist = singers is List
+          ? singers
+                .whereType<Map>()
+                .map((item) => _text(item['name']))
+                .whereType<String>()
+                .join(' / ')
+          : null;
+      if (sourceId == null ||
+          title == null ||
+          artist == null ||
+          artist.isEmpty) {
+        continue;
+      }
+      final album = value['album'];
+      final albumName = album is Map
+          ? _text(album['name'] ?? album['title'])
+          : _text(value['albumname']);
+      final albumMid = album is Map
+          ? _text(album['mid'])
+          : _text(value['albummid']);
+      tracks.add(
+        Track(
+          id: 'tx-$sourceId',
+          title: title,
+          artist: artist,
+          album: albumName ?? '单曲',
+          duration: Duration(
+            seconds: _integer(value['interval'] ?? value['duration']) ?? 0,
+          ),
+          uri: '',
+          artworkUri: albumMid == null
+              ? null
+              : 'https://y.gtimg.cn/music/photo_new/T002R300x300M000$albumMid.jpg',
+          source: TrackSource.tx,
+          sourceId: sourceId,
+          quality: 'QQ 音乐 · 整曲',
+        ),
+      );
+    }
+    return tracks;
   }
 
-  Future<List<Track>> _searchAggregate(String keyword, int limit) async {
-    Object? appleError;
-    Object? deezerError;
-    final results = await Future.wait([
-      _searchApple(keyword, limit).onError((error, _) {
-        appleError = error;
-        return const [];
-      }),
-      _searchDeezer(keyword, limit).onError((error, _) {
-        deezerError = error;
-        return const [];
-      }),
-    ]);
-    if (appleError != null && deezerError != null) {
-      throw StateError('所有搜索渠道均不可用');
+  Future<List<Track>> _searchNetease(String keyword, int limit) async {
+    final uri = _neteaseSearchEndpoint.replace(
+      queryParameters: {
+        ..._neteaseSearchEndpoint.queryParameters,
+        's': keyword,
+        'type': '1',
+        'limit': limit.clamp(1, 50).toString(),
+        'offset': '0',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final result = decoded is Map ? decoded['result'] : null;
+    final values = result is Map ? result['songs'] : null;
+    if (values is! List) {
+      throw const FormatException('网易云音乐返回了无法识别的数据');
     }
-    final unique = <String, Track>{};
-    for (final track in results.expand((items) => items)) {
-      final key = '${track.title}\u0000${track.artist}'.toLowerCase();
-      unique.putIfAbsent(key, () => track);
-    }
-    return unique.values.take(limit).toList(growable: false);
+    return values
+        .whereType<Map>()
+        .map(_parseNeteaseTrack)
+        .whereType<Track>()
+        .toList(growable: false);
   }
 
   @override
   Future<List<PlatformPlaylist>> discoverPlaylists() async {
-    final decoded = await _getJson(_playlistEndpoint);
-    if (decoded is! Map<String, dynamic> || decoded['feed'] is! Map) {
-      throw const FormatException('平台歌单返回了无法识别的数据');
-    }
-    final feed = Map<String, dynamic>.from(decoded['feed'] as Map);
-    final results = feed['results'];
-    if (results is! List) {
-      throw const FormatException('平台歌单缺少结果列表');
+    final uri = _playlistEndpoint.replace(
+      queryParameters: {
+        ..._playlistEndpoint.queryParameters,
+        'cat': '全部',
+        'order': 'hot',
+        'limit': '20',
+        'offset': '0',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final values = decoded is Map ? decoded['playlists'] : null;
+    if (values is! List) {
+      throw const FormatException('网易云热门歌单返回了无法识别的数据');
     }
     final playlists = <PlatformPlaylist>[];
-    for (final value in results) {
+    for (final value in values) {
       if (value is! Map) continue;
-      final item = Map<String, dynamic>.from(value);
-      final id = _text(item['id']);
-      final name = _text(item['name']);
-      final artwork = _text(item['artworkUrl100']);
-      final url = _text(item['url']);
-      if (id == null || name == null || artwork == null || url == null) {
-        continue;
-      }
+      final id = value['id']?.toString();
+      final name = _text(value['name']);
+      final artwork = _text(value['coverImgUrl'] ?? value['picUrl']);
+      if (id == null || name == null || artwork == null) continue;
       playlists.add(
         PlatformPlaylist(
           id: id,
           name: name,
-          artworkUri: artwork.replaceFirst('100x100', '600x600'),
-          url: url,
-          platform: 'Apple Music',
+          artworkUri: _secureUrl(artwork)!,
+          url: 'https://music.163.com/#/playlist?id=$id',
+          platform: '网易云音乐',
         ),
       );
     }
@@ -183,67 +310,41 @@ class AppleOnlineSearchService implements OnlineSearchService {
   }
 
   @override
-  Future<List<Track>> discoverNewTracks() async {
-    final decoded = await _getJson(_newTracksEndpoint);
-    if (decoded is! Map<String, dynamic> || decoded['feed'] is! Map) {
-      throw const FormatException('新曲推荐返回了无法识别的数据');
+  Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async {
+    final uri = _playlistDetailEndpoint.replace(
+      queryParameters: {
+        ..._playlistDetailEndpoint.queryParameters,
+        'id': playlist.id,
+      },
+    );
+    final decoded = await _getJson(uri);
+    final result = decoded is Map ? decoded['result'] : null;
+    final values = result is Map ? result['tracks'] : null;
+    if (values is! List) {
+      throw const FormatException('网易云歌单缺少曲目数据');
     }
-    final feed = Map<String, dynamic>.from(decoded['feed'] as Map);
-    final results = feed['results'];
-    if (results is! List) {
-      throw const FormatException('新曲推荐缺少结果列表');
-    }
-
-    final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 365));
-    final ids = <String>[];
-    for (final value in results) {
-      if (value is! Map) continue;
-      final item = Map<String, dynamic>.from(value);
-      final id = _text(item['id']);
-      final releaseDate = DateTime.tryParse(_text(item['releaseDate']) ?? '');
-      if (id != null &&
-          releaseDate != null &&
-          !releaseDate.toUtc().isBefore(cutoff)) {
-        ids.add(id);
-      }
-      if (ids.length == 50) break;
-    }
-    if (ids.isEmpty) return const [];
-
-    return _lookupAppleTracks(ids);
+    return values
+        .whereType<Map>()
+        .map(_parseNeteaseTrack)
+        .whereType<Track>()
+        .toList(growable: false);
   }
 
   @override
-  Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async {
-    final document = html_parser.parse(await _getText(Uri.parse(playlist.url)));
-    List<dynamic>? entries;
-    for (final script in document.querySelectorAll(
-      'script[type="application/ld+json"]',
-    )) {
-      try {
-        final decoded = jsonDecode(script.text);
-        if (decoded is Map && decoded['@type'] == 'MusicPlaylist') {
-          final trackValue = decoded['track'];
-          if (trackValue is List) entries = trackValue;
-        }
-      } on FormatException {
-        continue;
-      }
+  Future<List<Track>> discoverNewTracks() async {
+    final uri = _newTracksEndpoint.replace(
+      queryParameters: {..._newTracksEndpoint.queryParameters, 'areaId': '0'},
+    );
+    final decoded = await _getJson(uri);
+    final values = decoded is Map ? decoded['data'] : null;
+    if (values is! List) {
+      throw const FormatException('网易云新曲返回了无法识别的数据');
     }
-    if (entries == null) {
-      throw const FormatException('平台歌单页面缺少曲目数据');
-    }
-    final ids = <String>[];
-    for (final value in entries) {
-      if (value is! Map) continue;
-      final url = _text(value['url']);
-      final segments = url == null
-          ? const <String>[]
-          : Uri.parse(url).pathSegments;
-      if (segments.isNotEmpty) ids.add(segments.last);
-    }
-    if (ids.isEmpty) throw const FormatException('平台歌单没有可识别的曲目');
-    return _lookupAppleTracks(ids);
+    return values
+        .whereType<Map>()
+        .map(_parseNeteaseTrack)
+        .whereType<Track>()
+        .toList(growable: false);
   }
 
   @override
@@ -252,36 +353,14 @@ class AppleOnlineSearchService implements OnlineSearchService {
     Set<String> sourceKeys,
   ) async {
     if (!sourceKeys.contains('wy')) return null;
-    final uri = _neteaseSearchEndpoint.replace(
-      queryParameters: {
-        ..._neteaseSearchEndpoint.queryParameters,
-        's': '${track.title} ${track.artist}',
-        'type': '1',
-        'limit': '10',
-        'offset': '0',
-      },
-    );
-    final decoded = await _getJson(uri);
-    if (decoded is! Map || decoded['result'] is! Map) return null;
-    final songs = (decoded['result'] as Map)['songs'];
-    if (songs is! List) return null;
+    final matches = await _searchNetease('${track.title} ${track.artist}', 10);
     final expectedTitle = _normalized(track.title);
     final expectedArtist = _normalized(track.artist);
     Track? best;
     var bestScore = 0;
-    for (final value in songs) {
-      if (value is! Map) continue;
-      final id = value['id']?.toString();
-      final title = _text(value['name']);
-      final artistsValue = value['artists'];
-      if (id == null || title == null || artistsValue is! List) continue;
-      final artists = artistsValue
-          .whereType<Map>()
-          .map((artist) => _text(artist['name']))
-          .whereType<String>()
-          .join(' / ');
-      final candidateTitle = _normalized(title);
-      final candidateArtist = _normalized(artists);
+    for (final match in matches) {
+      final candidateTitle = _normalized(match.title);
+      final candidateArtist = _normalized(match.artist);
       var score = 0;
       if (candidateTitle == expectedTitle) {
         score += 4;
@@ -298,83 +377,69 @@ class AppleOnlineSearchService implements OnlineSearchService {
         bestScore = score;
         best = track.copyWith(
           source: TrackSource.wy,
-          sourceId: id,
-          quality: '洛雪音源 · 整曲',
+          sourceId: match.sourceId,
+          quality: '网易云音乐 · 整曲',
         );
       }
     }
     return bestScore >= 4 ? best : null;
   }
 
-  Future<List<Track>> _lookupAppleTracks(List<String> ids) async {
-    final tracksById = <String, Track>{};
-    for (var start = 0; start < ids.length; start += 50) {
-      final end = (start + 50).clamp(0, ids.length);
-      final uri = _lookupEndpoint.replace(
-        queryParameters: {
-          ..._lookupEndpoint.queryParameters,
-          'id': ids.sublist(start, end).join(','),
-          'country': 'CN',
-        },
-      );
-      final lookup = await _getJson(uri);
-      if (lookup is! Map<String, dynamic> || lookup['results'] is! List) {
-        throw const FormatException('歌曲试听信息返回了无法识别的数据');
-      }
-      for (final track in _parseAppleResults(lookup['results'] as List)) {
-        if (track.uri.isNotEmpty && track.sourceId != null) {
-          tracksById[track.sourceId!] = track;
-        }
-      }
+  Track? _parseNeteaseTrack(Map<dynamic, dynamic> value) {
+    final id = value['id']?.toString();
+    final title = _text(value['name']);
+    final artistsValue = value['artists'] ?? value['ar'];
+    final artist = artistsValue is List
+        ? artistsValue
+              .whereType<Map>()
+              .map((item) => _text(item['name']))
+              .whereType<String>()
+              .join(' / ')
+        : null;
+    if (id == null || title == null || artist == null || artist.isEmpty) {
+      return null;
     }
-    return ids
-        .map((id) => tracksById[id])
-        .whereType<Track>()
-        .toList(growable: false);
+    final albumValue = value['album'] ?? value['al'];
+    final album = albumValue is Map ? _text(albumValue['name']) : null;
+    final artwork = albumValue is Map
+        ? _text(albumValue['picUrl'] ?? albumValue['blurPicUrl'])
+        : null;
+    final durationMs = _integer(value['duration'] ?? value['dt']);
+    final publishTime = albumValue is Map
+        ? _integer(albumValue['publishTime'])
+        : null;
+    return Track(
+      id: 'wy-$id',
+      title: title,
+      artist: artist,
+      album: album ?? '单曲',
+      duration: Duration(milliseconds: durationMs ?? 0),
+      uri: '',
+      artworkUri: _secureUrl(artwork),
+      source: TrackSource.wy,
+      sourceId: id,
+      quality: '网易云音乐 · 整曲',
+      releaseDate: publishTime == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(publishTime, isUtc: true),
+    );
   }
 
-  Future<dynamic> _getJson(Uri uri) async {
+  Future<dynamic> _getJson(Uri uri, {bool relaxed = false}) async {
     final proxy = _proxyResolver(uri);
     try {
-      return await _getJsonOnce(uri, proxy);
+      return await _getJsonOnce(uri, proxy, relaxed: relaxed);
     } on Object {
       if (proxy == 'DIRECT') rethrow;
-      return _getJsonOnce(uri, 'DIRECT');
+      return _getJsonOnce(uri, 'DIRECT', relaxed: relaxed);
     }
   }
 
-  Future<String> _getText(Uri uri) async {
-    final proxy = _proxyResolver(uri);
-    try {
-      return await _getTextOnce(uri, proxy);
-    } on Object {
-      if (proxy == 'DIRECT') rethrow;
-      return _getTextOnce(uri, 'DIRECT');
-    }
-  }
-
-  Future<String> _getTextOnce(Uri uri, String proxy) async {
-    final client = _clientFactory()
-      ..connectionTimeout = const Duration(seconds: 10)
-      ..findProxy = (_) => proxy;
-    try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'text/html');
-      request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
-      final response = await request.close().timeout(
-        const Duration(seconds: 15),
-      );
-      if (response.statusCode != HttpStatus.ok) {
-        await response.drain<void>();
-        throw HttpException('在线服务返回 ${response.statusCode}', uri: uri);
-      }
-      return await utf8.decoder.bind(response).join();
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  Future<dynamic> _getJsonOnce(Uri uri, String proxy) async {
+  Future<dynamic> _getJsonOnce(
+    Uri uri,
+    String proxy, {
+    required bool relaxed,
+  }) async {
     final client = _clientFactory()
       ..connectionTimeout = const Duration(seconds: 10)
       ..findProxy = (_) => proxy;
@@ -382,6 +447,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
+      request.headers.set(HttpHeaders.refererHeader, _refererFor(uri));
       final response = await request.close().timeout(
         const Duration(seconds: 15),
       );
@@ -389,76 +455,19 @@ class AppleOnlineSearchService implements OnlineSearchService {
         await response.drain<void>();
         throw HttpException('在线服务返回 ${response.statusCode}', uri: uri);
       }
-      return jsonDecode(await utf8.decoder.bind(response).join());
+      final body = await utf8.decoder.bind(response).join();
+      final normalized = body.replaceFirst('\ufeff', '');
+      return relaxed ? json5Decode(normalized) : jsonDecode(normalized);
     } finally {
       client.close(force: true);
     }
   }
 
-  List<Track> _parseAppleResults(List<dynamic> results) {
-    final tracks = <Track>[];
-    for (final value in results) {
-      if (value is! Map) continue;
-      final item = Map<String, dynamic>.from(value);
-      final id = item['trackId']?.toString();
-      final title = _text(item['trackName']);
-      final artist = _text(item['artistName']);
-      if (id == null || title == null || artist == null) continue;
-      final durationMs = item['trackTimeMillis'];
-      final releaseDate = DateTime.tryParse(_text(item['releaseDate']) ?? '');
-      tracks.add(
-        Track(
-          id: 'apple-$id',
-          title: title,
-          artist: artist,
-          album: _text(item['collectionName']) ?? '单曲',
-          duration: Duration(
-            milliseconds: durationMs is num ? durationMs.round() : 0,
-          ),
-          uri: _text(item['previewUrl']) ?? '',
-          artworkUri: _largerArtwork(_text(item['artworkUrl100'])),
-          source: TrackSource.custom,
-          sourceId: id,
-          quality: 'Apple Music · 试听',
-          releaseDate: releaseDate,
-        ),
-      );
-    }
-    return tracks;
-  }
-
-  List<Track> _parseDeezerResults(List<dynamic> results) {
-    final tracks = <Track>[];
-    for (final value in results) {
-      if (value is! Map) continue;
-      final item = Map<String, dynamic>.from(value);
-      final artistValue = item['artist'];
-      final albumValue = item['album'];
-      final artist = artistValue is Map ? _text(artistValue['name']) : null;
-      final album = albumValue is Map ? _text(albumValue['title']) : null;
-      final artwork = albumValue is Map
-          ? _text(albumValue['cover_big'] ?? albumValue['cover_medium'])
-          : null;
-      final id = item['id']?.toString();
-      final title = _text(item['title']);
-      if (id == null || title == null || artist == null) continue;
-      final seconds = item['duration'];
-      tracks.add(
-        Track(
-          id: 'deezer-$id',
-          title: title,
-          artist: artist,
-          album: album ?? '单曲',
-          duration: Duration(seconds: seconds is num ? seconds.round() : 0),
-          uri: _text(item['preview']) ?? '',
-          artworkUri: artwork,
-          source: TrackSource.custom,
-          sourceId: id,
-          quality: 'Deezer · 试听',
-        ),
-      );
-    }
-    return tracks;
+  String _refererFor(Uri uri) {
+    if (uri.host.contains('qq.com')) return 'https://y.qq.com/';
+    if (uri.host.contains('kuwo')) return 'https://www.kuwo.cn/';
+    if (uri.host.contains('kugou')) return 'https://www.kugou.com/';
+    return 'https://music.163.com/';
   }
 
   String? _text(Object? value) {
@@ -467,8 +476,23 @@ class AppleOnlineSearchService implements OnlineSearchService {
     return text.isEmpty ? null : text;
   }
 
-  String? _largerArtwork(String? value) =>
-      value?.replaceFirst('100x100bb', '300x300bb');
+  int? _integer(Object? value) {
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  String? _cleanHtml(String? value) => value
+      ?.replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .trim();
+
+  String? _secureUrl(String? value) =>
+      value?.replaceFirst('http://', 'https://');
 
   String _normalized(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'[\s\-_.,·•()\[\]{}]'), '');

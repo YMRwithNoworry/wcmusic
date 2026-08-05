@@ -63,9 +63,9 @@ void main() {
     expect(find.text('在线晴天'), findsOneWidget);
     expect(find.text('测试歌手'), findsOneWidget);
 
-    await tester.tap(find.text('Deezer'));
+    await tester.tap(find.text('QQ 音乐'));
     await tester.pumpAndSettle();
-    expect(searchService.lastChannel, OnlineSearchChannel.deezer);
+    expect(searchService.lastChannel, OnlineSearchChannel.qqMusic);
   });
 
   testWidgets('favorites a platform playlist from the home view', (
@@ -76,7 +76,7 @@ void main() {
       name: '今日热门',
       artworkUri: '',
       url: 'https://music.example/playlist-42',
-      platform: 'Apple Music',
+      platform: '网易云音乐',
     );
     const playlistTrack = Track(
       id: 'apple-7',
