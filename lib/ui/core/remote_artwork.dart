@@ -59,7 +59,7 @@ class ArtworkLoader {
         HttpHeaders.userAgentHeader,
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       );
-      request.headers.set(HttpHeaders.refererHeader, 'https://music.163.com/');
+      request.headers.set(HttpHeaders.refererHeader, _refererFor(uri));
       request.headers.set(
         HttpHeaders.acceptHeader,
         'image/avif,image/webp,image/*,*/*;q=0.8',
@@ -75,6 +75,15 @@ class ArtworkLoader {
     } finally {
       client.close(force: true);
     }
+  }
+
+  String _refererFor(Uri uri) {
+    if (uri.host.contains('qq.com') || uri.host.contains('gtimg.cn')) {
+      return 'https://y.qq.com/';
+    }
+    if (uri.host.contains('kugou')) return 'https://www.kugou.com/';
+    if (uri.host.contains('kuwo')) return 'https://www.kuwo.cn/';
+    return 'https://music.163.com/';
   }
 
   Iterable<Uri> _candidates(String rawUrl) sync* {
@@ -163,7 +172,18 @@ class _RemoteArtworkState extends State<RemoteArtwork> {
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes == null) {
-          return OrganicArtwork(seed: widget.seed, size: double.infinity);
+          if (snapshot.hasError) {
+            return OrganicArtwork(seed: widget.seed, size: double.infinity);
+          }
+          return ColoredBox(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: const Center(
+              child: SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
         }
         return Image.memory(
           bytes,

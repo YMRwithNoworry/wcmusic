@@ -186,7 +186,7 @@ class _PlatformPlaylists extends StatelessWidget {
                     playlist: playlist,
                     isFavorite: viewModel.isPlatformPlaylistFavorite(playlist),
                     isLoading: viewModel.isPlatformPlaylistLoading(playlist),
-                    onTap: () => _open(context, playlist.url),
+                    onTap: () => _showPlaylist(context, playlist),
                     onToggleFavorite: () =>
                         viewModel.togglePlatformPlaylistFavorite(playlist),
                   );
@@ -198,7 +198,135 @@ class _PlatformPlaylists extends StatelessWidget {
     );
   }
 
-  Future<void> _open(BuildContext context, String value) async {
+  Future<void> _showPlaylist(
+    BuildContext context,
+    PlatformPlaylist playlist,
+  ) async {
+    final viewModel = context.read<PlayerViewModel>();
+    final tracks = await viewModel.loadPlatformPlaylistTracks(playlist);
+    if (!context.mounted) return;
+    if (tracks == null) {
+      final message = viewModel.message;
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .84,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 12),
+              child: Row(
+                children: [
+                  SizedBox.square(
+                    dimension: 58,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: playlist.artworkUri.isEmpty
+                          ? OrganicArtwork(seed: playlist.id, size: 58)
+                          : RemoteArtwork(
+                              url: playlist.artworkUri,
+                              seed: playlist.id,
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          playlist.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 3),
+                        Text('${playlist.platform} · ${tracks.length} 首'),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => _openPlatform(sheetContext, playlist.url),
+                    icon: const Icon(Icons.open_in_new),
+                    tooltip: '打开平台页面',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    icon: const Icon(Icons.close),
+                    tooltip: '关闭',
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: tracks.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final track = tracks[index];
+                  return GestureDetector(
+                    onSecondaryTap: () =>
+                        showTrackFavoriteMenu(sheetContext, track),
+                    child: ListTile(
+                      leading: SizedBox.square(
+                        dimension: 48,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child:
+                              track.artworkUri == null ||
+                                  track.artworkUri!.isEmpty
+                              ? OrganicArtwork(seed: track.id, size: 48)
+                              : RemoteArtwork(
+                                  url: track.artworkUri!,
+                                  seed: track.id,
+                                ),
+                        ),
+                      ),
+                      title: Text(
+                        track.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${track.artist} · ${track.album}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        onPressed: () =>
+                            showTrackFavoriteMenu(sheetContext, track),
+                        icon: const Icon(Icons.more_horiz),
+                        tooltip: '更多',
+                      ),
+                      onLongPress: () =>
+                          showTrackFavoriteMenu(sheetContext, track),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        viewModel.playTrack(track);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPlatform(BuildContext context, String value) async {
     final opened = await launchUrl(
       Uri.parse(value),
       mode: LaunchMode.externalApplication,

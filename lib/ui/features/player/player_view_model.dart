@@ -103,6 +103,7 @@ class PlayerViewModel extends ChangeNotifier {
   List<PlatformPlaylist> platformPlaylists = const [];
   List<PlatformPlaylist> _platformPlaylistCatalog = const [];
   final Set<String> loadingPlatformPlaylistIds = {};
+  final Map<String, List<Track>> _platformPlaylistTrackCache = {};
   List<Track> recentTracks = const [];
   List<Track> _recentTrackCatalog = const [];
   bool isLoadingPlatformPlaylists = false;
@@ -199,6 +200,30 @@ class PlayerViewModel extends ChangeNotifier {
   bool isPlatformPlaylistLoading(PlatformPlaylist playlist) =>
       loadingPlatformPlaylistIds.contains(_platformPlaylistId(playlist));
 
+  Future<List<Track>?> loadPlatformPlaylistTracks(
+    PlatformPlaylist playlist,
+  ) async {
+    final id = _platformPlaylistId(playlist);
+    final cached = _platformPlaylistTrackCache[id];
+    if (cached != null) return cached;
+    if (loadingPlatformPlaylistIds.contains(id)) return null;
+    loadingPlatformPlaylistIds.add(id);
+    message = null;
+    notifyListeners();
+    try {
+      final loaded = await onlineSearchService.discoverPlaylistTracks(playlist);
+      if (loaded.isEmpty) throw StateError('歌单暂时没有可查看的歌曲');
+      _platformPlaylistTrackCache[id] = loaded;
+      return loaded;
+    } on Object catch (error) {
+      message = '载入歌单失败：$error';
+      return null;
+    } finally {
+      loadingPlatformPlaylistIds.remove(id);
+      notifyListeners();
+    }
+  }
+
   Future<void> togglePlatformPlaylistFavorite(PlatformPlaylist playlist) async {
     final id = _platformPlaylistId(playlist);
     if (loadingPlatformPlaylistIds.contains(id)) return;
@@ -207,11 +232,8 @@ class PlayerViewModel extends ChangeNotifier {
         await musicRepository.deletePlaylist(id);
         message = '已取消收藏 ${playlist.name}';
       } else {
-        loadingPlatformPlaylistIds.add(id);
-        notifyListeners();
-        final tracks = await onlineSearchService.discoverPlaylistTracks(
-          playlist,
-        );
+        final tracks =
+            await loadPlatformPlaylistTracks(playlist) ?? const <Track>[];
         if (tracks.isEmpty) throw StateError('歌单暂无可播放歌曲');
         await musicRepository.savePlaylist(
           Playlist(

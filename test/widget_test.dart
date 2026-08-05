@@ -316,6 +316,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('今日热门').first);
+    await tester.pumpAndSettle();
+    expect(find.text('歌单歌曲'), findsOneWidget);
+    expect(find.byTooltip('打开平台页面'), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byTooltip('收藏并载入歌曲'));
     await tester.pumpAndSettle();
 
