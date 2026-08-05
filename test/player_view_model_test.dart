@@ -514,6 +514,67 @@ void main() {
     expect(repository.imported, 2);
     expect(viewModel.isImportingSources, isFalse);
   });
+
+  test(
+    'plays a searched track through the selected source on its platform',
+    () async {
+      const kwTrack = Track(
+        id: 'kw-42',
+        title: '酷我歌曲',
+        artist: '酷我歌手',
+        album: '酷我专辑',
+        duration: Duration(minutes: 3),
+        uri: '',
+        source: TrackSource.kw,
+        sourceId: '42',
+      );
+      final sourceRepository = _FullTrackSourceRepository(sourceKeys: ['kw']);
+      final viewModel = PlayerViewModel(
+        musicRepository: MemoryMusicRepository(),
+        sourceRepository: sourceRepository,
+        onlineSearchService: FakeOnlineSearchService(),
+        playerService: FakePlayerService(),
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.load();
+      await viewModel.selectSource('source');
+
+      await viewModel.playTrack(kwTrack);
+
+      expect(sourceRepository.resolvedTrack?.source, TrackSource.kw);
+      expect(sourceRepository.resolvedTrack?.sourceId, '42');
+      expect(viewModel.current?.uri, 'https://audio.example/full.flac');
+    },
+  );
+
+  test('keeps the selected platform when the chosen source lacks it', () async {
+    const kwTrack = Track(
+      id: 'kw-42',
+      title: '酷我歌曲',
+      artist: '酷我歌手',
+      album: '酷我专辑',
+      duration: Duration(minutes: 3),
+      uri: '',
+      source: TrackSource.kw,
+      sourceId: '42',
+    );
+    final sourceRepository = _FullTrackSourceRepository(sourceKeys: ['wy']);
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    await viewModel.selectSource('source');
+
+    await viewModel.playTrack(kwTrack);
+
+    expect(viewModel.current?.uri, isEmpty);
+    expect(viewModel.message, contains('不支持'));
+    expect(sourceRepository.resolvedTrack, isNull);
+  });
 }
 
 class _SynchronousTogglePlayerService extends FakePlayerService {
@@ -584,19 +645,22 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
 }
 
 class _FullTrackSourceRepository implements SourceRepository {
+  _FullTrackSourceRepository({this.sourceKeys = const ['wy']});
+
+  final List<String> sourceKeys;
   Track? resolvedTrack;
   String? selectedId;
   String? resolvedQuality;
 
   @override
-  Future<List<SourceScript>> loadSources() async => const [
+  Future<List<SourceScript>> loadSources() async => [
     SourceScript(
       id: 'source',
       name: '测试音源',
       version: '1.0.0',
       author: 'WCMusic',
       description: '测试',
-      sourceKeys: ['wy'],
+      sourceKeys: sourceKeys,
       rawScript: '',
     ),
   ];

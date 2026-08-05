@@ -315,8 +315,14 @@ class PlayerViewModel extends ChangeNotifier {
     var playbackTrack = track;
     if (track.source != TrackSource.local && sources.isNotEmpty) {
       try {
+        final selected = selectedSource;
         final sourceKeys = _activeSourceKeys;
         if (!sourceKeys.contains(playbackTrack.source.name)) {
+          if (selected != null) {
+            throw StateError(
+              '所选音源 ${selected.name} 不支持 ${playbackTrack.source.name} 平台',
+            );
+          }
           final matched = await onlineSearchService.matchTrackToSources(
             track,
             sourceKeys,
@@ -339,8 +345,10 @@ class PlayerViewModel extends ChangeNotifier {
           current = playbackTrack;
           message = null;
         }
-      } on Object {
-        message = track.uri.isEmpty ? '整曲解析失败，该歌曲暂无播放地址' : '整曲解析失败，已回退平台试听';
+      } on Object catch (error) {
+        message = error.toString().contains('不支持')
+            ? '所选音源不支持 ${playbackTrack.source.name} 平台，请更换音源'
+            : (track.uri.isEmpty ? '整曲解析失败，该歌曲暂无播放地址' : '整曲解析失败，已回退平台试听');
         playbackTrack = track;
         current = track;
       }
