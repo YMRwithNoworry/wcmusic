@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:media_kit/media_kit.dart' hide Track;
 
 import '../../domain/models/track.dart';
@@ -15,9 +17,20 @@ abstract interface class AudioPlayerService {
 }
 
 class PlayerService implements AudioPlayerService {
-  PlayerService() : player = Player();
+  PlayerService() : player = Player() {
+    _errorSubscription = player.stream.error.listen((_) {
+      final track = _networkTrack;
+      if (track != null && !_retriedWithoutProxy) {
+        _retriedWithoutProxy = true;
+        unawaited(_retryWithoutProxy(track));
+      }
+    });
+  }
 
   final Player player;
+  late final StreamSubscription<String> _errorSubscription;
+  Track? _networkTrack;
+  bool _retriedWithoutProxy = false;
 
   @override
   Stream<bool> get playing => player.stream.playing;
@@ -36,6 +49,8 @@ class PlayerService implements AudioPlayerService {
   @override
   Future<void> play(Track track) async {
     if (track.uri.isEmpty) return;
+    _networkTrack = _isNetworkTrack(track) ? track : null;
+    _retriedWithoutProxy = false;
     await player.open(Media(track.uri), play: true);
   }
 
@@ -49,8 +64,22 @@ class PlayerService implements AudioPlayerService {
   Future<void> setVolume(double volume) =>
       player.setVolume(volume.clamp(0.0, 1.0) * 100);
 
+  Future<void> _retryWithoutProxy(Track track) async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) return;
+    await platform.setProperty('http-proxy', '');
+    if (_networkTrack?.id != track.id) return;
+    await player.open(Media(track.uri), play: true);
+  }
+
+  bool _isNetworkTrack(Track track) {
+    final scheme = Uri.tryParse(track.uri)?.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
+  }
+
   @override
   Future<void> dispose() async {
+    await _errorSubscription.cancel();
     await player.dispose();
   }
 }

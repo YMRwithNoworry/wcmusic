@@ -53,6 +53,30 @@ void main() {
     expect(await service.search('   '), isEmpty);
   });
 
+  test('retries directly when the configured proxy is unavailable', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.first.then((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'results': [
+            {'trackId': 7, 'trackName': '直连歌曲', 'artistName': '测试歌手'},
+          ],
+        }),
+      );
+      await request.response.close();
+    });
+    final service = AppleOnlineSearchService(
+      endpoint: Uri.parse('http://127.0.0.1:${server.port}/search'),
+      proxyResolver: (_) => 'PROXY 127.0.0.1:1',
+    );
+
+    final tracks = await service.search('直连');
+
+    expect(tracks.single.title, '直连歌曲');
+  });
+
   test('loads platform playlists from the public chart feed', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));

@@ -11,9 +11,16 @@ abstract interface class OnlineSearchService {
 class AppleOnlineSearchService implements OnlineSearchService {
   AppleOnlineSearchService({
     HttpClient Function()? clientFactory,
+    String Function(Uri)? proxyResolver,
     Uri? endpoint,
     Uri? playlistEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
+       _proxyResolver =
+           proxyResolver ??
+           ((uri) => HttpClient.findProxyFromEnvironment(
+             uri,
+             environment: Platform.environment,
+           )),
        _endpoint = endpoint ?? Uri.https('itunes.apple.com', '/search'),
        _playlistEndpoint =
            playlistEndpoint ??
@@ -23,6 +30,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
            );
 
   final HttpClient Function() _clientFactory;
+  final String Function(Uri) _proxyResolver;
   final Uri _endpoint;
   final Uri _playlistEndpoint;
 
@@ -84,8 +92,19 @@ class AppleOnlineSearchService implements OnlineSearchService {
   }
 
   Future<dynamic> _getJson(Uri uri) async {
+    final proxy = _proxyResolver(uri);
+    try {
+      return await _getJsonOnce(uri, proxy);
+    } on Object {
+      if (proxy == 'DIRECT') rethrow;
+      return _getJsonOnce(uri, 'DIRECT');
+    }
+  }
+
+  Future<dynamic> _getJsonOnce(Uri uri, String proxy) async {
     final client = _clientFactory()
-      ..connectionTimeout = const Duration(seconds: 10);
+      ..connectionTimeout = const Duration(seconds: 10)
+      ..findProxy = (_) => proxy;
     try {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
