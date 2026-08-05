@@ -33,13 +33,14 @@ class TrackDownloadService {
         ? await _pathResolver(track, extension)
         : await _defaultPath(track, extension);
     if (path == null) throw StateError('已取消下载');
-    return _downloadTo(uri, path, onProgress);
+    return _downloadTo(uri, path, onProgress, null);
   }
 
   Future<String> downloadToCache(
     Track track, {
     String fallbackExtension = '.mp3',
     required void Function(double progress) onProgress,
+    bool Function()? shouldCancel,
   }) async {
     if (track.uri.isEmpty) throw StateError('当前歌曲没有可下载的音频地址');
     final uri = Uri.parse(track.uri);
@@ -49,13 +50,14 @@ class TrackDownloadService {
         '${directory.path}${Platform.pathSeparator}${_safeName('wcmusic-${track.id}$extension')}';
     final file = File(path);
     if (await file.exists() && await file.length() > 1024) return path;
-    return _downloadTo(uri, path, onProgress);
+    return _downloadTo(uri, path, onProgress, shouldCancel);
   }
 
   Future<String> _downloadTo(
     Uri uri,
     String path,
     void Function(double progress) onProgress,
+    bool Function()? shouldCancel,
   ) async {
     final client = _clientFactory()
       ..connectionTimeout = const Duration(seconds: 20);
@@ -74,6 +76,9 @@ class TrackDownloadService {
       final sink = file.openWrite();
       try {
         await for (final chunk in response) {
+          if (shouldCancel?.call() ?? false) {
+            throw StateError('播放已切换，下载已取消');
+          }
           sink.add(chunk);
           received += chunk.length;
           if (total > 0) {

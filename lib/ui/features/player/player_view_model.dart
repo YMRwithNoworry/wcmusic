@@ -109,6 +109,7 @@ class PlayerViewModel extends ChangeNotifier {
   String? onlineSearchError;
   int _searchGeneration = 0;
   int _lyricGeneration = 0;
+  int _playGeneration = 0;
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
@@ -311,11 +312,13 @@ class PlayerViewModel extends ChangeNotifier {
   }
 
   Future<void> playTrack(Track track) async {
+    final generation = ++_playGeneration;
     current = track;
     position = Duration.zero;
     duration = track.duration;
     message = null;
     notifyListeners();
+    unawaited(playerService.stop());
 
     var playbackTrack = track;
     if (track.source != TrackSource.local && sources.isNotEmpty) {
@@ -340,7 +343,9 @@ class PlayerViewModel extends ChangeNotifier {
           final url = await sourceRepository.resolveUrl(
             playbackTrack,
             quality: playbackQuality.sourceValue,
+            background: true,
           );
+          if (generation != _playGeneration) return;
           playbackTrack = track.copyWith(
             uri: url,
             source: playbackTrack.source,
@@ -351,6 +356,7 @@ class PlayerViewModel extends ChangeNotifier {
           message = null;
         }
       } on Object catch (error) {
+        if (generation != _playGeneration) return;
         message = error.toString().contains('不支持')
             ? '所选音源不支持 ${playbackTrack.source.name} 平台，请更换音源'
             : (track.uri.isEmpty ? '整曲解析失败，该歌曲暂无播放地址' : '整曲解析失败，已回退平台试听');
@@ -375,20 +381,26 @@ class PlayerViewModel extends ChangeNotifier {
                 ? '.flac'
                 : '.mp3',
             onProgress: (_) {},
+            shouldCancel: () => generation != _playGeneration,
           );
+          if (generation != _playGeneration) return;
           finalTrack = finalTrack.copyWith(uri: localPath);
         } on Object catch (error) {
+          if (generation != _playGeneration) return;
           message = '下载播放失败，尝试直接播放：$error';
           notifyListeners();
         }
       }
       try {
+        if (generation != _playGeneration) return;
         await playerService.play(finalTrack);
+        if (generation != _playGeneration) return;
         isPlaying = true;
         current = finalTrack;
         message = null;
         if (floatingLyricsEnabled) unawaited(_loadLyrics(finalTrack));
       } on Object catch (error) {
+        if (generation != _playGeneration) return;
         message = '播放失败：$error';
         isPlaying = false;
       }

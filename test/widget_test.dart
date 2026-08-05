@@ -171,5 +171,6 @@ class _FakeCacheDownloader extends TrackDownloadService {
     Track track, {
     String fallbackExtension = '.mp3',
     required void Function(double progress) onProgress,
+    bool Function()? shouldCancel,
   }) async => 'C:/cache/${track.id}.mp3';
 }

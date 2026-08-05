@@ -702,7 +702,11 @@ class _FullTrackSourceRepository implements SourceRepository {
   }
 
   @override
-  Future<String> resolveUrl(Track track, {String quality = '320k'}) async {
+  Future<String> resolveUrl(
+    Track track, {
+    String quality = '320k',
+    bool background = false,
+  }) async {
     resolvedTrack = track;
     resolvedQuality = quality;
     return 'https://audio.example/full.flac';
@@ -736,6 +740,7 @@ class _FakeTrackDownloadService extends TrackDownloadService {
     Track track, {
     String fallbackExtension = '.mp3',
     required void Function(double progress) onProgress,
+    bool Function()? shouldCancel,
   }) async {
     downloadedTrack = track;
     onProgress(1);
@@ -774,5 +779,9 @@ class _BulkSourceRepository implements SourceRepository {
   Future<void> deleteSource(String id) async {}
 
   @override
-  Future<String> resolveUrl(Track track, {String quality = '320k'}) async => '';
+  Future<String> resolveUrl(
+    Track track, {
+    String quality = '320k',
+    bool background = false,
+  }) async => '';
 }

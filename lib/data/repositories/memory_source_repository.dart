@@ -2,6 +2,7 @@ import '../../domain/models/track.dart';
 import '../../domain/repositories/source_repository.dart';
 import '../services/native_core_bridge.dart';
 import '../services/source_script_parser.dart';
+import '../services/source_resolver.dart';
 import '../services/source_storage.dart';
 
 class MemorySourceRepository implements SourceRepository {
@@ -84,7 +85,11 @@ class MemorySourceRepository implements SourceRepository {
   }
 
   @override
-  Future<String> resolveUrl(Track track, {String quality = '320k'}) async {
+  Future<String> resolveUrl(
+    Track track, {
+    String quality = '320k',
+    bool background = false,
+  }) async {
     await _ensureLoaded();
     final sourceId = track.sourceId;
     if (sourceId == null || sourceId.isEmpty) {
@@ -102,8 +107,17 @@ class MemorySourceRepository implements SourceRepository {
       if (!selected.sourceKeys.contains(sourceKey)) {
         throw StateError('所选音源 ${selected.name} 不支持 $sourceKey');
       }
+      final script = selected.rawScript;
+      if (background && _nativeCore.isLoaded) {
+        return resolveSourceUrlInBackground(
+          script: script,
+          source: sourceKey,
+          songId: sourceId,
+          quality: quality,
+        );
+      }
       return _nativeCore.resolveSourceUrl(
-        script: selected.rawScript,
+        script: script,
         source: sourceKey,
         songId: sourceId,
         quality: quality,
@@ -113,8 +127,17 @@ class MemorySourceRepository implements SourceRepository {
         .where((source) => source.sourceKeys.contains(sourceKey))
         .toList(growable: false);
     if (candidates.isEmpty) throw StateError('没有支持 $sourceKey 的已启用音源');
+    final script = candidates.last.rawScript;
+    if (background && _nativeCore.isLoaded) {
+      return resolveSourceUrlInBackground(
+        script: script,
+        source: sourceKey,
+        songId: sourceId,
+        quality: quality,
+      );
+    }
     return _nativeCore.resolveSourceUrl(
-      script: candidates.last.rawScript,
+      script: script,
       source: sourceKey,
       songId: sourceId,
       quality: quality,
