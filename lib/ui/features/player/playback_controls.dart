@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../domain/models/playback_quality.dart';
+import '../../../domain/models/track.dart';
 import 'player_view_model.dart';
 
 class PlaybackProgress extends StatelessWidget {
@@ -101,22 +103,53 @@ class DownloadButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<PlayerViewModel>();
-    return IconButton(
-      onPressed: viewModel.isDownloading
-          ? null
-          : viewModel.downloadCurrentTrack,
-      icon: viewModel.isDownloading
-          ? SizedBox.square(
-              dimension: 20,
-              child: CircularProgressIndicator(
-                value: viewModel.downloadProgress,
-                strokeWidth: 2,
-              ),
-            )
-          : const Icon(Icons.download_outlined),
-      tooltip: '下载到本地',
+    if (viewModel.isDownloading) {
+      return IconButton(
+        onPressed: null,
+        icon: SizedBox.square(
+          dimension: 20,
+          child: CircularProgressIndicator(
+            value: viewModel.downloadProgress,
+            strokeWidth: 2,
+          ),
+        ),
+        tooltip: '正在下载',
+      );
+    }
+    final track = viewModel.current;
+    if (track?.source == TrackSource.local) {
+      return IconButton(
+        onPressed: viewModel.downloadCurrentTrack,
+        icon: const Icon(Icons.download_outlined),
+        tooltip: '下载原始文件',
+      );
+    }
+    return PopupMenuButton<PlaybackQuality>(
+      enabled: track != null,
+      tooltip: '选择音质并下载',
+      icon: const Icon(Icons.download_outlined),
+      onSelected: viewModel.downloadCurrentTrack,
+      itemBuilder: (context) => [
+        for (final quality in PlaybackQuality.values)
+          PopupMenuItem(
+            value: quality,
+            child: Row(
+              children: [
+                Icon(_qualityIcon(quality), size: 20),
+                const SizedBox(width: 10),
+                Text(quality.label),
+              ],
+            ),
+          ),
+      ],
     );
   }
+
+  IconData _qualityIcon(PlaybackQuality quality) => switch (quality) {
+    PlaybackQuality.standard => Icons.music_note_outlined,
+    PlaybackQuality.high => Icons.graphic_eq,
+    PlaybackQuality.lossless => Icons.high_quality_outlined,
+  };
 }
 
 class FloatingLyricsButton extends StatelessWidget {

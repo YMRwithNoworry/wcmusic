@@ -533,7 +533,7 @@ class PlayerViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> downloadCurrentTrack() async {
+  Future<void> downloadCurrentTrack([PlaybackQuality? quality]) async {
     final track = current;
     if (track == null || track.uri.isEmpty) {
       message = '当前没有可下载的音频地址';
@@ -545,9 +545,28 @@ class PlayerViewModel extends ChangeNotifier {
     downloadProgress = null;
     notifyListeners();
     try {
+      final downloadQuality = quality ?? playbackQuality;
+      var downloadTrack = track;
+      if (track.source != TrackSource.local) {
+        final sourceId = track.sourceId;
+        if (sourceId == null || sourceId.isEmpty) {
+          throw StateError('当前歌曲缺少平台 ID，无法选择下载音质');
+        }
+        message = '正在解析 ${downloadQuality.label} 下载地址...';
+        notifyListeners();
+        final url = await sourceRepository.resolveUrl(
+          track,
+          quality: downloadQuality.sourceValue,
+          background: true,
+        );
+        downloadTrack = track.copyWith(
+          uri: url,
+          quality: '洛雪音源 · ${downloadQuality.label}',
+        );
+      }
       final path = await downloadService.download(
-        track,
-        fallbackExtension: playbackQuality.sourceValue == 'flac'
+        downloadTrack,
+        fallbackExtension: downloadQuality.sourceValue == 'flac'
             ? '.flac'
             : '.mp3',
         onProgress: (progress) {
@@ -555,7 +574,9 @@ class PlayerViewModel extends ChangeNotifier {
           notifyListeners();
         },
       );
-      message = '已下载到 $path';
+      message = track.source == TrackSource.local
+          ? '已下载到 $path'
+          : '${downloadQuality.label} 已下载到 $path';
     } on Object catch (error) {
       message = '下载失败：$error';
     } finally {

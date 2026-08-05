@@ -497,6 +497,38 @@ void main() {
     expect(viewModel.message, contains('已下载到'));
   });
 
+  test('resolves the selected quality before downloading', () async {
+    const track = Track(
+      id: 'quality-download',
+      title: '无损下载',
+      artist: '下载歌手',
+      album: '下载专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.wy,
+      sourceId: 'quality-42',
+    );
+    final sourceRepository = _FullTrackSourceRepository();
+    final downloader = _FakeTrackDownloadService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      downloadService: downloader,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    await viewModel.playTrack(track);
+
+    await viewModel.downloadCurrentTrack(PlaybackQuality.lossless);
+
+    expect(sourceRepository.resolvedQuality, 'flac');
+    expect(downloader.downloadedTrack?.uri, 'https://audio.example/full.flac');
+    expect(downloader.downloadedTrack?.quality, contains('无损 flac'));
+    expect(viewModel.message, contains('无损 flac 已下载到'));
+  });
+
   test('downloads network tracks to cache before playing', () async {
     const track = Track(
       id: 'network-play',

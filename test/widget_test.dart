@@ -234,6 +234,44 @@ void main() {
     expect(find.byType(PlaybackProgress), findsOneWidget);
     expect(find.byKey(const ValueKey('floatingLyricsToggle')), findsWidgets);
   });
+
+  testWidgets('offers three qualities for an online track download', (
+    tester,
+  ) async {
+    const track = Track(
+      id: 'quality-menu',
+      title: '音质菜单',
+      artist: '测试歌手',
+      album: '测试专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.mp3',
+      source: TrackSource.wy,
+      sourceId: 'quality-menu-42',
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      downloadService: _FakeCacheDownloader(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    await viewModel.playTrack(track);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: const MaterialApp(home: Scaffold(body: DownloadButton())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('选择音质并下载'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('标准 128k'), findsOneWidget);
+    expect(find.text('高品 320k'), findsOneWidget);
+    expect(find.text('无损 flac'), findsOneWidget);
+  });
 }
 
 class _FakeCacheDownloader extends TrackDownloadService {
