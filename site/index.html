@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="下载 WCMusic，一款面向 Windows 与 Android 的轻盈、开放音乐播放器。">
+    <meta name="theme-color" content="#f2efe7">
+    <meta property="og:title" content="WCMusic - 让声音自然生长">
+    <meta property="og:description" content="聚合搜索、本地曲库与自定义音源，在一处自然流动。">
+    <meta property="og:image" content="assets/wcmusic-desktop.png">
+    <title>WCMusic - 下载</title>
+    <link rel="icon" href="assets/app-icon.png">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#downloads">跳到下载</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="WCMusic 首页">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>WCMusic</span>
+      </a>
+      <nav aria-label="主导航">
+        <a href="#experience">体验</a>
+        <a href="#releases">更新</a>
+        <a href="#questions">问答</a>
+      </nav>
+      <a class="header-download" href="#downloads">
+        <i data-lucide="download" aria-hidden="true"></i>
+        <span>下载</span>
+      </a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-media" aria-hidden="true">
+          <picture>
+            <source media="(max-width: 680px)" srcset="assets/wcmusic-mobile.png">
+            <img src="assets/wcmusic-desktop.png" alt="" fetchpriority="high">
+          </picture>
+        </div>
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> WCMusic 1.0</p>
+          <h1 id="hero-title">让声音<br>自然生长</h1>
+          <p class="hero-summary">聚合搜索、本地曲库与自定义音源，在一处自然流动。为 Windows 与 Android 而生。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#downloads" data-primary-cta>
+              <i data-lucide="download" aria-hidden="true"></i>
+              <span>免费下载</span>
+            </a>
+            <a class="text-link" href="#experience">看看它如何工作 <i data-lucide="arrow-down" aria-hidden="true"></i></a>
+          </div>
+          <p class="hero-note">开源免费 · 无广告 · 版本 1.0.0</p>
+        </div>
+        <div class="hero-caption" aria-hidden="true">
+          <span>本地曲库</span><span>聚合搜索</span><span>自由音源</span>
+        </div>
+      </section>
+
+      <section class="intro-band" id="experience" aria-labelledby="experience-title">
+        <div class="section-kicker reveal"><span>01</span> 随心聆听</div>
+        <div class="intro-heading reveal">
+          <h2 id="experience-title">不被平台围住的<br>音乐生活</h2>
+          <p>WCMusic 把散落各处的声音带回你身边。搜索在线音乐、整理本地收藏，或导入自己的音源脚本，播放逻辑始终简单而直接。</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature feature-wide reveal">
+            <div class="feature-art search-art" aria-hidden="true">
+              <span class="search-pill"><i data-lucide="search"></i> 搜索一首想听的歌</span>
+              <span class="source source-one">Apple Music</span>
+              <span class="source source-two">Deezer</span>
+              <span class="source source-three">自定义音源</span>
+              <span class="pulse pulse-one"></span><span class="pulse pulse-two"></span>
+            </div>
+            <div class="feature-copy">
+              <i data-lucide="audio-lines" aria-hidden="true"></i>
+              <h3>一个搜索框，多个声音世界</h3>
+              <p>同时检索 Apple Music、Deezer 与聚合渠道，代理不可用时自动回退直连。</p>
+            </div>
+          </article>
+          <article class="feature reveal">
+            <div class="organic-cover" aria-hidden="true">
+              <span></span><span></span><span></span><span></span>
+              <button class="play-orbit" type="button" tabindex="-1" aria-hidden="true"><i data-lucide="play"></i></button>
+            </div>
+            <div class="feature-copy">
+              <i data-lucide="library" aria-hidden="true"></i>
+              <h3>收藏归你，播放也归你</h3>
+              <p>导入本地音频与 M3U 歌单，在桌面和移动端保持熟悉的节奏。</p>
+            </div>
+          </article>
+          <article class="feature feature-dark reveal">
+            <div class="code-lines" aria-hidden="true">
+              <span>source.init()</span><span>✓ QuickJS ready</span><span>memory 32 MB</span>
+            </div>
+            <div class="feature-copy">
+              <i data-lucide="braces" aria-hidden="true"></i>
+              <h3>开放，但有边界</h3>
+              <p>兼容洛雪自定义源，Rust 沙箱限制运行内存，导入时不开放网络请求。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="downloads" id="downloads" aria-labelledby="download-title">
+        <div class="download-lead reveal">
+          <div class="section-kicker light"><span>02</span> 开始聆听</div>
+          <h2 id="download-title">选择你的设备</h2>
+          <p>无需账户。下载、解压或安装，然后把音乐带回来。</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card recommended reveal" data-platform="windows">
+            <div class="recommend-label">为此设备推荐</div>
+            <div class="platform-icon"><i data-lucide="monitor" aria-hidden="true"></i></div>
+            <div>
+              <p class="platform">Windows</p>
+              <h3>Windows x64</h3>
+              <p class="meta">Windows 10 / 11 · ZIP 便携版</p>
+            </div>
+            <a class="button download-button" href="downloads/wcmusic-windows-x64.zip" download>
+              <i data-lucide="download" aria-hidden="true"></i>
+              下载 Windows 版
+            </a>
+            <p class="file-meta">版本 1.0.0 · x64</p>
+          </article>
+          <article class="download-card reveal" data-platform="android">
+            <div class="platform-icon clay"><i data-lucide="smartphone" aria-hidden="true"></i></div>
+            <div>
+              <p class="platform">Android</p>
+              <h3>Android arm64</h3>
+              <p class="meta">Android 8.0+ · APK 安装包</p>
+            </div>
+            <a class="button download-button" href="downloads/wcmusic-android-arm64.apk" download>
+              <i data-lucide="download" aria-hidden="true"></i>
+              下载 Android 版
+            </a>
+            <p class="file-meta">版本 1.0.0 · arm64-v8a</p>
+          </article>
+        </div>
+        <p class="download-footnote reveal"><i data-lucide="shield-check" aria-hidden="true"></i> 安装包由项目构建流程生成。Android 安装时可能需要允许“安装未知应用”。</p>
+      </section>
+
+      <section class="release-section" id="releases" aria-labelledby="release-title">
+        <div class="section-kicker reveal"><span>03</span> 最新发布</div>
+        <div class="release-layout">
+          <div class="release-sticky reveal">
+            <p class="version">v1.0.0</p>
+            <h2 id="release-title">第一片叶子</h2>
+            <p>2026 年 8 月 5 日</p>
+            <span class="stable"><span></span> 稳定版</span>
+          </div>
+          <div class="changelog reveal">
+            <div class="change-group">
+              <span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span>
+              <div><h3>更自由的发现</h3><p>新增 Apple Music、Deezer 与聚合渠道搜索，支持试听播放和平台热门歌单。</p></div>
+            </div>
+            <div class="change-group">
+              <span class="change-icon"><i data-lucide="wifi" aria-hidden="true"></i></span>
+              <div><h3>更可靠的连接</h3><p>代理不可用时自动切换直连，媒体播放失败后也会尝试恢复。</p></div>
+            </div>
+            <div class="change-group">
+              <span class="change-icon"><i data-lucide="panel-top-close" aria-hidden="true"></i></span>
+              <div><h3>安静留在后台</h3><p>Windows 支持系统托盘、关闭后继续播放与显式退出。</p></div>
+            </div>
+            <div class="change-group">
+              <span class="change-icon"><i data-lucide="file-music" aria-hidden="true"></i></span>
+              <div><h3>带上原来的收藏</h3><p>支持导入 M3U/M3U8、常见洛雪备份结构与自定义音源脚本。</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="questions" id="questions" aria-labelledby="questions-title">
+        <div class="section-kicker reveal"><span>04</span> 下载之前</div>
+        <h2 id="questions-title" class="reveal">一些简短回答</h2>
+        <div class="faq-list reveal">
+          <details>
+            <summary>WCMusic 是免费的吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
+            <p>是。WCMusic 免费且无广告，不要求注册账户。</p>
+          </details>
+          <details>
+            <summary>它会提供音乐文件吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
+            <p>不会。WCMusic 是播放器与聚合检索工具，音乐内容来自你的本地文件或所连接的平台与音源。</p>
+          </details>
+          <details>
+            <summary>Windows 版本需要安装吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
+            <p>不需要。解压 ZIP 后运行 wcmusic.exe，并保留同目录中的 DLL 与 data 文件夹。</p>
+          </details>
+          <details>
+            <summary>自定义音源安全吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
+            <p>音源脚本属于第三方代码。导入校验运行在 32 MB 内存限制的 QuickJS 环境中，且校验阶段不开放网络请求。</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer-mark" aria-hidden="true"><span></span></div>
+      <div><strong>WCMusic</strong><p>让声音自然生长。</p></div>
+      <p class="footer-tech">Flutter × Rust<br>Made for listening.</p>
+      <a href="#top" class="back-top" aria-label="返回顶部"><i data-lucide="arrow-up" aria-hidden="true"></i></a>
+    </footer>
+  </body>
+</html>
