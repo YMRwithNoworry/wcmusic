@@ -324,4 +324,11 @@ new Promise((resolve) => {{
             resolve_source_url(SOURCE, SourceEnvironment::Desktop, "kw", "12345", "320k").unwrap();
         assert_eq!(url, "https://example.com/music.flac");
     }
+
+    #[test]
+    fn validates_bundled_source_on_mobile() {
+        let script = include_str!("../../../assets/sources/paojiao_internal_source.js");
+        let manifest = validate_source_script(script, SourceEnvironment::Mobile).unwrap();
+        assert!(manifest.sources.len() >= 5, "bundled source lost capabilities");
+    }
 }

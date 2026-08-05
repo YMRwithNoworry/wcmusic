@@ -31,6 +31,18 @@ globalThis.lx.send(globalThis.lx.EVENT_NAMES.inited, {
 })
 ''';
 
+const _quotedKeysScript = r'''
+/**
+ * @name 内嵌兜底源
+ * @description 模拟无法通过正则识别渠道的混淆脚本
+ * @version 1.0.0
+ * @author WCMusic
+ */
+globalThis.lx.send(globalThis.lx.EVENT_NAMES.inited, {
+  sources: { 'kw': { 'actions': ['musicUrl'] } }
+})
+''';
+
 void main() {
   test('uses the Rust manifest as the authoritative source list', () {
     final source = const SourceScriptParser().parse(
@@ -152,6 +164,35 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+
+  test(
+    'keeps the bundled source when the Rust runtime is unavailable',
+    () async {
+      final repository = MemorySourceRepository(
+        nativeCore: _UnavailableNativeCore(),
+        builtInScript: _quotedKeysScript,
+        builtInSourceName: '泡椒内部测试音源',
+      );
+
+      final source = (await repository.loadSources()).single;
+
+      expect(source.name, '泡椒内部测试音源');
+      expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
+    },
+  );
+
+  test('keeps the bundled source when validation rejects the script', () async {
+    final repository = MemorySourceRepository(
+      nativeCore: _RejectingNativeCore(),
+      builtInScript: _quotedKeysScript,
+      builtInSourceName: '泡椒内部测试音源',
+    );
+
+    final source = (await repository.loadSources()).single;
+
+    expect(source.name, '泡椒内部测试音源');
+    expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
+  });
 }
 
 class _FakeNativeCore extends NativeCoreBridge {
@@ -167,4 +208,33 @@ class _FakeNativeCore extends NativeCoreBridge {
   }) => script.contains('二号测试源')
       ? 'https://audio.example/second.flac'
       : 'https://audio.example/full.flac';
+}
+
+class _UnavailableNativeCore extends NativeCoreBridge {
+  @override
+  Map<String, dynamic>? validateSource(String script) => null;
+
+  @override
+  String resolveSourceUrl({
+    required String script,
+    required String source,
+    required String songId,
+    required String quality,
+  }) => throw UnsupportedError('Rust 音源运行时未加载');
+}
+
+class _RejectingNativeCore extends NativeCoreBridge {
+  @override
+  Map<String, dynamic>? validateSource(String script) => {
+    'ok': false,
+    'error': '移动端运行时暂不可用',
+  };
+
+  @override
+  String resolveSourceUrl({
+    required String script,
+    required String source,
+    required String songId,
+    required String quality,
+  }) => throw UnsupportedError('Rust 音源运行时未加载');
 }

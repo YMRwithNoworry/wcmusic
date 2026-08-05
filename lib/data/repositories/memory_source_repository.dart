@@ -6,6 +6,7 @@ import '../services/source_storage.dart';
 
 class MemorySourceRepository implements SourceRepository {
   static const builtInSourceId = 'wcmusic-paojiao-internal-source';
+  static const builtInSourceKeys = ['kg', 'kw', 'mg', 'tx', 'wy'];
 
   MemorySourceRepository({
     this._parser = const SourceScriptParser(),
@@ -124,14 +125,22 @@ class MemorySourceRepository implements SourceRepository {
     final bundledScript = builtInScript;
     if (bundledScript != null) {
       final nativeResult = _nativeCore.validateSource(bundledScript);
-      if (nativeResult != null && nativeResult['ok'] != true) {
-        throw FormatException(nativeResult['error'] as String? ?? '内置音源初始化失败');
+      final data = nativeResult != null && nativeResult['ok'] == true
+          ? nativeResult['data']
+          : null;
+      final manifest = data is Map<String, dynamic> ? data : null;
+      var parsed = _parser.parse(bundledScript, manifest: manifest);
+      if (parsed.sourceKeys.isEmpty) {
+        parsed = _parser.parse(
+          bundledScript,
+          manifest: {
+            'metadata': {'name': builtInSourceName},
+            'sources': [
+              for (final key in builtInSourceKeys) {'key': key},
+            ],
+          },
+        );
       }
-      final data = nativeResult?['data'];
-      final parsed = _parser.parse(
-        bundledScript,
-        manifest: data is Map<String, dynamic> ? data : null,
-      );
       _sources.removeWhere(
         (source) =>
             source.id == builtInSourceId || source.name == builtInSourceName,
