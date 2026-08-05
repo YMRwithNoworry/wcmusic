@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::{CoreError, SourceCapability, SourceEnvironment, SourceManifest, SourceScriptMetadata};
 
 const SCRIPT_MEMORY_LIMIT: usize = 32 * 1024 * 1024;
+const MAX_INITIALIZATION_JOBS: usize = 128;
 
 pub fn parse_script_metadata(script: &str) -> Result<SourceScriptMetadata, CoreError> {
     let header = script
@@ -49,6 +50,9 @@ pub fn validate_source_script(
         r#"
         globalThis.__wcmusicHandlers = Object.create(null);
         globalThis.__wcmusicMessages = [];
+        globalThis.console = Object.freeze({{
+          log() {{}}, info() {{}}, warn() {{}}, error() {{}}, debug() {{}}
+        }});
         globalThis.lx = Object.freeze({{
           version: '1',
           env: '{}',
@@ -61,7 +65,17 @@ pub fn validate_source_script(
             globalThis.__wcmusicHandlers[name] = handler;
           }},
           send(name, data) {{ globalThis.__wcmusicMessages.push({{ name, data }}); }},
-          request() {{ throw new Error('network requests are disabled during validation'); }},
+          request(url, options, callback) {{
+            if (typeof options === 'function') callback = options;
+            const error = new Error('network requests are disabled during validation');
+            if (typeof callback === 'function') {{
+              Promise.resolve().then(() => callback(error, {{
+                statusCode: 0, body: null, headers: {{}}
+              }}));
+              return;
+            }}
+            return Promise.reject(error);
+          }},
           utils: Object.freeze({{
             buffer: Object.freeze({{ from(value) {{ return value; }}, bufToString(value) {{ return String(value); }} }}),
             crypto: Object.freeze({{
@@ -85,7 +99,25 @@ pub fn validate_source_script(
     context.with(|ctx| {
         ctx.eval::<(), _>(bootstrap)
             .and_then(|_| ctx.eval::<(), _>(script))
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })?;
+
+    for _ in 0..MAX_INITIALIZATION_JOBS {
+        match runtime.execute_pending_job() {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => {
+                return Err(CoreError::SourceInitialization(error.to_string()));
+            }
+        }
+    }
+    if runtime.is_job_pending() {
+        return Err(CoreError::SourceInitialization(
+            "脚本异步初始化任务过多".into(),
+        ));
+    }
+
+    context.with(|ctx| {
         let messages_json: String = ctx
             .eval("JSON.stringify(globalThis.__wcmusicMessages)")
             .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
@@ -173,5 +205,26 @@ send(EVENT_NAMES.inited, {
         let manifest = validate_source_script(SOURCE, SourceEnvironment::Desktop).unwrap();
         assert_eq!(manifest.sources[0].key, "kw");
         assert_eq!(manifest.sources[0].qualities, ["320k", "flac"]);
+    }
+
+    #[test]
+    fn validates_callback_request_before_async_initialization() {
+        let source = format!(
+            r#"{}
+new Promise((resolve) => {{
+  lx.request('https://example.com/version.json', {{}}, (error) => {{
+    console.error(error)
+    resolve()
+  }})
+}}).then(() => lx.send(lx.EVENT_NAMES.inited, {{
+  sources: {{ wy: {{ name: '异步测试源', actions: ['musicUrl'], qualitys: ['flac'] }} }}
+}}))
+"#,
+            SOURCE.split_once("*/").unwrap().0.to_owned() + "*/"
+        );
+
+        let manifest = validate_source_script(&source, SourceEnvironment::Desktop).unwrap();
+        assert_eq!(manifest.sources[0].key, "wy");
+        assert_eq!(manifest.sources[0].qualities, ["flac"]);
     }
 }
