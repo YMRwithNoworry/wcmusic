@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 
@@ -15,11 +16,18 @@ Future<void> main() async {
   MediaKit.ensureInitialized();
   final windowService = DesktopWindowService();
   await windowService.initialize();
+  final builtInSourceScript = await rootBundle.loadString(
+    'assets/sources/paojiao_internal_source.js',
+  );
   runApp(
     ChangeNotifierProvider(
       create: (_) => PlayerViewModel(
         musicRepository: FileMusicRepository(),
-        sourceRepository: MemorySourceRepository(storage: FileSourceStorage()),
+        sourceRepository: MemorySourceRepository(
+          storage: FileSourceStorage(),
+          builtInScript: builtInSourceScript,
+          builtInSourceName: '泡椒内部测试音源',
+        ),
         onlineSearchService: AppleOnlineSearchService(),
         windowLifecycleService: windowService,
       )..load(),

@@ -77,6 +77,25 @@ void main() {
       expect(url, 'https://audio.example/full.flac');
     },
   );
+
+  test('loads the bundled source with its internal display name', () async {
+    final repository = MemorySourceRepository(
+      nativeCore: _FakeNativeCore(),
+      builtInScript: _script,
+      builtInSourceName: '泡椒内部测试音源',
+    );
+
+    final source = (await repository.loadSources()).single;
+
+    expect(source.id, MemorySourceRepository.builtInSourceId);
+    expect(source.name, '泡椒内部测试音源');
+    expect(source.isBuiltIn, isTrue);
+    expect(source.sourceKeys, ['kw']);
+    expect(
+      () => repository.deleteSource(source.id),
+      throwsA(isA<StateError>()),
+    );
+  });
 }
 
 class _FakeNativeCore extends NativeCoreBridge {

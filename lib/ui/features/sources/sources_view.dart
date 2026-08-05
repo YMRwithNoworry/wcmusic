@@ -31,7 +31,9 @@ class SourcesView extends StatelessWidget {
                 for (final source in viewModel.sources)
                   _SourceRow(
                     source: source,
-                    onDelete: () => _deleteSource(context, source),
+                    onDelete: source.isBuiltIn
+                        ? null
+                        : () => _deleteSource(context, source),
                   ),
               ],
             ),
@@ -116,7 +118,7 @@ class _SourceRow extends StatelessWidget {
   const _SourceRow({required this.source, required this.onDelete});
 
   final SourceScript source;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -168,25 +170,28 @@ class _SourceRow extends StatelessWidget {
               color: Theme.of(context).colorScheme.primary,
             ),
           ),
-          PopupMenuButton<_SourceAction>(
-            icon: const Icon(Icons.more_horiz),
-            tooltip: '音源菜单',
-            onSelected: (action) {
-              if (action == _SourceAction.delete) onDelete();
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: _SourceAction.delete,
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline),
-                    SizedBox(width: 12),
-                    Text('删除音源'),
-                  ],
+          if (source.isBuiltIn)
+            const Tooltip(message: '应用内置音源', child: Icon(Icons.lock_outline))
+          else
+            PopupMenuButton<_SourceAction>(
+              icon: const Icon(Icons.more_horiz),
+              tooltip: '音源菜单',
+              onSelected: (action) {
+                if (action == _SourceAction.delete) onDelete?.call();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _SourceAction.delete,
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline),
+                      SizedBox(width: 12),
+                      Text('删除音源'),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
     );

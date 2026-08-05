@@ -5,15 +5,21 @@ import '../services/source_script_parser.dart';
 import '../services/source_storage.dart';
 
 class MemorySourceRepository implements SourceRepository {
+  static const builtInSourceId = 'wcmusic-paojiao-internal-source';
+
   MemorySourceRepository({
     this._parser = const SourceScriptParser(),
     NativeCoreBridge? nativeCore,
     this._storage,
+    this.builtInScript,
+    this.builtInSourceName = '内置音源',
   }) : _nativeCore = nativeCore ?? NativeCoreBridge();
 
   final SourceScriptParser _parser;
   final NativeCoreBridge _nativeCore;
   final SourceStorage? _storage;
+  final String? builtInScript;
+  final String builtInSourceName;
   final List<SourceScript> _sources = [];
   bool _loaded = false;
 
@@ -46,6 +52,7 @@ class MemorySourceRepository implements SourceRepository {
   @override
   Future<void> deleteSource(String id) async {
     await _ensureLoaded();
+    if (id == builtInSourceId) throw StateError('内置音源不可删除');
     _sources.removeWhere((source) => source.id == id);
     await _persist();
   }
@@ -76,6 +83,34 @@ class MemorySourceRepository implements SourceRepository {
     _sources
       ..clear()
       ..addAll(stored.map(_decode));
+    final bundledScript = builtInScript;
+    if (bundledScript != null) {
+      final nativeResult = _nativeCore.validateSource(bundledScript);
+      if (nativeResult != null && nativeResult['ok'] != true) {
+        throw FormatException(nativeResult['error'] as String? ?? '内置音源初始化失败');
+      }
+      final data = nativeResult?['data'];
+      final parsed = _parser.parse(
+        bundledScript,
+        manifest: data is Map<String, dynamic> ? data : null,
+      );
+      _sources.removeWhere(
+        (source) =>
+            source.id == builtInSourceId || source.name == builtInSourceName,
+      );
+      _sources.add(
+        SourceScript(
+          id: builtInSourceId,
+          name: builtInSourceName,
+          version: parsed.version,
+          author: parsed.author,
+          description: parsed.description,
+          sourceKeys: parsed.sourceKeys,
+          rawScript: parsed.rawScript,
+          isBuiltIn: true,
+        ),
+      );
+    }
     _loaded = true;
   }
 
@@ -91,6 +126,7 @@ class MemorySourceRepository implements SourceRepository {
     'description': source.description,
     'sourceKeys': source.sourceKeys,
     'rawScript': source.rawScript,
+    'isBuiltIn': source.isBuiltIn,
   };
 
   static SourceScript _decode(Map<String, dynamic> value) => SourceScript(
@@ -101,5 +137,6 @@ class MemorySourceRepository implements SourceRepository {
     description: value['description'] as String,
     sourceKeys: (value['sourceKeys'] as List).cast<String>(),
     rawScript: value['rawScript'] as String,
+    isBuiltIn: value['isBuiltIn'] as bool? ?? false,
   );
 }

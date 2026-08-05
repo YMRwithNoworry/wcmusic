@@ -12,6 +12,7 @@ WCMusic 是面向 Windows 与 Android 的 Flutter + Rust 音乐播放器。界�
 - Windows 系统托盘、关闭后后台播放，以及右键托盘显式退出
 - M3U/M3U8 和常见洛雪备份结构导入
 - 洛雪自定义源脚本导入、QuickJS `inited` 协议校验、持久化与删除
+- 内置“泡椒内部测试音源”，无需额外导入即可解析支持平台的整曲地址
 - 深浅主题、有机封面、共享元素转场与 reduced-motion 设置入口
 - Windows Rust DLL 与 Android arm64 Rust `.so` 自动构建接线
 

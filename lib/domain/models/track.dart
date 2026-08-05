@@ -97,6 +97,7 @@ class SourceScript {
     required this.description,
     required this.sourceKeys,
     required this.rawScript,
+    this.isBuiltIn = false,
   });
 
   final String id;
@@ -106,4 +107,5 @@ class SourceScript {
   final String description;
   final List<String> sourceKeys;
   final String rawScript;
+  final bool isBuiltIn;
 }
