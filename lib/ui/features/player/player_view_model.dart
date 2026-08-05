@@ -381,6 +381,22 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> favoriteTrack(String folderId, Track track) async {
+    try {
+      if (!tracks.any((item) => item.id == track.id)) {
+        tracks = [...tracks, track];
+        await musicRepository.saveTracks(tracks);
+      }
+      await musicRepository.addTrackToFolder(folderId, track.id);
+      folders = await musicRepository.loadFolders();
+      final name = selectedFolderName(folderId);
+      message = '已收藏到 ${name ?? '文件夹'}';
+    } on Object catch (error) {
+      message = '收藏失败：$error';
+    }
+    notifyListeners();
+  }
+
   Future<void> removeTrackFromFolder(String folderId, String trackId) async {
     try {
       await musicRepository.removeTrackFromFolder(folderId, trackId);

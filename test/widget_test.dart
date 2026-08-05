@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
@@ -77,6 +78,45 @@ void main() {
     await tester.tap(find.text('QQ 音乐'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(searchService.lastChannel, OnlineSearchChannel.qqMusic);
+  });
+
+  testWidgets('favorites an online search result from the right-click menu', (
+    tester,
+  ) async {
+    const result = Track(
+      id: 'online-favorite',
+      title: '可收藏在线歌曲',
+      artist: '测试歌手',
+      album: '云端专辑',
+      duration: Duration(minutes: 4),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.custom,
+    );
+    final repository = MemoryMusicRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: repository,
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(const [result]),
+      playerService: FakePlayerService(),
+    );
+    await viewModel.load();
+    await viewModel.createFolder('在线收藏');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('搜索').first);
+    await tester.pumpAndSettle();
+    await viewModel.searchOnline('收藏');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('可收藏在线歌曲'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收藏到 在线收藏'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.folders.single.trackIds, contains(result.id));
+    expect(await repository.loadTracks(), contains(result));
   });
 
   testWidgets('home shows covers for platform playlists and new tracks', (
@@ -180,6 +220,7 @@ void main() {
       playerService: FakePlayerService(),
     );
     await viewModel.load();
+    await viewModel.createFolder('歌单收藏');
     await tester.pumpWidget(
       ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
     );
@@ -198,6 +239,12 @@ void main() {
     await tester.tap(find.text('今日热门'));
     await tester.pumpAndSettle();
     expect(find.text('歌单歌曲'), findsOneWidget);
+
+    await tester.tap(find.text('歌单歌曲'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收藏到 歌单收藏'));
+    await tester.pumpAndSettle();
+    expect(viewModel.folders.single.trackIds, contains(playlistTrack.id));
 
     await tester.tap(find.text('歌单歌曲'));
     await tester.pump(const Duration(milliseconds: 500));

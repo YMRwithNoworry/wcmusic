@@ -5,6 +5,7 @@ import '../../../domain/models/track.dart';
 import '../../../data/services/online_search_service.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
+import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
 
 class SearchView extends StatefulWidget {
@@ -134,6 +135,8 @@ class _OnlineTrackRow extends StatelessWidget {
     final active = viewModel.current?.id == track.id;
     return InkWell(
       onTap: () => viewModel.playTrack(track),
+      onSecondaryTap: () => showTrackFavoriteMenu(context, track),
+      onLongPress: () => showTrackFavoriteMenu(context, track),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
@@ -174,11 +177,15 @@ class _OnlineTrackRow extends StatelessWidget {
             const SizedBox(width: 12),
             Text(_duration(track.duration)),
             const SizedBox(width: 8),
-            Icon(
-              active && viewModel.isPlaying
-                  ? Icons.graphic_eq
-                  : Icons.play_circle_outline,
-              color: active ? Theme.of(context).colorScheme.primary : null,
+            IconButton(
+              onPressed: () => showTrackFavoriteMenu(context, track),
+              icon: Icon(
+                active && viewModel.isPlaying
+                    ? Icons.graphic_eq
+                    : Icons.more_horiz,
+                color: active ? Theme.of(context).colorScheme.primary : null,
+              ),
+              tooltip: '更多',
             ),
           ],
         ),

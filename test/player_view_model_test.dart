@@ -608,6 +608,41 @@ void main() {
     expect(viewModel.folderTracks.single.id, testLibraryTracks.first.id);
   });
 
+  test('persists an online track before adding it to a folder', () async {
+    final repository = MemoryMusicRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: repository,
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    final folder = await viewModel.createFolder('在线收藏');
+    const onlineTrack = Track(
+      id: 'online-persisted',
+      title: '在线歌曲',
+      artist: '歌手',
+      album: '专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/song.mp3',
+      source: TrackSource.custom,
+    );
+
+    await viewModel.favoriteTrack(folder!.id, onlineTrack);
+
+    final reloaded = PlayerViewModel(
+      musicRepository: repository,
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(reloaded.dispose);
+    await reloaded.load();
+    reloaded.selectFolder(folder.id);
+    expect(reloaded.folderTracks, const [onlineTrack]);
+  });
+
   test('imports a folder of sources and reports failures', () async {
     final repository = _BulkSourceRepository();
     final viewModel = PlayerViewModel(

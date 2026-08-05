@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
+import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
 
 class PlaylistsView extends StatelessWidget {
@@ -185,36 +186,48 @@ class PlaylistsView extends StatelessWidget {
                 separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final track = playlist.tracks[index];
-                  return ListTile(
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child:
-                          track.artworkUri == null || track.artworkUri!.isEmpty
-                          ? OrganicArtwork(seed: track.id, size: 48)
-                          : Image.network(
-                              track.artworkUri!,
-                              width: 48,
-                              height: 48,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) =>
-                                  OrganicArtwork(seed: track.id, size: 48),
-                            ),
+                  return GestureDetector(
+                    onSecondaryTap: () =>
+                        showTrackFavoriteMenu(sheetContext, track),
+                    child: ListTile(
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child:
+                            track.artworkUri == null ||
+                                track.artworkUri!.isEmpty
+                            ? OrganicArtwork(seed: track.id, size: 48)
+                            : Image.network(
+                                track.artworkUri!,
+                                width: 48,
+                                height: 48,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) =>
+                                    OrganicArtwork(seed: track.id, size: 48),
+                              ),
+                      ),
+                      title: Text(
+                        track.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        track.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        onPressed: () =>
+                            showTrackFavoriteMenu(sheetContext, track),
+                        icon: const Icon(Icons.more_horiz),
+                        tooltip: '更多',
+                      ),
+                      onLongPress: () =>
+                          showTrackFavoriteMenu(sheetContext, track),
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        viewModel.playTrack(track);
+                      },
                     ),
-                    title: Text(
-                      track.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      track.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: const Icon(Icons.play_arrow),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      viewModel.playTrack(track);
-                    },
                   );
                 },
               ),

@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/remote_artwork.dart';
+import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
 
 class HomeView extends StatelessWidget {
@@ -99,6 +100,10 @@ class HomeView extends StatelessWidget {
                           seed: track.id,
                           artworkUri: track.artworkUri,
                           onTap: () => viewModel.playTrack(track),
+                          onSecondaryTap: () =>
+                              showTrackFavoriteMenu(context, track),
+                          onLongPress: () =>
+                              showTrackFavoriteMenu(context, track),
                         );
                       },
                     );
@@ -372,6 +377,8 @@ class _AlbumTile extends StatefulWidget {
     required this.seed,
     required this.onTap,
     this.artworkUri,
+    this.onSecondaryTap,
+    this.onLongPress,
   });
 
   final String title;
@@ -379,6 +386,8 @@ class _AlbumTile extends StatefulWidget {
   final String seed;
   final String? artworkUri;
   final VoidCallback onTap;
+  final VoidCallback? onSecondaryTap;
+  final VoidCallback? onLongPress;
 
   @override
   State<_AlbumTile> createState() => _AlbumTileState();
@@ -394,6 +403,8 @@ class _AlbumTileState extends State<_AlbumTile> {
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
+        onSecondaryTap: widget.onSecondaryTap,
+        onLongPress: widget.onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

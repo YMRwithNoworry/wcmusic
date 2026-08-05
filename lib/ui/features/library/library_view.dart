@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
+import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
 
 class LibraryView extends StatelessWidget {
@@ -168,8 +169,16 @@ class _TrackRow extends StatelessWidget {
     final viewModel = context.read<PlayerViewModel>();
     return InkWell(
       onTap: () => viewModel.playTrack(track),
-      onSecondaryTap: () => _showMenu(context),
-      onLongPress: () => _showMenu(context),
+      onSecondaryTap: () => showTrackFavoriteMenu(
+        context,
+        track,
+        removableFolderId: viewModel.selectedFolderId,
+      ),
+      onLongPress: () => showTrackFavoriteMenu(
+        context,
+        track,
+        removableFolderId: viewModel.selectedFolderId,
+      ),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 8),
@@ -207,7 +216,11 @@ class _TrackRow extends StatelessWidget {
             const SizedBox(width: 12),
             Text(_duration(track.duration)),
             IconButton(
-              onPressed: () => _showMenu(context),
+              onPressed: () => showTrackFavoriteMenu(
+                context,
+                track,
+                removableFolderId: viewModel.selectedFolderId,
+              ),
               icon: const Icon(Icons.more_horiz),
               tooltip: '更多',
             ),
@@ -220,119 +233,6 @@ class _TrackRow extends StatelessWidget {
   String _duration(Duration duration) {
     if (duration == Duration.zero) return '--:--';
     return '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
-  }
-
-  Future<void> _showMenu(BuildContext context) async {
-    final viewModel = context.read<PlayerViewModel>();
-    final currentFolder = viewModel.selectedFolder;
-    final inCurrentFolder = currentFolder?.trackIds.contains(track.id) ?? false;
-    final action = await showMenu<String>(
-      context: context,
-      position: _menuPosition(context),
-      items: [
-        if (inCurrentFolder)
-          const PopupMenuItem(
-            value: '__remove__',
-            child: Row(
-              children: [
-                Icon(Icons.folder_off_outlined),
-                SizedBox(width: 12),
-                Text('移出当前文件夹'),
-              ],
-            ),
-          ),
-        for (final folder in viewModel.folders)
-          PopupMenuItem(
-            value: folder.id,
-            child: Row(
-              children: [
-                Icon(
-                  folder.trackIds.contains(track.id)
-                      ? Icons.check_circle_outline
-                      : Icons.folder_outlined,
-                ),
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Text(
-                    folder.trackIds.contains(track.id)
-                        ? '${folder.name}（已收藏）'
-                        : '收藏到 ${folder.name}',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        const PopupMenuItem(
-          value: '__new__',
-          child: Row(
-            children: [
-              Icon(Icons.create_new_folder_outlined),
-              SizedBox(width: 12),
-              Text('新建文件夹并收藏'),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (action == null || !context.mounted) return;
-    if (action == '__remove__' && currentFolder != null) {
-      await viewModel.removeTrackFromFolder(currentFolder.id, track.id);
-      return;
-    }
-    if (action == '__new__') {
-      final name = await _promptFolderName(context);
-      if (name == null || !context.mounted) return;
-      final folder = await viewModel.createFolder(name);
-      if (folder != null) {
-        await viewModel.addTrackToFolder(folder.id, track.id);
-      }
-      return;
-    }
-    await viewModel.addTrackToFolder(action, track.id);
-  }
-
-  Future<String?> _promptFolderName(BuildContext context) async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新建文件夹'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '文件夹名称'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('创建并收藏'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return name == null || name.isEmpty ? null : name;
-  }
-
-  RelativeRect _menuPosition(BuildContext context) {
-    final box = context.findRenderObject() as RenderBox?;
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (box == null || overlay == null || !box.hasSize) {
-      return RelativeRect.fromLTRB(0, 0, 0, 0);
-    }
-    return RelativeRect.fromRect(
-      Rect.fromPoints(
-        box.localToGlobal(Offset.zero),
-        box.localToGlobal(box.size.bottomRight(Offset.zero)),
-      ),
-      Offset.zero & overlay.size,
-    );
   }
 }
 
