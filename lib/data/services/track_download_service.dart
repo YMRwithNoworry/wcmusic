@@ -9,15 +9,15 @@ typedef DownloadPathResolver =
     Future<String?> Function(Track track, String extension);
 
 const _audioExtensions = {
-  'mp3',
-  'flac',
-  'm4a',
-  'wav',
-  'ogg',
-  'aac',
-  'opus',
-  'ape',
-  'wma',
+  '.mp3',
+  '.flac',
+  '.m4a',
+  '.wav',
+  '.ogg',
+  '.aac',
+  '.opus',
+  '.ape',
+  '.wma',
 };
 
 class TrackDownloadService {
@@ -45,7 +45,10 @@ class TrackDownloadService {
         ? await _pathResolver(track, extension)
         : await _defaultPath(track, extension);
     if (path == null) throw StateError('已取消下载');
-    return _downloadTo(uri, path, onProgress, null);
+    if (_isNetworkUri(uri)) {
+      return _downloadTo(uri, path, onProgress, null);
+    }
+    return _copyLocalTo(track.uri, uri, path, onProgress);
   }
 
   Future<String> downloadToCache(
@@ -105,6 +108,30 @@ class TrackDownloadService {
     } finally {
       client.close(force: true);
     }
+  }
+
+  Future<String> _copyLocalTo(
+    String sourcePath,
+    Uri uri,
+    String targetPath,
+    void Function(double progress) onProgress,
+  ) async {
+    final source = uri.scheme == 'file' ? File.fromUri(uri) : File(sourcePath);
+    if (!await source.exists()) {
+      throw StateError('本地音频文件不存在');
+    }
+    final target = File(targetPath);
+    if (source.absolute.path != target.absolute.path) {
+      await target.parent.create(recursive: true);
+      await source.copy(target.path);
+    }
+    onProgress(1);
+    return target.path;
+  }
+
+  bool _isNetworkUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
   }
 
   String _extensionFor(Uri uri, String fallback) {

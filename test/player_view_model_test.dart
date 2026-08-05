@@ -493,6 +493,7 @@ void main() {
     await viewModel.downloadCurrentTrack();
 
     expect(downloader.downloadedTrack?.id, 'download');
+    expect(downloader.downloadedTrack?.uri, downloader.cachedPath);
     expect(viewModel.message, contains('已下载到'));
   });
 

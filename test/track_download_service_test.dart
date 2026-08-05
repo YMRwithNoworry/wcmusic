@@ -71,6 +71,42 @@ void main() {
     expect(await File(path).readAsBytes(), bytes);
   });
 
+  test('copies a cached local track to the chosen path', () async {
+    final directory = await Directory.systemTemp.createTemp('wcmusic-copy-');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File(
+      '${directory.path}${Platform.pathSeparator}cached.flac',
+    );
+    final target = '${directory.path}${Platform.pathSeparator}download.flac';
+    final bytes = List<int>.generate(768, (index) => index % 251);
+    await source.writeAsBytes(bytes);
+    String? capturedExtension;
+    final service = TrackDownloadService(
+      pathResolver: (track, extension) async {
+        capturedExtension = extension;
+        return target;
+      },
+    );
+    final progress = <double>[];
+
+    final path = await service.download(
+      Track(
+        id: 'cached-song',
+        title: '缓存歌曲',
+        artist: '缓存歌手',
+        album: '缓存专辑',
+        duration: const Duration(minutes: 3),
+        uri: source.path,
+      ),
+      onProgress: progress.add,
+    );
+
+    expect(path, target);
+    expect(capturedExtension, '.flac');
+    expect(await File(path).readAsBytes(), bytes);
+    expect(progress, [1.0]);
+  });
+
   test('throws when the download is cancelled', () async {
     final service = TrackDownloadService(
       pathResolver: (track, extension) async => null,
