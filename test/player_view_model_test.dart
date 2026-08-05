@@ -6,6 +6,7 @@ import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/floating_lyrics_service.dart';
 import 'package:wcmusic/data/services/lyric_service.dart';
 import 'package:wcmusic/domain/models/lyric_line.dart';
+import 'package:wcmusic/domain/models/playback_mode.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/domain/repositories/source_repository.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
@@ -290,6 +291,132 @@ void main() {
 
     expect(viewModel.selectedSourceId, isNull);
     expect(sourceRepository.selectedId, isNull);
+  });
+
+  test('cycles playback modes in a fixed order', () async {
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+
+    expect(viewModel.playbackMode, PlaybackMode.listLoop);
+
+    viewModel.cyclePlaybackMode();
+    expect(viewModel.playbackMode, PlaybackMode.shuffle);
+
+    viewModel.cyclePlaybackMode();
+    expect(viewModel.playbackMode, PlaybackMode.singleLoop);
+
+    viewModel.cyclePlaybackMode();
+    expect(viewModel.playbackMode, PlaybackMode.sequence);
+
+    viewModel.cyclePlaybackMode();
+    expect(viewModel.playbackMode, PlaybackMode.listLoop);
+  });
+
+  test('list loop advances and wraps when a track completes', () async {
+    final player = FakePlayerService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.playTrack(viewModel.tracks.first);
+    player.emitCompleted();
+    await Future<void>.delayed(Duration.zero);
+    expect(viewModel.current?.id, testLibraryTracks[1].id);
+
+    for (var index = 1; index < testLibraryTracks.length; index++) {
+      player.emitCompleted();
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(viewModel.current?.id, testLibraryTracks.first.id);
+  });
+
+  test('sequence playback stops after the last track', () async {
+    final player = FakePlayerService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    while (viewModel.playbackMode != PlaybackMode.sequence) {
+      viewModel.cyclePlaybackMode();
+    }
+
+    await viewModel.playTrack(viewModel.tracks.first);
+    for (var index = 1; index < testLibraryTracks.length; index++) {
+      player.emitCompleted();
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(viewModel.current?.id, testLibraryTracks.last.id);
+
+    player.emitCompleted();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.isPlaying, isFalse);
+    expect(player.stopped, isTrue);
+  });
+
+  test('single loop replays the current track', () async {
+    const track = Track(
+      id: 'single',
+      title: '单曲',
+      artist: '歌手',
+      album: '专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/single.mp3',
+    );
+    final player = FakePlayerService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    while (viewModel.playbackMode != PlaybackMode.singleLoop) {
+      viewModel.cyclePlaybackMode();
+    }
+
+    await viewModel.playTrack(viewModel.tracks.single);
+    player.emitCompleted();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.current?.id, 'single');
+    expect(player.playedTrack?.id, 'single');
+  });
+
+  test('shuffle advances to a different track', () async {
+    final player = FakePlayerService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    while (viewModel.playbackMode != PlaybackMode.shuffle) {
+      viewModel.cyclePlaybackMode();
+    }
+
+    await viewModel.playTrack(viewModel.tracks.first);
+    player.emitCompleted();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.current?.id, isNot(testLibraryTracks.first.id));
   });
 }
 

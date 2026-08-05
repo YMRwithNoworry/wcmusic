@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
+import 'playback_mode_button.dart';
 import 'playback_controls.dart';
 import 'player_view_model.dart';
 
@@ -137,14 +138,10 @@ class _FocusedPlayer extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      IconButton(
-                        onPressed: () {},
-                        icon: const Icon(Icons.shuffle),
-                        tooltip: '随机播放',
-                      ),
+                      const PlaybackModeButton(),
                       const SizedBox(width: 12),
                       IconButton(
-                        onPressed: () {},
+                        onPressed: viewModel.playPrevious,
                         icon: const Icon(Icons.skip_previous, size: 34),
                         tooltip: '上一首',
                       ),
@@ -159,15 +156,9 @@ class _FocusedPlayer extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       IconButton(
-                        onPressed: () {},
+                        onPressed: viewModel.playNext,
                         icon: const Icon(Icons.skip_next, size: 34),
                         tooltip: '下一首',
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton(
-                        onPressed: () {},
-                        icon: const Icon(Icons.repeat),
-                        tooltip: '循环模式',
                       ),
                     ],
                   ),

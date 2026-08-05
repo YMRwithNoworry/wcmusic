@@ -9,6 +9,7 @@ import '../../../data/services/desktop_window_service.dart';
 import '../../../data/services/floating_lyrics_service.dart';
 import '../../../data/services/lyric_service.dart';
 import '../../../domain/models/lyric_line.dart';
+import '../../../domain/models/playback_mode.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -47,6 +48,9 @@ class PlayerViewModel extends ChangeNotifier {
       volume = value.clamp(0.0, 1.0);
       notifyListeners();
     });
+    _completedSubscription = this.playerService.completed.listen((_) {
+      unawaited(_handleCompleted());
+    });
   }
 
   final MusicRepository musicRepository;
@@ -70,6 +74,7 @@ class PlayerViewModel extends ChangeNotifier {
   double _volumeBeforeMute = .8;
   String? message;
   bool floatingLyricsEnabled = false;
+  PlaybackMode playbackMode = PlaybackMode.listLoop;
   List<LyricLine> lyrics = const [];
   int currentLyricIndex = -1;
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
@@ -94,6 +99,7 @@ class PlayerViewModel extends ChangeNotifier {
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<double>? _volumeSubscription;
+  StreamSubscription<void>? _completedSubscription;
 
   Duration get playbackDuration =>
       duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
@@ -354,6 +360,79 @@ class PlayerViewModel extends ChangeNotifier {
     isPlaying = shouldPlay;
     notifyListeners();
   }
+
+  void cyclePlaybackMode() {
+    playbackMode = PlaybackMode
+        .values[(playbackMode.index + 1) % PlaybackMode.values.length];
+    notifyListeners();
+  }
+
+  Future<void> playNext() => _advance(auto: false);
+
+  Future<void> playPrevious() async {
+    if (tracks.isEmpty || current == null) return;
+    final index = _currentIndex;
+    if (index < 0) return;
+    await playTrack(tracks[(index - 1 + tracks.length) % tracks.length]);
+  }
+
+  Future<void> _handleCompleted() async {
+    if (current == null) return;
+    if (playbackMode == PlaybackMode.singleLoop) {
+      await _replayCurrent();
+      return;
+    }
+    await _advance(auto: true);
+  }
+
+  Future<void> _advance({required bool auto}) async {
+    if (tracks.isEmpty || current == null) return;
+    final index = _currentIndex;
+    final Track? next;
+    if (playbackMode == PlaybackMode.shuffle) {
+      next = _randomTrack(index);
+    } else {
+      final candidate = index + 1;
+      if (candidate < tracks.length) {
+        next = tracks[candidate];
+      } else if (playbackMode == PlaybackMode.listLoop || !auto) {
+        next = tracks.first;
+      } else {
+        next = null;
+      }
+    }
+    if (next == null) {
+      await playerService.stop();
+      isPlaying = false;
+      position = Duration.zero;
+      notifyListeners();
+      return;
+    }
+    await playTrack(next);
+  }
+
+  Track? _randomTrack(int exceptIndex) {
+    if (tracks.isEmpty) return null;
+    if (tracks.length == 1) return tracks.first;
+    final candidates = [
+      for (var index = 0; index < tracks.length; index++)
+        if (index != exceptIndex) tracks[index],
+    ];
+    if (candidates.isEmpty) return tracks.first;
+    return candidates[Random().nextInt(candidates.length)];
+  }
+
+  Future<void> _replayCurrent() async {
+    final track = current;
+    if (track == null || track.uri.isEmpty) return;
+    await playerService.seek(Duration.zero);
+    await playerService.play(track);
+    isPlaying = true;
+    notifyListeners();
+  }
+
+  int get _currentIndex =>
+      tracks.indexWhere((track) => track.id == current?.id);
 
   Future<void> seek(double value) async {
     final maximum = playbackDuration.inMilliseconds;
@@ -619,6 +698,7 @@ class PlayerViewModel extends ChangeNotifier {
     unawaited(_positionSubscription?.cancel());
     unawaited(_durationSubscription?.cancel());
     unawaited(_volumeSubscription?.cancel());
+    unawaited(_completedSubscription?.cancel());
     unawaited(playerService.dispose());
     unawaited(floatingLyricsService.dispose());
     super.dispose();

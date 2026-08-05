@@ -9,8 +9,10 @@ abstract interface class AudioPlayerService {
   Stream<Duration> get position;
   Stream<Duration> get duration;
   Stream<double> get volume;
+  Stream<void> get completed;
   Future<void> play(Track track);
   Future<void> toggle();
+  Future<void> stop();
   Future<void> seek(Duration position);
   Future<void> setVolume(double volume);
   Future<void> dispose();
@@ -47,6 +49,9 @@ class PlayerService implements AudioPlayerService {
   );
 
   @override
+  Stream<void> get completed => player.stream.completed;
+
+  @override
   Future<void> play(Track track) async {
     if (track.uri.isEmpty) return;
     _networkTrack = _isNetworkTrack(track) ? track : null;
@@ -56,6 +61,9 @@ class PlayerService implements AudioPlayerService {
 
   @override
   Future<void> toggle() => player.playOrPause();
+
+  @override
+  Future<void> stop() => player.stop();
 
   @override
   Future<void> seek(Duration position) => player.seek(position);

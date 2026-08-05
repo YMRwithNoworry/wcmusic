@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/organic_artwork.dart';
+import 'playback_mode_button.dart';
 import 'playback_controls.dart';
 import 'player_view_model.dart';
 
@@ -61,8 +62,10 @@ class PlayerBar extends StatelessWidget {
                         ),
                       ),
                       if (!compact) ...[
+                        PlaybackModeButton(),
+                        const SizedBox(width: 2),
                         IconButton(
-                          onPressed: () {},
+                          onPressed: viewModel.playPrevious,
                           icon: const Icon(Icons.skip_previous),
                           tooltip: '上一首',
                         ),
@@ -84,7 +87,7 @@ class PlayerBar extends StatelessWidget {
                       if (!compact) ...[
                         const SizedBox(width: 2),
                         IconButton(
-                          onPressed: () {},
+                          onPressed: viewModel.playNext,
                           icon: const Icon(Icons.skip_next),
                           tooltip: '下一首',
                         ),
@@ -92,6 +95,10 @@ class PlayerBar extends StatelessWidget {
                           width: 132,
                           child: VolumeControl(showLabel: false),
                         ),
+                      ],
+                      if (compact) ...[
+                        PlaybackModeButton(),
+                        const SizedBox(width: 6),
                       ],
                       const SizedBox(width: 14),
                     ],

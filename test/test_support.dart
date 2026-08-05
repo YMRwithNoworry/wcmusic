@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:wcmusic/data/services/player_service.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/data/services/desktop_window_service.dart';
@@ -50,6 +52,8 @@ class FakePlayerService implements AudioPlayerService {
   Duration? soughtPosition;
   double? setVolumeValue;
   Track? playedTrack;
+  bool stopped = false;
+  final _completedController = StreamController<void>.broadcast(sync: true);
 
   @override
   Stream<Duration> get duration => const Stream.empty();
@@ -64,11 +68,21 @@ class FakePlayerService implements AudioPlayerService {
   Stream<double> get volume => const Stream.empty();
 
   @override
-  Future<void> dispose() async {}
+  Stream<void> get completed => _completedController.stream;
+
+  @override
+  Future<void> dispose() async {
+    await _completedController.close();
+  }
 
   @override
   Future<void> play(Track track) async {
     playedTrack = track;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopped = true;
   }
 
   @override
@@ -83,6 +97,8 @@ class FakePlayerService implements AudioPlayerService {
 
   @override
   Future<void> toggle() async {}
+
+  void emitCompleted() => _completedController.add(null);
 }
 
 class FakeOnlineSearchService implements OnlineSearchService {
