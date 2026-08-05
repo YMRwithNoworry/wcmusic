@@ -10,6 +10,7 @@ import '../../../data/services/floating_lyrics_service.dart';
 import '../../../data/services/lyric_service.dart';
 import '../../../data/services/track_download_service.dart';
 import '../../../domain/models/lyric_line.dart';
+import '../../../domain/models/lyrics_overlay_style.dart';
 import '../../../domain/models/playback_mode.dart';
 import '../../../domain/models/playback_quality.dart';
 import '../../../domain/models/source_import_result.dart';
@@ -84,6 +85,7 @@ class PlayerViewModel extends ChangeNotifier {
   double _volumeBeforeMute = .8;
   String? message;
   bool floatingLyricsEnabled = false;
+  LyricsOverlayStyle lyricsStyle = const LyricsOverlayStyle();
   PlaybackMode playbackMode = PlaybackMode.listLoop;
   PlaybackQuality playbackQuality = PlaybackQuality.high;
   bool isDownloading = false;
@@ -144,6 +146,7 @@ class PlayerViewModel extends ChangeNotifier {
       unawaited(refreshPlatformPlaylists());
       unawaited(refreshRecentTracks());
       unawaited(_upgradeEmptyPlatformFavorites());
+      unawaited(_loadLyricsStyle());
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
@@ -606,6 +609,27 @@ class PlayerViewModel extends ChangeNotifier {
       message = '开启歌词浮层失败：$error';
     }
     notifyListeners();
+  }
+
+  Future<void> _loadLyricsStyle() async {
+    try {
+      lyricsStyle = await floatingLyricsService.loadStyle();
+      notifyListeners();
+    } on Object {
+      // 使用默认样式
+    }
+  }
+
+  Future<void> updateLyricsStyle(LyricsOverlayStyle style) async {
+    lyricsStyle = style;
+    notifyListeners();
+    try {
+      await floatingLyricsService.setStyle(style);
+      await floatingLyricsService.saveStyle(style);
+    } on Object catch (error) {
+      message = '更新歌词样式失败：$error';
+      notifyListeners();
+    }
   }
 
   Future<void> _loadLyrics(Track track) async {

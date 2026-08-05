@@ -27,17 +27,19 @@ bool LyricsOverlay::Create() {
   SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
   const int work_width = work_area.right - work_area.left;
   const int width = std::min(900, std::max(420, work_width - 80));
-  const int x = work_area.left + (work_width - width) / 2;
-  const int y = work_area.bottom - kOverlayHeight - 72;
+  int x = style_.has_position
+      ? style_.x
+      : work_area.left + (work_width - width) / 2;
+  int y = style_.has_position
+      ? style_.y
+      : work_area.bottom - kOverlayHeight - 72;
   window_ = CreateWindowEx(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE |
           WS_EX_TRANSPARENT,
       kWindowClassName, L"WCMusic Desktop Lyrics", WS_POPUP, x, y, width,
       kOverlayHeight, nullptr, nullptr, instance, this);
   if (!window_) return false;
-  SetLayeredWindowAttributes(window_, 0, 224, LWA_ALPHA);
-  SetWindowRgn(window_, CreateRoundRectRgn(0, 0, width, kOverlayHeight, 18, 18),
-               TRUE);
+  ApplyWindowAttributes();
   return true;
 }
 
@@ -59,10 +61,43 @@ void LyricsOverlay::Update(const std::string& current_line,
   if (window_) InvalidateRect(window_, nullptr, TRUE);
 }
 
+void LyricsOverlay::ApplyStyle(const LyricsOverlayStyle& style) {
+  style_ = style;
+  if (!window_) return;
+  ApplyWindowAttributes();
+  if (style_.has_position) {
+    SetWindowPos(window_, HWND_TOPMOST, style_.x, style_.y, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE);
+  }
+  InvalidateRect(window_, nullptr, TRUE);
+}
+
+void LyricsOverlay::SetPositionCallback(PositionCallback callback) {
+  position_callback_ = std::move(callback);
+}
+
 void LyricsOverlay::Destroy() {
   if (!window_) return;
   DestroyWindow(window_);
   window_ = nullptr;
+}
+
+void LyricsOverlay::ApplyWindowAttributes() {
+  SetLayeredWindowAttributes(
+      window_, 0, static_cast<BYTE>(style_.opacity), LWA_ALPHA);
+  RECT bounds{};
+  GetClientRect(window_, &bounds);
+  const int radius = std::max(0, style_.corner_radius);
+  SetWindowRgn(
+      window_,
+      CreateRoundRectRgn(0, 0, bounds.right, bounds.bottom, radius, radius),
+      TRUE);
+  const LONG_PTR ex_style = GetWindowLongPtr(window_, GWL_EXSTYLE);
+  if (style_.locked) {
+    SetWindowLongPtr(window_, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT);
+  } else {
+    SetWindowLongPtr(window_, GWL_EXSTYLE, ex_style & ~WS_EX_TRANSPARENT);
+  }
 }
 
 LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
@@ -82,7 +117,15 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
       if (overlay) overlay->Paint();
       return 0;
     case WM_NCHITTEST:
+      if (overlay && !overlay->style_.locked) return HTCAPTION;
       return HTTRANSPARENT;
+    case WM_EXITSIZEMOVE:
+      if (overlay && !overlay->style_.locked && overlay->position_callback_) {
+        RECT bounds{};
+        GetWindowRect(window, &bounds);
+        overlay->position_callback_(bounds.left, bounds.top);
+      }
+      return 0;
     case WM_DESTROY:
       return 0;
   }
@@ -94,10 +137,14 @@ void LyricsOverlay::Paint() {
   HDC dc = BeginPaint(window_, &paint);
   RECT bounds{};
   GetClientRect(window_, &bounds);
-  HBRUSH background = CreateSolidBrush(RGB(28, 31, 27));
+  HBRUSH background = CreateSolidBrush(style_.background_color);
   FillRect(dc, &bounds, background);
   DeleteObject(background);
   SetBkMode(dc, TRANSPARENT);
+
+  const int align_flag = style_.align == DT_LEFT
+      ? DT_LEFT
+      : style_.align == DT_RIGHT ? DT_RIGHT : DT_CENTER;
 
   RECT current_bounds = bounds;
   current_bounds.left += 28;
@@ -105,28 +152,30 @@ void LyricsOverlay::Paint() {
   current_bounds.top = 14;
   current_bounds.bottom = 64;
   HFONT current_font = CreateFont(
-      -30, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+      -style_.font_size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+      style_.font_family.c_str());
   HFONT previous_font =
       static_cast<HFONT>(SelectObject(dc, current_font));
-  SetTextColor(dc, RGB(245, 243, 236));
+  SetTextColor(dc, style_.text_color);
   DrawText(dc, current_line_.c_str(), -1, &current_bounds,
-           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+           align_flag | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
   RECT next_bounds = bounds;
   next_bounds.left += 32;
   next_bounds.right -= 32;
   next_bounds.top = 62;
   next_bounds.bottom -= 10;
+  const int next_size = std::max(12, style_.font_size * 3 / 5);
   HFONT next_font = CreateFont(
-      -18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      -next_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+      DEFAULT_PITCH | FF_DONTCARE, style_.font_family.c_str());
   SelectObject(dc, next_font);
-  SetTextColor(dc, RGB(167, 197, 143));
+  SetTextColor(dc, style_.text_color);
   DrawText(dc, next_line_.c_str(), -1, &next_bounds,
-           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+           align_flag | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
   SelectObject(dc, previous_font);
   DeleteObject(current_font);

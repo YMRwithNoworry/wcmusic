@@ -7,6 +7,57 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "lyrics_overlay.h"
 
+namespace {
+
+std::wstring Utf8ToWide(const std::string& value) {
+  if (value.empty()) return L"";
+  const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(),
+                                       static_cast<int>(value.size()), nullptr, 0);
+  std::wstring result(size, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+                      result.data(), size);
+  return result;
+}
+
+COLORREF ArgbToColorRef(int64_t value) {
+  return RGB((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
+}
+
+const flutter::EncodableValue* FindArgument(
+    const flutter::EncodableMap* arguments,
+    const char* key) {
+  if (!arguments) return nullptr;
+  const auto it = arguments->find(flutter::EncodableValue(key));
+  return it == arguments->end() ? nullptr : &it->second;
+}
+
+double DoubleValue(const flutter::EncodableValue* value, double fallback) {
+  if (!value || value->IsNull()) return fallback;
+  if (const auto number = std::get_if<double>(value)) return *number;
+  if (const auto number = std::get_if<int32_t>(value)) {
+    return static_cast<double>(*number);
+  }
+  if (const auto number = std::get_if<int64_t>(value)) {
+    return static_cast<double>(*number);
+  }
+  return fallback;
+}
+
+bool BoolValue(const flutter::EncodableValue* value, bool fallback) {
+  if (!value || value->IsNull()) return fallback;
+  if (const auto flag = std::get_if<bool>(value)) return *flag;
+  return fallback;
+}
+
+std::string StringValue(const flutter::EncodableValue* value,
+                        const std::string& fallback) {
+  if (!value || value->IsNull()) return fallback;
+  if (const auto text = std::get_if<std::string>(value)) return *text;
+  return fallback;
+}
+
+}  // namespace
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
@@ -83,8 +134,53 @@ bool FlutterWindow::OnCreate() {
           result->Success();
           return;
         }
+        if (call.method_name() == "setStyle") {
+          LyricsOverlayStyle style;
+          const auto* font = FindArgument(arguments, "fontFamily");
+          if (font) style.font_family = Utf8ToWide(StringValue(font, "Microsoft YaHei UI"));
+          style.font_size = static_cast<int>(DoubleValue(
+              FindArgument(arguments, "fontSize"), 30));
+          const std::string align = StringValue(
+              FindArgument(arguments, "align"), "center");
+          if (align == "left") {
+            style.align = DT_LEFT;
+          } else if (align == "right") {
+            style.align = DT_RIGHT;
+          } else {
+            style.align = DT_CENTER;
+          }
+          style.text_color = ArgbToColorRef(static_cast<int64_t>(
+              DoubleValue(FindArgument(arguments, "textColor"), 0xFFF5F3EC)));
+          style.background_color = ArgbToColorRef(static_cast<int64_t>(
+              DoubleValue(FindArgument(arguments, "backgroundColor"),
+                          0xFF1C1F1B)));
+          style.opacity = static_cast<int>(
+              DoubleValue(FindArgument(arguments, "opacity"), 0.88) * 255);
+          style.corner_radius = static_cast<int>(DoubleValue(
+              FindArgument(arguments, "cornerRadius"), 18));
+          style.locked = BoolValue(FindArgument(arguments, "locked"), true);
+          const auto* x = FindArgument(arguments, "x");
+          const auto* y = FindArgument(arguments, "y");
+          if (x && y && !x->IsNull() && !y->IsNull()) {
+            style.has_position = true;
+            style.x = static_cast<int>(DoubleValue(x, 0));
+            style.y = static_cast<int>(DoubleValue(y, 0));
+          }
+          lyrics_overlay_->ApplyStyle(style);
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
+  lyrics_overlay_->SetPositionCallback([this](int x, int y) {
+    if (!lyrics_channel_) return;
+    flutter::EncodableMap map;
+    map[flutter::EncodableValue("x")] = flutter::EncodableValue(x);
+    map[flutter::EncodableValue("y")] = flutter::EncodableValue(y);
+    lyrics_channel_->InvokeMethod(
+        "positionChanged",
+        std::make_unique<flutter::EncodableValue>(std::move(map)));
+  });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

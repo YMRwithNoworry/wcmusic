@@ -5,6 +5,7 @@ import '../../../domain/models/playback_quality.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
 import 'feedback_dialog.dart';
+import 'lyrics_style_controls.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -42,6 +43,7 @@ class _SettingsViewState extends State<SettingsView> {
                 title: Text(isAndroid ? '悬浮窗歌词' : '桌面歌词'),
                 subtitle: Text(isAndroid ? '在其他应用上方同步显示歌词' : '在桌面置顶窗口中同步显示歌词'),
               ),
+              if (!isAndroid) const LyricsStyleControls(),
               ListTile(
                 title: const Text('播放音量'),
                 subtitle: Slider(

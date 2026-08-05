@@ -7,6 +7,7 @@ import 'package:wcmusic/data/services/floating_lyrics_service.dart';
 import 'package:wcmusic/data/services/lyric_service.dart';
 import 'package:wcmusic/data/services/track_download_service.dart';
 import 'package:wcmusic/domain/models/lyric_line.dart';
+import 'package:wcmusic/domain/models/lyrics_overlay_style.dart';
 import 'package:wcmusic/domain/models/playback_mode.dart';
 import 'package:wcmusic/domain/models/playback_quality.dart';
 import 'package:wcmusic/domain/models/track.dart';
@@ -520,6 +521,34 @@ void main() {
     expect(viewModel.current?.uri, downloader.cachedPath);
   });
 
+  test('updates and persists the desktop lyrics style', () async {
+    final overlay = _FakeFloatingLyricsService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      floatingLyricsService: overlay,
+    );
+    addTearDown(viewModel.dispose);
+    const style = LyricsOverlayStyle(
+      fontFamily: 'SimHei',
+      fontSize: 36,
+      alignment: 'right',
+      textColor: 0xFFFF0000,
+      backgroundColor: 0xFF000000,
+      opacity: 0.5,
+      cornerRadius: 8,
+      locked: false,
+    );
+
+    await viewModel.updateLyricsStyle(style);
+
+    expect(overlay.style?.fontFamily, 'SimHei');
+    expect(overlay.savedStyle?.locked, isFalse);
+    expect(viewModel.lyricsStyle.fontSize, 36);
+  });
+
   test('imports a folder of sources and reports failures', () async {
     final repository = _BulkSourceRepository();
     final viewModel = PlayerViewModel(
@@ -651,6 +680,8 @@ class _FakeLyricService implements LyricService {
 class _FakeFloatingLyricsService implements FloatingLyricsService {
   String currentLine = '';
   String nextLine = '';
+  LyricsOverlayStyle? style;
+  LyricsOverlayStyle? savedStyle;
 
   @override
   bool get isSupported => true;
@@ -666,6 +697,21 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
   }) async {
     this.currentLine = currentLine;
     this.nextLine = nextLine;
+  }
+
+  @override
+  Future<void> setStyle(LyricsOverlayStyle style) async {
+    this.style = style;
+  }
+
+  @override
+  Future<LyricsOverlayStyle> loadStyle() async =>
+      style ?? const LyricsOverlayStyle();
+
+  @override
+  Future<void> saveStyle(LyricsOverlayStyle style) async {
+    this.style = style;
+    savedStyle = style;
   }
 
   @override
