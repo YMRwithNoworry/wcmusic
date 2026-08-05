@@ -32,6 +32,7 @@ flutter analyze
 flutter test
 cargo test --manifest-path native/wcmusic_core/Cargo.toml
 flutter build windows --release
+tar.exe -a -c -f build/wcmusic-windows-x64.zip -C build/windows/x64/runner/Release .
 
 # Android arm64 首次构建需安装 cargo-ndk 与 Rust target。
 cargo install cargo-ndk --locked
@@ -42,6 +43,8 @@ rustup target add aarch64-linux-android
 $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
+
+Windows 发布目录为 `build/windows/x64/runner/Release/`，分发时必须保留其中的 EXE、DLL 与 `data` 目录。上面的 `tar.exe` 命令会生成可直接解压运行的 `build/wcmusic-windows-x64.zip`。
 
 ## 目录
 
