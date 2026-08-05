@@ -1,10 +1,30 @@
 #include "lyrics_overlay.h"
 
 #include <algorithm>
+#include <gdiplus.h>
+
+#pragma comment(lib, "gdiplus.lib")
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayHeight = 104;
+
+void AddRoundedRectangle(Gdiplus::GraphicsPath& path,
+                         const Gdiplus::RectF& rect, float radius) {
+  if (radius <= 0) {
+    path.AddRectangle(rect);
+    return;
+  }
+  const float diameter = radius * 2;
+  path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
+  path.AddArc(rect.X + rect.Width - diameter, rect.Y, diameter, diameter, 270,
+              90);
+  path.AddArc(rect.X + rect.Width - diameter,
+              rect.Y + rect.Height - diameter, diameter, diameter, 0, 90);
+  path.AddArc(rect.X, rect.Y + rect.Height - diameter, diameter, diameter, 90,
+              90);
+  path.CloseFigure();
+}
 }
 
 LyricsOverlay::LyricsOverlay() = default;
@@ -15,6 +35,11 @@ LyricsOverlay::~LyricsOverlay() {
 
 bool LyricsOverlay::Create() {
   if (window_) return true;
+  static ULONG_PTR gdiplus_token = 0;
+  if (gdiplus_token == 0) {
+    Gdiplus::GdiplusStartupInput input;
+    Gdiplus::GdiplusStartup(&gdiplus_token, &input, nullptr);
+  }
   const HINSTANCE instance = GetModuleHandle(nullptr);
   WNDCLASS window_class{};
   window_class.lpfnWndProc = LyricsOverlay::WindowProc;
@@ -83,8 +108,6 @@ void LyricsOverlay::Destroy() {
 }
 
 void LyricsOverlay::ApplyWindowAttributes() {
-  SetLayeredWindowAttributes(
-      window_, 0, static_cast<BYTE>(style_.opacity), LWA_ALPHA);
   RECT bounds{};
   GetClientRect(window_, &bounds);
   const int radius = std::max(0, style_.corner_radius);
@@ -133,55 +156,94 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
 }
 
 void LyricsOverlay::Paint() {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(window_, &paint);
   RECT bounds{};
   GetClientRect(window_, &bounds);
-  HBRUSH background = CreateSolidBrush(style_.background_color);
-  FillRect(dc, &bounds, background);
-  DeleteObject(background);
-  SetBkMode(dc, TRANSPARENT);
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
+  if (width <= 0 || height <= 0) return;
 
-  const int align_flag = style_.align == DT_LEFT
-      ? DT_LEFT
-      : style_.align == DT_RIGHT ? DT_RIGHT : DT_CENTER;
+  HDC screen_dc = GetDC(nullptr);
+  HDC mem_dc = CreateCompatibleDC(screen_dc);
+  BITMAPINFO bitmap_info{};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = width;
+  bitmap_info.bmiHeader.biHeight = -height;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+  void* bits = nullptr;
+  HBITMAP dib = CreateDIBSection(
+      screen_dc, &bitmap_info, DIB_RGB_COLORS, &bits, nullptr, 0);
+  HGDIOBJ previous = SelectObject(mem_dc, dib);
 
-  RECT current_bounds = bounds;
-  current_bounds.left += 28;
-  current_bounds.right -= 28;
-  current_bounds.top = 14;
-  current_bounds.bottom = 64;
-  HFONT current_font = CreateFont(
-      -style_.font_size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-      style_.font_family.c_str());
-  HFONT previous_font =
-      static_cast<HFONT>(SelectObject(dc, current_font));
-  SetTextColor(dc, style_.text_color);
-  DrawText(dc, current_line_.c_str(), -1, &current_bounds,
-           align_flag | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+  {
+    Gdiplus::Graphics graphics(mem_dc);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
 
-  RECT next_bounds = bounds;
-  next_bounds.left += 32;
-  next_bounds.right -= 32;
-  next_bounds.top = 62;
-  next_bounds.bottom -= 10;
-  const int next_size = std::max(12, style_.font_size * 3 / 5);
-  HFONT next_font = CreateFont(
-      -next_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, style_.font_family.c_str());
-  SelectObject(dc, next_font);
-  SetTextColor(dc, style_.text_color);
-  DrawText(dc, next_line_.c_str(), -1, &next_bounds,
-           align_flag | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    Gdiplus::RectF full(0, 0, static_cast<float>(width),
+                        static_cast<float>(height));
+    Gdiplus::GraphicsPath background_path;
+    AddRoundedRectangle(
+        background_path, full, static_cast<float>(style_.corner_radius));
+    Gdiplus::Color background(
+        static_cast<BYTE>(style_.opacity),
+        GetRValue(style_.background_color),
+        GetGValue(style_.background_color),
+        GetBValue(style_.background_color));
+    Gdiplus::SolidBrush background_brush(background);
+    graphics.FillPath(&background_brush, &background_path);
 
-  SelectObject(dc, previous_font);
-  DeleteObject(current_font);
-  DeleteObject(next_font);
-  EndPaint(window_, &paint);
+    Gdiplus::FontFamily font_family(style_.font_family.c_str());
+    Gdiplus::StringFormat format;
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    if (style_.align == DT_LEFT) {
+      format.SetAlignment(Gdiplus::StringAlignmentNear);
+    } else if (style_.align == DT_RIGHT) {
+      format.SetAlignment(Gdiplus::StringAlignmentFar);
+    } else {
+      format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    }
+
+    Gdiplus::Color text_color(
+        255, GetRValue(style_.text_color), GetGValue(style_.text_color),
+        GetBValue(style_.text_color));
+    Gdiplus::SolidBrush text_brush(text_color);
+
+    Gdiplus::Font current_font(
+        &font_family, static_cast<float>(style_.font_size),
+        Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+    Gdiplus::RectF current_rect(28, 8, static_cast<float>(width - 56), 50);
+    graphics.DrawString(current_line_.c_str(), -1, &current_font,
+                        current_rect, &format, &text_brush);
+
+    const int next_size = std::max(12, style_.font_size * 3 / 5);
+    Gdiplus::Font next_font(
+        &font_family, static_cast<float>(next_size),
+        Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::RectF next_rect(32, 56, static_cast<float>(width - 64),
+                             static_cast<float>(height - 66));
+    graphics.DrawString(next_line_.c_str(), -1, &next_font, next_rect,
+                        &format, &text_brush);
+  }
+
+  POINT destination{0, 0};
+  POINT source{0, 0};
+  SIZE size{width, height};
+  BLENDFUNCTION blend{};
+  blend.BlendOp = AC_SRC_OVER;
+  blend.SourceConstantAlpha = 255;
+  blend.AlphaFormat = AC_SRC_ALPHA;
+  UpdateLayeredWindow(window_, screen_dc, &destination, &size, mem_dc,
+                      &source, 0, &blend, ULW_ALPHA);
+
+  SelectObject(mem_dc, previous);
+  DeleteObject(dib);
+  DeleteDC(mem_dc);
+  ReleaseDC(nullptr, screen_dc);
 }
+
 
 std::wstring LyricsOverlay::Utf8ToWide(const std::string& value) {
   if (value.empty()) return L"";
