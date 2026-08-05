@@ -1,0 +1,223 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../core/organic_artwork.dart';
+import '../player/player_view_model.dart';
+
+class HomeView extends StatelessWidget {
+  const HomeView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
+    final featured =
+        viewModel.current ??
+        (viewModel.tracks.isEmpty ? null : viewModel.tracks.first);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 48),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1160),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _TopLine(trackCount: viewModel.tracks.length),
+              const SizedBox(height: 28),
+              if (featured != null) _Featured(trackId: featured.id),
+              const SizedBox(height: 48),
+              Row(
+                children: [
+                  Text(
+                    '刚刚落下的声音',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(Icons.arrow_forward),
+                    label: const Text('查看曲库'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final count = constraints.maxWidth > 800
+                      ? 4
+                      : constraints.maxWidth > 520
+                      ? 3
+                      : 2;
+                  final items = viewModel.tracks.take(count).toList();
+                  return GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: count,
+                      crossAxisSpacing: 14,
+                      mainAxisSpacing: 14,
+                      childAspectRatio: .82,
+                    ),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final track = items[index];
+                      return _AlbumTile(
+                        title: track.title,
+                        artist: track.artist,
+                        seed: track.id,
+                        onTap: () => viewModel.playTrack(track),
+                      );
+                    },
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TopLine extends StatelessWidget {
+  const _TopLine({required this.trackCount});
+
+  final int trackCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '让声音自然生长',
+            style: Theme.of(context).textTheme.displayLarge,
+            maxLines: 2,
+          ),
+        ),
+        const SizedBox(width: 18),
+        Text('$trackCount 首', style: Theme.of(context).textTheme.bodyLarge),
+      ],
+    );
+  }
+}
+
+class _Featured extends StatelessWidget {
+  const _Featured({required this.trackId});
+
+  final String trackId;
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
+    final track = viewModel.tracks.firstWhere((item) => item.id == trackId);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 660;
+        final art = Hero(
+          tag: 'art-${track.id}',
+          child: OrganicArtwork(
+            seed: track.id,
+            size: compact ? constraints.maxWidth : 300,
+            playing: viewModel.isPlaying,
+          ),
+        );
+        final copy = Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(track.album, style: Theme.of(context).textTheme.bodyLarge),
+            const SizedBox(height: 12),
+            Text(
+              track.title,
+              style: Theme.of(context).textTheme.displayMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Text(track.artist, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 26),
+            FilledButton.icon(
+              onPressed: () => viewModel.playTrack(track),
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('播放'),
+            ),
+          ],
+        );
+        return Container(
+          padding: EdgeInsets.all(compact ? 16 : 22),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [art, const SizedBox(height: 22), copy],
+                )
+              : Row(
+                  children: [
+                    art,
+                    const SizedBox(width: 42),
+                    Expanded(child: copy),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _AlbumTile extends StatefulWidget {
+  const _AlbumTile({
+    required this.title,
+    required this.artist,
+    required this.seed,
+    required this.onTap,
+  });
+
+  final String title;
+  final String artist;
+  final String seed;
+  final VoidCallback onTap;
+
+  @override
+  State<_AlbumTile> createState() => _AlbumTileState();
+}
+
+class _AlbumTileState extends State<_AlbumTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: AnimatedScale(
+                scale: _hovered ? 1.025 : 1,
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                child: OrganicArtwork(seed: widget.seed, size: double.infinity),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 2),
+            Text(widget.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+      ),
+    );
+  }
+}

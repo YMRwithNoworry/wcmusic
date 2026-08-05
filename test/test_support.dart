@@ -1,0 +1,22 @@
+import 'package:wcmusic/data/services/player_service.dart';
+import 'package:wcmusic/domain/models/track.dart';
+
+class FakePlayerService implements AudioPlayerService {
+  @override
+  Stream<bool> get playing => const Stream.empty();
+
+  @override
+  Stream<Duration> get position => const Stream.empty();
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> play(Track track) async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> toggle() async {}
+}

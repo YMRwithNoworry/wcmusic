@@ -1,0 +1,106 @@
+import 'package:flutter/material.dart';
+
+import '../../core/page_scaffold.dart';
+
+class SettingsView extends StatefulWidget {
+  const SettingsView({super.key});
+
+  @override
+  State<SettingsView> createState() => _SettingsViewState();
+}
+
+class _SettingsViewState extends State<SettingsView> {
+  bool _reduceMotion = false;
+  bool _backgroundPlayback = true;
+  double _volumeNormalization = .72;
+
+  @override
+  Widget build(BuildContext context) {
+    return PageScaffold(
+      title: '设置',
+      subtitle: '保持安静，也保持可控',
+      child: Column(
+        children: [
+          _SettingSection(
+            title: '播放',
+            children: [
+              SwitchListTile(
+                value: _backgroundPlayback,
+                onChanged: (value) =>
+                    setState(() => _backgroundPlayback = value),
+                title: const Text('后台播放'),
+                subtitle: const Text('在通知栏和系统媒体控件中继续控制'),
+              ),
+              ListTile(
+                title: const Text('响度平衡'),
+                subtitle: Slider(
+                  value: _volumeNormalization,
+                  onChanged: (value) =>
+                      setState(() => _volumeNormalization = value),
+                ),
+                trailing: Text('${(_volumeNormalization * 100).round()}%'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingSection(
+            title: '外观与辅助功能',
+            children: [
+              SwitchListTile(
+                value: _reduceMotion,
+                onChanged: (value) => setState(() => _reduceMotion = value),
+                title: const Text('减少动态效果'),
+                subtitle: const Text('保留状态反馈，关闭呼吸与大幅转场'),
+              ),
+              const ListTile(
+                title: Text('主题'),
+                subtitle: Text('跟随系统'),
+                trailing: Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          const _SettingSection(
+            title: '关于',
+            children: [
+              ListTile(
+                title: Text('WCMusic'),
+                subtitle: Text('Flutter 3.44 · Rust 1.97 · 洛雪自定义源兼容层'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingSection extends StatelessWidget {
+  const _SettingSection({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+          ),
+          const SizedBox(height: 6),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
