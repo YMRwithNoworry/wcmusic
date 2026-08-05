@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../domain/models/playback_quality.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
 import 'feedback_dialog.dart';
@@ -80,6 +81,25 @@ class _SettingsViewState extends State<SettingsView> {
                 onTap: () => showDialog<void>(
                   context: context,
                   builder: (_) => const FeedbackDialog(),
+                ),
+              ),
+              ListTile(
+                title: const Text('播放音质'),
+                subtitle: DropdownButton<PlaybackQuality>(
+                  value: viewModel.playbackQuality,
+                  isExpanded: true,
+                  items: [
+                    for (final quality in PlaybackQuality.values)
+                      DropdownMenuItem(
+                        value: quality,
+                        child: Text(quality.label),
+                      ),
+                  ],
+                  onChanged: (quality) {
+                    if (quality != null) {
+                      viewModel.setPlaybackQuality(quality);
+                    }
+                  },
                 ),
               ),
             ],

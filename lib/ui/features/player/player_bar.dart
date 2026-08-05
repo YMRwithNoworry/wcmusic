@@ -91,6 +91,8 @@ class PlayerBar extends StatelessWidget {
                           icon: const Icon(Icons.skip_next),
                           tooltip: '下一首',
                         ),
+                        const SizedBox(width: 2),
+                        const DownloadButton(),
                         const SizedBox(
                           width: 132,
                           child: VolumeControl(showLabel: false),

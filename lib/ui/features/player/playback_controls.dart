@@ -94,3 +94,27 @@ class VolumeControl extends StatelessWidget {
     return Icons.volume_up;
   }
 }
+
+class DownloadButton extends StatelessWidget {
+  const DownloadButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
+    return IconButton(
+      onPressed: viewModel.isDownloading
+          ? null
+          : viewModel.downloadCurrentTrack,
+      icon: viewModel.isDownloading
+          ? SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(
+                value: viewModel.downloadProgress,
+                strokeWidth: 2,
+              ),
+            )
+          : const Icon(Icons.download_outlined),
+      tooltip: '下载到本地',
+    );
+  }
+}

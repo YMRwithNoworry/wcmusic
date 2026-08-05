@@ -5,8 +5,10 @@ import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/floating_lyrics_service.dart';
 import 'package:wcmusic/data/services/lyric_service.dart';
+import 'package:wcmusic/data/services/track_download_service.dart';
 import 'package:wcmusic/domain/models/lyric_line.dart';
 import 'package:wcmusic/domain/models/playback_mode.dart';
+import 'package:wcmusic/domain/models/playback_quality.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/domain/repositories/source_repository.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
@@ -146,7 +148,7 @@ void main() {
     expect(sourceRepository.resolvedTrack?.source, TrackSource.wy);
     expect(sourceRepository.resolvedTrack?.sourceId, '123');
     expect(player.playedTrack?.uri, 'https://audio.example/full.flac');
-    expect(viewModel.current?.quality, '洛雪音源 · 整曲');
+    expect(viewModel.current?.quality, '洛雪音源 · 高品 320k');
   });
 
   test('randomly selects at most four platform playlists', () async {
@@ -418,6 +420,77 @@ void main() {
 
     expect(viewModel.current?.id, isNot(testLibraryTracks.first.id));
   });
+
+  test('requests the selected quality when resolving full tracks', () async {
+    const previewTrack = Track(
+      id: 'quality-preview',
+      title: '音质歌曲',
+      artist: '音质歌手',
+      album: '音质专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.custom,
+      sourceId: '42',
+    );
+    const matchedTrack = Track(
+      id: 'quality-preview',
+      title: '音质歌曲',
+      artist: '音质歌手',
+      album: '音质专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.wy,
+      sourceId: '123',
+    );
+    final sourceRepository = _FullTrackSourceRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [],
+        const [],
+        const {},
+        matchedTrack,
+      ),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.setPlaybackQuality(PlaybackQuality.lossless);
+    await viewModel.playTrack(previewTrack);
+
+    expect(sourceRepository.resolvedQuality, 'flac');
+    expect(viewModel.current?.quality, contains('无损 flac'));
+  });
+
+  test('downloads the current online track to a local file', () async {
+    const track = Track(
+      id: 'download',
+      title: '下载歌曲',
+      artist: '下载歌手',
+      album: '下载专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/song.mp3',
+    );
+    final downloader = _FakeTrackDownloadService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      downloadService: downloader,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.playTrack(track);
+    await viewModel.downloadCurrentTrack();
+
+    expect(downloader.downloadedTrack?.id, 'download');
+    expect(viewModel.message, contains('已下载到'));
+  });
 }
 
 class _SynchronousTogglePlayerService extends FakePlayerService {
@@ -490,6 +563,7 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
 class _FullTrackSourceRepository implements SourceRepository {
   Track? resolvedTrack;
   String? selectedId;
+  String? resolvedQuality;
 
   @override
   Future<List<SourceScript>> loadSources() async => const [
@@ -515,6 +589,7 @@ class _FullTrackSourceRepository implements SourceRepository {
   @override
   Future<String> resolveUrl(Track track, {String quality = '320k'}) async {
     resolvedTrack = track;
+    resolvedQuality = quality;
     return 'https://audio.example/full.flac';
   }
 
@@ -524,4 +599,19 @@ class _FullTrackSourceRepository implements SourceRepository {
 
   @override
   Future<void> deleteSource(String id) => throw UnimplementedError();
+}
+
+class _FakeTrackDownloadService extends TrackDownloadService {
+  Track? downloadedTrack;
+
+  @override
+  Future<String> download(
+    Track track, {
+    String fallbackExtension = '.mp3',
+    required void Function(double progress) onProgress,
+  }) async {
+    downloadedTrack = track;
+    onProgress(1);
+    return 'D:/music/${track.title}.mp3';
+  }
 }

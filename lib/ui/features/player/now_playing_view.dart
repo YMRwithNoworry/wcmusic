@@ -160,6 +160,8 @@ class _FocusedPlayer extends StatelessWidget {
                         icon: const Icon(Icons.skip_next, size: 34),
                         tooltip: '下一首',
                       ),
+                      const SizedBox(width: 12),
+                      const DownloadButton(),
                     ],
                   ),
                   const SizedBox(height: 12),

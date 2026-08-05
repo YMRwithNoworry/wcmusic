@@ -8,8 +8,10 @@ import '../../../data/services/online_search_service.dart';
 import '../../../data/services/desktop_window_service.dart';
 import '../../../data/services/floating_lyrics_service.dart';
 import '../../../data/services/lyric_service.dart';
+import '../../../data/services/track_download_service.dart';
 import '../../../domain/models/lyric_line.dart';
 import '../../../domain/models/playback_mode.dart';
+import '../../../domain/models/playback_quality.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -23,12 +25,14 @@ class PlayerViewModel extends ChangeNotifier {
     AudioPlayerService? playerService,
     LyricService? lyricService,
     FloatingLyricsService? floatingLyricsService,
+    TrackDownloadService? downloadService,
   }) : onlineSearchService =
            onlineSearchService ?? MultiSourceOnlineSearchService(),
        playerService = playerService ?? PlayerService(),
        lyricService = lyricService ?? OnlineLyricService(),
        floatingLyricsService =
-           floatingLyricsService ?? PlatformFloatingLyricsService() {
+           floatingLyricsService ?? PlatformFloatingLyricsService(),
+       downloadService = downloadService ?? TrackDownloadService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
@@ -60,6 +64,7 @@ class PlayerViewModel extends ChangeNotifier {
   final AudioPlayerService playerService;
   final LyricService lyricService;
   final FloatingLyricsService floatingLyricsService;
+  final TrackDownloadService downloadService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
   List<SourceScript> sources = const [];
@@ -75,6 +80,9 @@ class PlayerViewModel extends ChangeNotifier {
   String? message;
   bool floatingLyricsEnabled = false;
   PlaybackMode playbackMode = PlaybackMode.listLoop;
+  PlaybackQuality playbackQuality = PlaybackQuality.high;
+  bool isDownloading = false;
+  double? downloadProgress;
   List<LyricLine> lyrics = const [];
   int currentLyricIndex = -1;
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
@@ -318,13 +326,13 @@ class PlayerViewModel extends ChangeNotifier {
           notifyListeners();
           final url = await sourceRepository.resolveUrl(
             playbackTrack,
-            quality: '320k',
+            quality: playbackQuality.sourceValue,
           );
           playbackTrack = track.copyWith(
             uri: url,
             source: playbackTrack.source,
             sourceId: playbackTrack.sourceId,
-            quality: '洛雪音源 · 整曲',
+            quality: '洛雪音源 · ${playbackQuality.label}',
           );
           current = playbackTrack;
           message = null;
@@ -365,6 +373,51 @@ class PlayerViewModel extends ChangeNotifier {
     playbackMode = PlaybackMode
         .values[(playbackMode.index + 1) % PlaybackMode.values.length];
     notifyListeners();
+  }
+
+  Future<void> setPlaybackQuality(PlaybackQuality quality) async {
+    if (quality == playbackQuality) return;
+    playbackQuality = quality;
+    message = '播放音质已切换为 ${quality.label}';
+    notifyListeners();
+    final track = current;
+    if (track != null &&
+        track.source != TrackSource.local &&
+        track.uri.isNotEmpty) {
+      await playTrack(track);
+    }
+  }
+
+  Future<void> downloadCurrentTrack() async {
+    final track = current;
+    if (track == null || track.uri.isEmpty) {
+      message = '当前没有可下载的音频地址';
+      notifyListeners();
+      return;
+    }
+    if (isDownloading) return;
+    isDownloading = true;
+    downloadProgress = null;
+    notifyListeners();
+    try {
+      final path = await downloadService.download(
+        track,
+        fallbackExtension: playbackQuality.sourceValue == 'flac'
+            ? '.flac'
+            : '.mp3',
+        onProgress: (progress) {
+          downloadProgress = progress;
+          notifyListeners();
+        },
+      );
+      message = '已下载到 $path';
+    } on Object catch (error) {
+      message = '下载失败：$error';
+    } finally {
+      isDownloading = false;
+      downloadProgress = null;
+      notifyListeners();
+    }
   }
 
   Future<void> playNext() => _advance(auto: false);
