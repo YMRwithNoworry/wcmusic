@@ -119,6 +119,49 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  String _platformPlaylistId(PlatformPlaylist playlist) =>
+      'platform-${playlist.platform}-${playlist.id}';
+
+  bool isPlatformPlaylistFavorite(PlatformPlaylist playlist) =>
+      playlists.any((item) => item.id == _platformPlaylistId(playlist));
+
+  Future<void> togglePlatformPlaylistFavorite(PlatformPlaylist playlist) async {
+    final id = _platformPlaylistId(playlist);
+    try {
+      if (isPlatformPlaylistFavorite(playlist)) {
+        await musicRepository.deletePlaylist(id);
+        message = '已取消收藏 ${playlist.name}';
+      } else {
+        await musicRepository.savePlaylist(
+          Playlist(
+            id: id,
+            name: playlist.name,
+            tracks: const [],
+            artworkUri: playlist.artworkUri,
+            externalUrl: playlist.url,
+            platform: playlist.platform,
+          ),
+        );
+        message = '已收藏 ${playlist.name}';
+      }
+      playlists = await musicRepository.loadPlaylists();
+    } on Object catch (error) {
+      message = '更新歌单收藏失败：$error';
+    }
+    notifyListeners();
+  }
+
+  Future<void> removeSavedPlaylist(Playlist playlist) async {
+    try {
+      await musicRepository.deletePlaylist(playlist.id);
+      playlists = await musicRepository.loadPlaylists();
+      message = '已取消收藏 ${playlist.name}';
+    } on Object catch (error) {
+      message = '取消歌单收藏失败：$error';
+    }
+    notifyListeners();
+  }
+
   Future<void> refreshRecentTracks() async {
     isLoadingRecentTracks = true;
     recentTracksError = null;

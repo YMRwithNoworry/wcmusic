@@ -1,6 +1,7 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
@@ -14,7 +15,7 @@ class PlaylistsView extends StatelessWidget {
     final viewModel = context.watch<PlayerViewModel>();
     return PageScaffold(
       title: '歌单',
-      subtitle: 'M3U、M3U8 与洛雪备份都从这里进入',
+      subtitle: '本地歌单与收藏的平台歌单都留在这里',
       actions: [
         FilledButton.tonalIcon(
           onPressed: () => _import(context),
@@ -43,7 +44,9 @@ class PlaylistsView extends StatelessWidget {
             itemBuilder: (context, index) {
               final playlist = viewModel.playlists[index];
               return InkWell(
-                onTap: playlist.tracks.isEmpty
+                onTap: playlist.isPlatformFavorite
+                    ? () => _open(context, playlist.externalUrl!)
+                    : playlist.tracks.isEmpty
                     ? null
                     : () => viewModel.playTrack(playlist.tracks.first),
                 borderRadius: BorderRadius.circular(8),
@@ -55,7 +58,21 @@ class PlaylistsView extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      OrganicArtwork(seed: playlist.id, size: 82),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child:
+                            playlist.artworkUri == null ||
+                                playlist.artworkUri!.isEmpty
+                            ? OrganicArtwork(seed: playlist.id, size: 82)
+                            : Image.network(
+                                playlist.artworkUri!,
+                                width: 82,
+                                height: 82,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) =>
+                                    OrganicArtwork(seed: playlist.id, size: 82),
+                              ),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
@@ -69,11 +86,23 @@ class PlaylistsView extends StatelessWidget {
                               style: Theme.of(context).textTheme.titleLarge,
                             ),
                             const SizedBox(height: 6),
-                            Text('${playlist.tracks.length} 首'),
+                            Text(
+                              playlist.isPlatformFavorite
+                                  ? '${playlist.platform ?? '平台'} · 已收藏'
+                                  : '${playlist.tracks.length} 首',
+                            ),
                           ],
                         ),
                       ),
-                      const Icon(Icons.chevron_right),
+                      if (playlist.isPlatformFavorite)
+                        IconButton(
+                          onPressed: () =>
+                              viewModel.removeSavedPlaylist(playlist),
+                          icon: const Icon(Icons.bookmark),
+                          tooltip: '取消收藏',
+                        )
+                      else
+                        const Icon(Icons.chevron_right),
                     ],
                   ),
                 ),
@@ -96,6 +125,18 @@ class PlaylistsView extends StatelessWidget {
     final bytes = await file.readAsBytes();
     if (!context.mounted) return;
     await context.read<PlayerViewModel>().importPlaylist(file.path, bytes);
+  }
+
+  Future<void> _open(BuildContext context, String value) async {
+    final opened = await launchUrl(
+      Uri.parse(value),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('无法打开平台歌单')));
+    }
   }
 }
 

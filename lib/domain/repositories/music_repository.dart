@@ -5,6 +5,7 @@ abstract interface class MusicRepository {
   Future<List<Playlist>> loadPlaylists();
   Future<void> saveTracks(List<Track> tracks);
   Future<void> savePlaylist(Playlist playlist);
+  Future<void> deletePlaylist(String id);
   Future<void> importFile(String path, List<int> bytes);
   Future<List<Track>> importAudioFiles(List<String> paths);
 }

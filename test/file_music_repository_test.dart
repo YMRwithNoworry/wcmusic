@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 import 'package:wcmusic/data/repositories/file_music_repository.dart';
+import 'package:wcmusic/domain/models/track.dart';
 
 void main() {
   test('starts with an empty library instead of demo tracks', () async {
@@ -59,5 +60,34 @@ void main() {
     expect(tracks.single.title, '歌名');
     expect(path.dirname(tracks.single.uri), path.join(root.path, 'music'));
     expect(await File(tracks.single.uri).readAsBytes(), [5, 6, 7]);
+  });
+
+  test('persists and removes a favorite platform playlist', () async {
+    final root = await Directory.systemTemp.createTemp('wcmusic-library-');
+    addTearDown(() => root.delete(recursive: true));
+    final repository = FileMusicRepository(directoryProvider: () async => root);
+    const favorite = Playlist(
+      id: 'platform-Apple Music-42',
+      name: '今日热门',
+      tracks: [],
+      artworkUri: 'https://image.example/playlist.jpg',
+      externalUrl: 'https://music.example/playlist/42',
+      platform: 'Apple Music',
+    );
+
+    await repository.savePlaylist(favorite);
+
+    final reloaded = FileMusicRepository(directoryProvider: () async => root);
+    final playlists = await reloaded.loadPlaylists();
+    expect(playlists.single.name, '今日热门');
+    expect(playlists.single.artworkUri, favorite.artworkUri);
+    expect(playlists.single.externalUrl, favorite.externalUrl);
+    expect(playlists.single.isPlatformFavorite, isTrue);
+
+    await reloaded.deletePlaylist(favorite.id);
+    final afterDeletion = FileMusicRepository(
+      directoryProvider: () async => root,
+    );
+    expect(await afterDeletion.loadPlaylists(), isEmpty);
   });
 }

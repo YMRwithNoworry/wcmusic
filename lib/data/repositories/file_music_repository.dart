@@ -99,6 +99,13 @@ class FileMusicRepository implements MusicRepository {
   }
 
   @override
+  Future<void> deletePlaylist(String id) async {
+    await _ensureLoaded();
+    _playlists.removeWhere((item) => item.id == id);
+    await _persist();
+  }
+
+  @override
   Future<List<Track>> importAudioFiles(List<String> paths) async {
     await _ensureLoaded();
     final imported = <Track>[];
@@ -246,6 +253,9 @@ class FileMusicRepository implements MusicRepository {
     'id': playlist.id,
     'name': playlist.name,
     'tracks': playlist.tracks.map(_trackToJson).toList(growable: false),
+    'artworkUri': playlist.artworkUri,
+    'externalUrl': playlist.externalUrl,
+    'platform': playlist.platform,
   };
 
   Playlist _playlistFromJson(Map<String, dynamic> data) {
@@ -253,6 +263,9 @@ class FileMusicRepository implements MusicRepository {
     return Playlist(
       id: data['id']?.toString() ?? const Uuid().v4(),
       name: data['name']?.toString() ?? '未命名歌单',
+      artworkUri: data['artworkUri']?.toString(),
+      externalUrl: data['externalUrl']?.toString(),
+      platform: data['platform']?.toString(),
       tracks: tracks is List
           ? tracks
                 .whereType<Map>()

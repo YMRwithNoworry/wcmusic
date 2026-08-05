@@ -46,11 +46,23 @@ class Track {
 }
 
 class Playlist {
-  const Playlist({required this.id, required this.name, required this.tracks});
+  const Playlist({
+    required this.id,
+    required this.name,
+    required this.tracks,
+    this.artworkUri,
+    this.externalUrl,
+    this.platform,
+  });
 
   final String id;
   final String name;
   final List<Track> tracks;
+  final String? artworkUri;
+  final String? externalUrl;
+  final String? platform;
+
+  bool get isPlatformFavorite => externalUrl?.isNotEmpty ?? false;
 }
 
 class PlatformPlaylist {

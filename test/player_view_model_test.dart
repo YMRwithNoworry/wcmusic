@@ -91,6 +91,34 @@ void main() {
     );
   });
 
+  test('favorites and unfavorites a platform playlist locally', () async {
+    const platformPlaylist = PlatformPlaylist(
+      id: '42',
+      name: '今日热门',
+      artworkUri: 'https://image.example/playlist.jpg',
+      url: 'https://music.example/playlist/42',
+      platform: 'Apple Music',
+    );
+    final repository = MemoryMusicRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: repository,
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.togglePlatformPlaylistFavorite(platformPlaylist);
+
+    expect(viewModel.isPlatformPlaylistFavorite(platformPlaylist), isTrue);
+    expect(viewModel.playlists.single.externalUrl, platformPlaylist.url);
+
+    await viewModel.togglePlatformPlaylistFavorite(platformPlaylist);
+
+    expect(viewModel.isPlatformPlaylistFavorite(platformPlaylist), isFalse);
+    expect(viewModel.playlists, isEmpty);
+  });
+
   test('randomly selects four unique recently released tracks', () async {
     final newTracks = List.generate(
       6,

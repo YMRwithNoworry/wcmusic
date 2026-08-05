@@ -178,7 +178,10 @@ class _PlatformPlaylists extends StatelessWidget {
                   final playlist = viewModel.platformPlaylists[index];
                   return _PlatformPlaylistTile(
                     playlist: playlist,
+                    isFavorite: viewModel.isPlatformPlaylistFavorite(playlist),
                     onTap: () => _open(context, playlist.url),
+                    onToggleFavorite: () =>
+                        viewModel.togglePlatformPlaylistFavorite(playlist),
                   );
                 },
               );
@@ -202,10 +205,17 @@ class _PlatformPlaylists extends StatelessWidget {
 }
 
 class _PlatformPlaylistTile extends StatelessWidget {
-  const _PlatformPlaylistTile({required this.playlist, required this.onTap});
+  const _PlatformPlaylistTile({
+    required this.playlist,
+    required this.isFavorite,
+    required this.onTap,
+    required this.onToggleFavorite,
+  });
 
   final PlatformPlaylist playlist;
+  final bool isFavorite;
   final VoidCallback onTap;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -216,20 +226,36 @@ class _PlatformPlaylistTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: playlist.artworkUri.isEmpty
-                  ? OrganicArtwork(seed: playlist.id, size: double.infinity)
-                  : Image.network(
-                      playlist.artworkUri,
-                      width: double.infinity,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => OrganicArtwork(
-                        seed: playlist.id,
-                        size: double.infinity,
-                      ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: playlist.artworkUri.isEmpty
+                      ? OrganicArtwork(seed: playlist.id, size: double.infinity)
+                      : Image.network(
+                          playlist.artworkUri,
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => OrganicArtwork(
+                            seed: playlist.id,
+                            size: double.infinity,
+                          ),
+                        ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: IconButton.filledTonal(
+                    onPressed: onToggleFavorite,
+                    icon: Icon(
+                      isFavorite ? Icons.bookmark : Icons.bookmark_border,
                     ),
+                    tooltip: isFavorite ? '取消收藏' : '收藏到本地',
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 10),

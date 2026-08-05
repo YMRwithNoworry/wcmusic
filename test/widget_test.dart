@@ -67,6 +67,38 @@ void main() {
     expect(searchService.lastChannel, OnlineSearchChannel.deezer);
   });
 
+  testWidgets('favorites a platform playlist from the home view', (
+    tester,
+  ) async {
+    const platformPlaylist = PlatformPlaylist(
+      id: 'playlist-42',
+      name: '今日热门',
+      artworkUri: '',
+      url: 'https://music.example/playlist-42',
+      platform: 'Apple Music',
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(const [], const [
+        platformPlaylist,
+      ]),
+      playerService: FakePlayerService(),
+    );
+    await viewModel.load();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('收藏到本地'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.playlists.single.name, '今日热门');
+    expect(viewModel.playlists.single.externalUrl, platformPlaylist.url);
+    expect(find.byTooltip('取消收藏'), findsOneWidget);
+  });
+
   testWidgets('shows progress and volume controls while playing', (
     tester,
   ) async {

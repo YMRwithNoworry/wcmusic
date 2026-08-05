@@ -38,6 +38,11 @@ class MemoryMusicRepository implements MusicRepository {
   }
 
   @override
+  Future<void> deletePlaylist(String id) async {
+    _playlists.removeWhere((item) => item.id == id);
+  }
+
+  @override
   Future<void> importFile(String path, List<int> bytes) async {
     final playlist = _parser.parseM3u(
       Uint8List.fromList(bytes),
