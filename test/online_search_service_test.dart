@@ -242,6 +242,84 @@ void main() {
     expect(tracks.single.releaseDate, isNotNull);
     expect(tracks.single.source, TrackSource.wy);
   });
+
+  test('loads ranking catalogs for Netease, QQ Music, and Kugou', () async {
+    final neteaseServer = await _jsonServer({
+      'list': [
+        {'id': 1, 'name': '网易飙升榜', 'coverImgUrl': 'http://img/wy.jpg'},
+      ],
+    });
+    final qqServer = await _jsonServer({
+      'data': {
+        'topList': [
+          {'id': 2, 'topTitle': 'QQ 热歌榜', 'picUrl': 'http://img/qq.jpg'},
+        ],
+      },
+    });
+    final kugouServer = await _jsonServer({
+      'data': {
+        'info': [
+          {
+            'rankid': 3,
+            'rankname': '酷狗 TOP500',
+            'imgurl': 'http://img/{size}.jpg',
+          },
+        ],
+      },
+    });
+    addTearDown(() => neteaseServer.close(force: true));
+    addTearDown(() => qqServer.close(force: true));
+    addTearDown(() => kugouServer.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      neteaseRankingsEndpoint: neteaseServer.endpoint,
+      qqRankingsEndpoint: qqServer.endpoint,
+      kugouRankingsEndpoint: kugouServer.endpoint,
+    );
+
+    final netease = await service.loadRankings(OnlineSearchChannel.netease);
+    final qq = await service.loadRankings(OnlineSearchChannel.qqMusic);
+    final kugou = await service.loadRankings(OnlineSearchChannel.kugou);
+    final kuwo = await service.loadRankings(OnlineSearchChannel.kuwo);
+
+    expect(netease.single.name, '网易飙升榜');
+    expect(qq.single.name, 'QQ 热歌榜');
+    expect(kugou.single.artworkUri, 'https://img/400.jpg');
+    expect(kuwo, isNotEmpty);
+  });
+
+  test('loads and maps QQ ranking tracks', () async {
+    final server = await _jsonServer({
+      'songlist': [
+        {
+          'data': {
+            'songmid': 'RANK-MID',
+            'songname': '榜单歌曲',
+            'singer': [
+              {'name': '榜单歌手'},
+            ],
+            'albumname': '榜单专辑',
+            'albummid': 'RANK-ALBUM',
+            'interval': 210,
+          },
+        },
+      ],
+    });
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      qqRankingTracksEndpoint: server.endpoint,
+    );
+    const ranking = PlatformRanking(
+      id: '26',
+      name: 'QQ 热歌榜',
+      channel: OnlineSearchChannel.qqMusic,
+    );
+
+    final tracks = await service.loadRankingTracks(ranking);
+
+    expect(tracks.single.id, 'tx-RANK-MID');
+    expect(tracks.single.artist, '榜单歌手');
+    expect(tracks.single.duration, const Duration(minutes: 3, seconds: 30));
+  });
 }
 
 const _neteaseSong = {

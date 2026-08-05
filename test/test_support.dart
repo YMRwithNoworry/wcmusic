@@ -111,6 +111,8 @@ class FakeOnlineSearchService implements OnlineSearchService {
     this.newTracks = const [],
     this.playlistTracks = const {},
     this.matchedTrack,
+    this.rankings = const {},
+    this.rankingTracks = const {},
   ]);
 
   final List<Track> results;
@@ -118,6 +120,8 @@ class FakeOnlineSearchService implements OnlineSearchService {
   final List<Track> newTracks;
   final Map<String, List<Track>> playlistTracks;
   final Track? matchedTrack;
+  final Map<OnlineSearchChannel, List<PlatformRanking>> rankings;
+  final Map<String, List<Track>> rankingTracks;
   OnlineSearchChannel? lastChannel;
 
   @override
@@ -129,6 +133,15 @@ class FakeOnlineSearchService implements OnlineSearchService {
   @override
   Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async =>
       playlistTracks[playlist.id] ?? const [];
+
+  @override
+  Future<List<PlatformRanking>> loadRankings(
+    OnlineSearchChannel channel,
+  ) async => rankings[channel] ?? const [];
+
+  @override
+  Future<List<Track>> loadRankingTracks(PlatformRanking ranking) async =>
+      rankingTracks[ranking.id] ?? const [];
 
   @override
   Future<Track?> matchTrackToSources(

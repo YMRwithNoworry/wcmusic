@@ -198,6 +198,57 @@ void main() {
     expect(find.byType(RemoteArtwork), findsNWidgets(2));
   });
 
+  testWidgets('opens rankings and displays tracks from the selected platform', (
+    tester,
+  ) async {
+    const ranking = PlatformRanking(
+      id: 'rank-1',
+      name: '酷我热歌榜',
+      channel: OnlineSearchChannel.kuwo,
+    );
+    const rankingTrack = Track(
+      id: 'kw-rank-song',
+      title: '榜单测试歌曲',
+      artist: '榜单歌手',
+      album: '榜单专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/rank.mp3',
+      source: TrackSource.kw,
+      sourceId: 'rank-song',
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [],
+        const [],
+        const {},
+        null,
+        const {
+          OnlineSearchChannel.kuwo: [ranking],
+        },
+        const {
+          'rank-1': [rankingTrack],
+        },
+      ),
+      playerService: FakePlayerService(),
+      downloadService: _FakeCacheDownloader(),
+    );
+    await viewModel.load();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('榜单').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('排行榜'), findsOneWidget);
+    expect(find.text('酷我热歌榜'), findsWidgets);
+    expect(find.text('榜单测试歌曲'), findsOneWidget);
+  });
+
   testWidgets('favorites a library track into a folder from the menu', (
     tester,
   ) async {

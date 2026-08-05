@@ -112,6 +112,15 @@ class PlayerViewModel extends ChangeNotifier {
   bool isSearchingOnline = false;
   bool isImportingSources = false;
   String? onlineSearchError;
+  OnlineSearchChannel rankingChannel = OnlineSearchChannel.kuwo;
+  List<PlatformRanking> rankings = const [];
+  PlatformRanking? selectedRanking;
+  List<Track> rankingTracks = const [];
+  bool isLoadingRankings = false;
+  bool isLoadingRankingTracks = false;
+  String? rankingsError;
+  int _rankingListGeneration = 0;
+  int _rankingTrackGeneration = 0;
   int _searchGeneration = 0;
   int _lyricGeneration = 0;
   int _playGeneration = 0;
@@ -304,6 +313,55 @@ class PlayerViewModel extends ChangeNotifier {
     if (shuffled.length > 4) shuffled.shuffle(Random());
     recentTracks = shuffled.take(4).toList(growable: false);
     notifyListeners();
+  }
+
+  Future<void> loadRankings(OnlineSearchChannel channel) async {
+    final generation = ++_rankingListGeneration;
+    _rankingTrackGeneration++;
+    rankingChannel = channel;
+    rankings = const [];
+    selectedRanking = null;
+    rankingTracks = const [];
+    rankingsError = null;
+    isLoadingRankings = true;
+    notifyListeners();
+    try {
+      final loaded = await onlineSearchService.loadRankings(channel);
+      if (generation != _rankingListGeneration) return;
+      rankings = loaded;
+      if (loaded.isNotEmpty) await selectRanking(loaded.first);
+    } on Object catch (error) {
+      if (generation != _rankingListGeneration) return;
+      rankingsError = '榜单加载失败：$error';
+    } finally {
+      if (generation == _rankingListGeneration) {
+        isLoadingRankings = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> selectRanking(PlatformRanking ranking) async {
+    final generation = ++_rankingTrackGeneration;
+    selectedRanking = ranking;
+    rankingTracks = const [];
+    rankingsError = null;
+    isLoadingRankingTracks = true;
+    notifyListeners();
+    try {
+      final loaded = await onlineSearchService.loadRankingTracks(ranking);
+      if (generation != _rankingTrackGeneration) return;
+      rankingTracks = loaded;
+      if (loaded.isEmpty) rankingsError = '该榜单暂时没有歌曲';
+    } on Object catch (error) {
+      if (generation != _rankingTrackGeneration) return;
+      rankingsError = '榜单歌曲加载失败：$error';
+    } finally {
+      if (generation == _rankingTrackGeneration) {
+        isLoadingRankingTracks = false;
+        notifyListeners();
+      }
+    }
   }
 
   List<Track> get visibleTracks {

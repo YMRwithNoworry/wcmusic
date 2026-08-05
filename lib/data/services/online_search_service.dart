@@ -16,6 +16,20 @@ extension OnlineSearchChannelLabel on OnlineSearchChannel {
   };
 }
 
+class PlatformRanking {
+  const PlatformRanking({
+    required this.id,
+    required this.name,
+    required this.channel,
+    this.artworkUri,
+  });
+
+  final String id;
+  final String name;
+  final OnlineSearchChannel channel;
+  final String? artworkUri;
+}
+
 abstract interface class OnlineSearchService {
   Future<List<Track>> search(
     String query, {
@@ -25,6 +39,8 @@ abstract interface class OnlineSearchService {
   Future<List<PlatformPlaylist>> discoverPlaylists();
   Future<List<Track>> discoverNewTracks();
   Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist);
+  Future<List<PlatformRanking>> loadRankings(OnlineSearchChannel channel);
+  Future<List<Track>> loadRankingTracks(PlatformRanking ranking);
   Future<Track?> matchTrackToSources(Track track, Set<String> sourceKeys);
 }
 
@@ -39,6 +55,12 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     Uri? playlistEndpoint,
     Uri? playlistDetailEndpoint,
     Uri? newTracksEndpoint,
+    Uri? neteaseRankingsEndpoint,
+    Uri? qqRankingsEndpoint,
+    Uri? qqRankingTracksEndpoint,
+    Uri? kugouRankingsEndpoint,
+    Uri? kugouRankingTracksEndpoint,
+    Uri? kuwoRankingTracksEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
@@ -64,7 +86,25 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
            Uri.https('music.163.com', '/api/playlist/detail'),
        _newTracksEndpoint =
            newTracksEndpoint ??
-           Uri.https('music.163.com', '/api/discovery/new/songs');
+           Uri.https('music.163.com', '/api/discovery/new/songs'),
+       _neteaseRankingsEndpoint =
+           neteaseRankingsEndpoint ??
+           Uri.https('music.163.com', '/api/toplist/detail'),
+       _qqRankingsEndpoint =
+           qqRankingsEndpoint ??
+           Uri.https('c.y.qq.com', '/v8/fcg-bin/fcg_myqq_toplist.fcg'),
+       _qqRankingTracksEndpoint =
+           qqRankingTracksEndpoint ??
+           Uri.https('c.y.qq.com', '/v8/fcg-bin/fcg_v8_toplist_cp.fcg'),
+       _kugouRankingsEndpoint =
+           kugouRankingsEndpoint ??
+           Uri.http('mobilecdnbj.kugou.com', '/api/v3/rank/list'),
+       _kugouRankingTracksEndpoint =
+           kugouRankingTracksEndpoint ??
+           Uri.http('mobilecdnbj.kugou.com', '/api/v3/rank/song'),
+       _kuwoRankingTracksEndpoint =
+           kuwoRankingTracksEndpoint ??
+           Uri.http('kbangserver.kuwo.cn', '/ksong.s');
 
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
@@ -75,6 +115,12 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   final Uri _playlistEndpoint;
   final Uri _playlistDetailEndpoint;
   final Uri _newTracksEndpoint;
+  final Uri _neteaseRankingsEndpoint;
+  final Uri _qqRankingsEndpoint;
+  final Uri _qqRankingTracksEndpoint;
+  final Uri _kugouRankingsEndpoint;
+  final Uri _kugouRankingTracksEndpoint;
+  final Uri _kuwoRankingTracksEndpoint;
 
   @override
   Future<List<Track>> search(
@@ -348,6 +394,200 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   }
 
   @override
+  Future<List<PlatformRanking>> loadRankings(
+    OnlineSearchChannel channel,
+  ) async {
+    return switch (channel) {
+      OnlineSearchChannel.netease => _loadNeteaseRankings(),
+      OnlineSearchChannel.qqMusic => _loadQqRankings(),
+      OnlineSearchChannel.kugou => _loadKugouRankings(),
+      OnlineSearchChannel.kuwo => Future.value(_kuwoRankings),
+    };
+  }
+
+  Future<List<PlatformRanking>> _loadNeteaseRankings() async {
+    final decoded = await _getJson(_neteaseRankingsEndpoint);
+    final values = decoded is Map ? decoded['list'] : null;
+    if (values is! List) throw const FormatException('网易云榜单目录无法识别');
+    return values
+        .whereType<Map>()
+        .map((value) {
+          return PlatformRanking(
+            id: value['id'].toString(),
+            name: _text(value['name']) ?? '未命名榜单',
+            channel: OnlineSearchChannel.netease,
+            artworkUri: _secureUrl(_text(value['coverImgUrl'])),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Future<List<PlatformRanking>> _loadQqRankings() async {
+    final uri = _qqRankingsEndpoint.replace(
+      queryParameters: {
+        ..._qqRankingsEndpoint.queryParameters,
+        'format': 'json',
+        'inCharset': 'utf8',
+        'outCharset': 'utf-8',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final data = decoded is Map ? decoded['data'] : null;
+    final values = data is Map ? data['topList'] : null;
+    if (values is! List) throw const FormatException('QQ 音乐榜单目录无法识别');
+    return values
+        .whereType<Map>()
+        .map((value) {
+          return PlatformRanking(
+            id: value['id'].toString(),
+            name: _text(value['topTitle']) ?? '未命名榜单',
+            channel: OnlineSearchChannel.qqMusic,
+            artworkUri: _secureUrl(_text(value['picUrl'])),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Future<List<PlatformRanking>> _loadKugouRankings() async {
+    final uri = _kugouRankingsEndpoint.replace(
+      queryParameters: {
+        ..._kugouRankingsEndpoint.queryParameters,
+        'version': '9108',
+        'plat': '0',
+        'showtype': '2',
+        'parentid': '0',
+        'apiver': '6',
+        'area_code': '1',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final data = decoded is Map ? decoded['data'] : null;
+    final values = data is Map ? data['info'] : null;
+    if (values is! List) throw const FormatException('酷狗音乐榜单目录无法识别');
+    return values
+        .whereType<Map>()
+        .map((value) {
+          final artwork = _text(value['imgurl'] ?? value['banner7url']);
+          return PlatformRanking(
+            id: value['rankid'].toString(),
+            name: _text(value['rankname']) ?? '未命名榜单',
+            channel: OnlineSearchChannel.kugou,
+            artworkUri: _secureUrl(artwork?.replaceFirst('{size}', '400')),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<Track>> loadRankingTracks(PlatformRanking ranking) async {
+    return switch (ranking.channel) {
+      OnlineSearchChannel.netease => _loadNeteaseRankingTracks(ranking),
+      OnlineSearchChannel.qqMusic => _loadQqRankingTracks(ranking),
+      OnlineSearchChannel.kugou => _loadKugouRankingTracks(ranking),
+      OnlineSearchChannel.kuwo => _loadKuwoRankingTracks(ranking),
+    };
+  }
+
+  Future<List<Track>> _loadNeteaseRankingTracks(PlatformRanking ranking) async {
+    final uri = _playlistDetailEndpoint.replace(
+      queryParameters: {
+        ..._playlistDetailEndpoint.queryParameters,
+        'id': ranking.id,
+      },
+    );
+    final decoded = await _getJson(uri);
+    final result = decoded is Map ? decoded['result'] : null;
+    final values = result is Map ? result['tracks'] : null;
+    if (values is! List) throw const FormatException('网易云榜单缺少歌曲');
+    return values
+        .whereType<Map>()
+        .map(_parseNeteaseTrack)
+        .whereType<Track>()
+        .take(100)
+        .toList(growable: false);
+  }
+
+  Future<List<Track>> _loadQqRankingTracks(PlatformRanking ranking) async {
+    final uri = _qqRankingTracksEndpoint.replace(
+      queryParameters: {
+        ..._qqRankingTracksEndpoint.queryParameters,
+        'format': 'json',
+        'topid': ranking.id,
+        'page': 'detail',
+        'type': 'top',
+        'song_begin': '0',
+        'song_num': '100',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final values = decoded is Map ? decoded['songlist'] : null;
+    if (values is! List) throw const FormatException('QQ 音乐榜单缺少歌曲');
+    return values
+        .whereType<Map>()
+        .map((value) => value['data'])
+        .whereType<Map>()
+        .map(_parseQqRankingTrack)
+        .whereType<Track>()
+        .toList(growable: false);
+  }
+
+  Future<List<Track>> _loadKugouRankingTracks(PlatformRanking ranking) async {
+    final uri = _kugouRankingTracksEndpoint.replace(
+      queryParameters: {
+        ..._kugouRankingTracksEndpoint.queryParameters,
+        'rankid': ranking.id,
+        'page': '1',
+        'pagesize': '100',
+        'version': '9108',
+        'plat': '0',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final data = decoded is Map ? decoded['data'] : null;
+    final values = data is Map ? data['info'] : null;
+    if (values is! List) throw const FormatException('酷狗音乐榜单缺少歌曲');
+    return values
+        .whereType<Map>()
+        .map(_parseKugouRankingTrack)
+        .whereType<Track>()
+        .toList(growable: false);
+  }
+
+  Future<List<Track>> _loadKuwoRankingTracks(PlatformRanking ranking) async {
+    final uri = _kuwoRankingTracksEndpoint.replace(
+      queryParameters: {
+        ..._kuwoRankingTracksEndpoint.queryParameters,
+        'from': 'pc',
+        'fmt': 'json',
+        'type': 'bang',
+        'data': 'content',
+        'id': ranking.id,
+        'pn': '0',
+        'rn': '100',
+      },
+    );
+    final decoded = await _getJson(uri);
+    final values = decoded is Map ? decoded['musiclist'] : null;
+    if (values is! List) throw const FormatException('酷我音乐榜单缺少歌曲');
+    return values
+        .whereType<Map>()
+        .map(_parseKuwoRankingTrack)
+        .whereType<Track>()
+        .toList(growable: false);
+  }
+
+  static const _kuwoRankings = [
+    PlatformRanking(id: '93', name: '酷我飙升榜', channel: OnlineSearchChannel.kuwo),
+    PlatformRanking(id: '17', name: '酷我新歌榜', channel: OnlineSearchChannel.kuwo),
+    PlatformRanking(id: '16', name: '酷我热歌榜', channel: OnlineSearchChannel.kuwo),
+    PlatformRanking(
+      id: '158',
+      name: '抖音热歌榜',
+      channel: OnlineSearchChannel.kuwo,
+    ),
+  ];
+
+  @override
   Future<Track?> matchTrackToSources(
     Track track,
     Set<String> sourceKeys,
@@ -383,6 +623,87 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
       }
     }
     return bestScore >= 4 ? best : null;
+  }
+
+  Track? _parseQqRankingTrack(Map<dynamic, dynamic> value) {
+    final sourceId = _text(value['songmid'] ?? value['mid']);
+    final title = _text(value['songname'] ?? value['name']);
+    final singers = value['singer'];
+    final artist = singers is List
+        ? singers
+              .whereType<Map>()
+              .map((item) => _text(item['name']))
+              .whereType<String>()
+              .join(' / ')
+        : null;
+    if (sourceId == null || title == null || artist == null || artist.isEmpty) {
+      return null;
+    }
+    final albumMid = _text(value['albummid']);
+    return Track(
+      id: 'tx-$sourceId',
+      title: title,
+      artist: artist,
+      album: _text(value['albumname']) ?? '单曲',
+      duration: Duration(seconds: _integer(value['interval']) ?? 0),
+      uri: '',
+      artworkUri: albumMid == null
+          ? null
+          : 'https://y.gtimg.cn/music/photo_new/T002R300x300M000$albumMid.jpg',
+      source: TrackSource.tx,
+      sourceId: sourceId,
+      quality: 'QQ 音乐 · 整曲',
+    );
+  }
+
+  Track? _parseKugouRankingTrack(Map<dynamic, dynamic> value) {
+    final sourceId = _text(value['hash'] ?? value['filename']);
+    final title = _cleanHtml(_text(value['songname']));
+    final authors = value['authors'];
+    final artist = authors is List
+        ? authors
+              .whereType<Map>()
+              .map((item) => _text(item['author_name']))
+              .whereType<String>()
+              .join(' / ')
+        : _cleanHtml(_text(value['filename']))?.split(' - ').first;
+    if (sourceId == null || title == null || artist == null || artist.isEmpty) {
+      return null;
+    }
+    final artwork = _text(value['album_sizable_cover'] ?? value['album_img']);
+    return Track(
+      id: 'kg-$sourceId',
+      title: title,
+      artist: artist,
+      album: _text(value['remark']) ?? '单曲',
+      duration: Duration(seconds: _integer(value['duration']) ?? 0),
+      uri: '',
+      artworkUri: _secureUrl(artwork?.replaceFirst('{size}', '400')),
+      source: TrackSource.kg,
+      sourceId: sourceId,
+      quality: '酷狗音乐 · 整曲',
+    );
+  }
+
+  Track? _parseKuwoRankingTrack(Map<dynamic, dynamic> value) {
+    final sourceId = _text(value['id'] ?? value['musicrid']);
+    final title = _cleanHtml(_text(value['name'] ?? value['songname']));
+    final artist = _cleanHtml(_text(value['artist']));
+    if (sourceId == null || title == null || artist == null) return null;
+    return Track(
+      id: 'kw-$sourceId',
+      title: title,
+      artist: artist,
+      album: _cleanHtml(_text(value['album'])) ?? '单曲',
+      duration: Duration(seconds: _integer(value['duration']) ?? 0),
+      uri: '',
+      artworkUri: _secureUrl(
+        _text(value['pic'] ?? value['web_albumpic_short']),
+      ),
+      source: TrackSource.kw,
+      sourceId: sourceId,
+      quality: '酷我音乐 · 整曲',
+    );
   }
 
   Track? _parseNeteaseTrack(Map<dynamic, dynamic> value) {

@@ -7,6 +7,7 @@ import '../player/now_playing_view.dart';
 import '../player/player_bar.dart';
 import '../player/player_view_model.dart';
 import '../playlists/playlists_view.dart';
+import '../rankings/rankings_view.dart';
 import '../settings/settings_view.dart';
 import '../search/search_view.dart';
 import '../sources/sources_view.dart';
@@ -25,6 +26,11 @@ class _MusicShellState extends State<MusicShell> {
     (icon: Icons.spa_outlined, selected: Icons.spa, label: '此刻'),
     (icon: Icons.search, selected: Icons.manage_search, label: '搜索'),
     (
+      icon: Icons.leaderboard_outlined,
+      selected: Icons.leaderboard,
+      label: '榜单',
+    ),
+    (
       icon: Icons.library_music_outlined,
       selected: Icons.library_music,
       label: '曲库',
@@ -41,6 +47,7 @@ class _MusicShellState extends State<MusicShell> {
   static const _pages = [
     HomeView(),
     SearchView(),
+    RankingsView(),
     LibraryView(),
     PlaylistsView(),
     SourcesView(),
