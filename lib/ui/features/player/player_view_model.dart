@@ -551,8 +551,20 @@ class PlayerViewModel extends ChangeNotifier {
 
   Future<void> downloadCurrentTrack([PlaybackQuality? quality]) async {
     final track = current;
-    if (track == null || track.uri.isEmpty) {
+    if (track == null) {
       message = '当前没有可下载的音频地址';
+      notifyListeners();
+      return;
+    }
+    await downloadTrack(track, quality);
+  }
+
+  Future<void> downloadTrack(Track track, [PlaybackQuality? quality]) async {
+    final canResolveQuality =
+        track.source != TrackSource.local &&
+        (track.sourceId?.isNotEmpty ?? false);
+    if (track.uri.isEmpty && !canResolveQuality) {
+      message = '该歌曲没有可下载的音频地址';
       notifyListeners();
       return;
     }
@@ -563,9 +575,6 @@ class PlayerViewModel extends ChangeNotifier {
     try {
       final downloadQuality = quality ?? playbackQuality;
       var downloadTrack = track;
-      final canResolveQuality =
-          track.source != TrackSource.local &&
-          (track.sourceId?.isNotEmpty ?? false);
       if (canResolveQuality) {
         message = '正在解析 ${downloadQuality.label} 下载地址...';
         notifyListeners();

@@ -119,6 +119,45 @@ void main() {
     expect(await repository.loadTracks(), contains(result));
   });
 
+  testWidgets('downloads the selected song from its right-click menu', (
+    tester,
+  ) async {
+    const result = Track(
+      id: 'right-click-download',
+      title: '右键下载歌曲',
+      artist: '测试歌手',
+      album: '云端专辑',
+      duration: Duration(minutes: 4),
+      uri: 'https://audio.example/right-click.mp3',
+      source: TrackSource.custom,
+    );
+    final downloader = _FakeCacheDownloader();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(const [result]),
+      playerService: FakePlayerService(),
+      downloadService: downloader,
+    );
+    await viewModel.load();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('搜索').first);
+    await tester.pumpAndSettle();
+    await viewModel.searchOnline('下载');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('右键下载歌曲'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下载 · 原始音质'));
+    await tester.pumpAndSettle();
+
+    expect(downloader.downloadedTrack, result);
+    expect(viewModel.current, isNull);
+  });
+
   testWidgets('home shows covers for platform playlists and new tracks', (
     tester,
   ) async {
@@ -347,6 +386,19 @@ void main() {
 }
 
 class _FakeCacheDownloader extends TrackDownloadService {
+  Track? downloadedTrack;
+
+  @override
+  Future<String> download(
+    Track track, {
+    String fallbackExtension = '.mp3',
+    required void Function(double progress) onProgress,
+  }) async {
+    downloadedTrack = track;
+    onProgress(1);
+    return 'D:/music/${track.id}$fallbackExtension';
+  }
+
   @override
   Future<String> downloadToCache(
     Track track, {

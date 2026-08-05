@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../domain/models/playback_quality.dart';
 import '../../domain/models/track.dart';
 import '../features/player/player_view_model.dart';
 
@@ -18,10 +19,37 @@ Future<void> showTrackFavoriteMenu(
   final removableFolder = removableFolderIndex < 0
       ? null
       : viewModel.folders[removableFolderIndex];
+  final supportsQualitySelection =
+      track.source != TrackSource.local &&
+      (track.sourceId?.isNotEmpty ?? false);
   final action = await showMenu<String>(
     context: context,
     position: _menuPosition(context),
     items: [
+      if (supportsQualitySelection)
+        for (final quality in PlaybackQuality.values)
+          PopupMenuItem(
+            value: '__download_${quality.name}',
+            child: Row(
+              children: [
+                const Icon(Icons.download_outlined),
+                const SizedBox(width: 12),
+                Text('下载 · ${quality.label}'),
+              ],
+            ),
+          )
+      else
+        const PopupMenuItem(
+          value: '__download_original__',
+          child: Row(
+            children: [
+              Icon(Icons.download_outlined),
+              SizedBox(width: 12),
+              Text('下载 · 原始音质'),
+            ],
+          ),
+        ),
+      const PopupMenuDivider(),
       if (removableFolder?.trackIds.contains(track.id) ?? false)
         const PopupMenuItem(
           value: '__remove__',
@@ -68,6 +96,18 @@ Future<void> showTrackFavoriteMenu(
     ],
   );
   if (action == null || !context.mounted) return;
+  if (action == '__download_original__') {
+    await viewModel.downloadTrack(track);
+    return;
+  }
+  if (action.startsWith('__download_')) {
+    final qualityName = action.substring('__download_'.length);
+    final quality = PlaybackQuality.values.firstWhere(
+      (item) => item.name == qualityName,
+    );
+    await viewModel.downloadTrack(track, quality);
+    return;
+  }
   if (action == '__remove__' && removableFolder != null) {
     await viewModel.removeTrackFromFolder(removableFolder.id, track.id);
     return;
