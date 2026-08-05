@@ -56,6 +56,10 @@ class PlayerViewModel extends ChangeNotifier {
     _completedSubscription = this.playerService.completed.listen((_) {
       unawaited(_handleCompleted());
     });
+    _errorSubscription = this.playerService.errors.listen((error) {
+      message = '播放失败：$error';
+      notifyListeners();
+    });
   }
 
   final MusicRepository musicRepository;
@@ -110,6 +114,7 @@ class PlayerViewModel extends ChangeNotifier {
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<double>? _volumeSubscription;
   StreamSubscription<void>? _completedSubscription;
+  StreamSubscription<String>? _errorSubscription;
 
   Duration get playbackDuration =>
       duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
@@ -792,6 +797,7 @@ class PlayerViewModel extends ChangeNotifier {
     unawaited(_durationSubscription?.cancel());
     unawaited(_volumeSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
+    unawaited(_errorSubscription?.cancel());
     unawaited(playerService.dispose());
     unawaited(floatingLyricsService.dispose());
     super.dispose();

@@ -10,6 +10,7 @@ abstract interface class AudioPlayerService {
   Stream<Duration> get duration;
   Stream<double> get volume;
   Stream<void> get completed;
+  Stream<String> get errors;
   Future<void> play(Track track);
   Future<void> toggle();
   Future<void> stop();
@@ -52,11 +53,25 @@ class PlayerService implements AudioPlayerService {
   Stream<void> get completed => player.stream.completed;
 
   @override
+  Stream<String> get errors => player.stream.error;
+
+  @override
   Future<void> play(Track track) async {
     if (track.uri.isEmpty) return;
     _networkTrack = _isNetworkTrack(track) ? track : null;
     _retriedWithoutProxy = false;
-    await player.open(Media(track.uri), play: true);
+    await _configureNetworkPlayback();
+    await player.open(
+      Media(
+        track.uri,
+        httpHeaders: const {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+              'AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
+        },
+      ),
+      play: true,
+    );
   }
 
   @override
@@ -77,7 +92,26 @@ class PlayerService implements AudioPlayerService {
     if (platform is! NativePlayer) return;
     await platform.setProperty('http-proxy', '');
     if (_networkTrack?.id != track.id) return;
-    await player.open(Media(track.uri), play: true);
+    await player.open(
+      Media(
+        track.uri,
+        httpHeaders: const {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+              'AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
+        },
+      ),
+      play: true,
+    );
+  }
+
+  Future<void> _configureNetworkPlayback() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) return;
+    await platform.future;
+    await platform.setProperty('http-proxy', '');
+    await platform.setProperty('network-timeout', '15000');
+    await platform.setProperty('user-agent', 'Mozilla/5.0');
   }
 
   bool _isNetworkTrack(Track track) {

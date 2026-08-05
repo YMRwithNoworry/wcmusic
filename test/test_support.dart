@@ -71,6 +71,9 @@ class FakePlayerService implements AudioPlayerService {
   Stream<void> get completed => _completedController.stream;
 
   @override
+  Stream<String> get errors => const Stream.empty();
+
+  @override
   Future<void> dispose() async {
     await _completedController.close();
   }
