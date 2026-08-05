@@ -14,7 +14,12 @@ import 'test_support.dart';
 void main() {
   var fontLoaded = false;
 
-  Future<void> render(WidgetTester tester, Size size, String golden) async {
+  Future<void> render(
+    WidgetTester tester,
+    Size size,
+    String golden, {
+    Future<void> Function(WidgetTester tester)? beforeCapture,
+  }) async {
     if (!fontLoaded) {
       final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
       if (fontFile.existsSync()) {
@@ -54,6 +59,8 @@ void main() {
       ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
     );
     await tester.pumpAndSettle();
+    await beforeCapture?.call(tester);
+    await tester.pumpAndSettle();
     await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
   }
 
@@ -67,5 +74,18 @@ void main() {
 
   testWidgets('mobile home fits a compact Android viewport', (tester) async {
     await render(tester, const Size(390, 844), 'goldens/home_mobile.png');
+  }, skip: !Platform.isWindows);
+
+  testWidgets('desktop search channels have a stable tab layout', (
+    tester,
+  ) async {
+    await render(
+      tester,
+      const Size(1440, 900),
+      'goldens/search_desktop.png',
+      beforeCapture: (tester) async {
+        await tester.tap(find.text('搜索').first);
+      },
+    );
   }, skip: !Platform.isWindows);
 }

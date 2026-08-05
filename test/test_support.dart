@@ -44,12 +44,20 @@ class FakeOnlineSearchService implements OnlineSearchService {
 
   final List<Track> results;
   final List<PlatformPlaylist> playlists;
+  OnlineSearchChannel? lastChannel;
 
   @override
   Future<List<PlatformPlaylist>> discoverPlaylists() async => playlists;
 
   @override
-  Future<List<Track>> search(String query, {int limit = 30}) async => results;
+  Future<List<Track>> search(
+    String query, {
+    int limit = 30,
+    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+  }) async {
+    lastChannel = channel;
+    return results;
+  }
 }
 
 class FakeWindowLifecycleService implements WindowLifecycleService {

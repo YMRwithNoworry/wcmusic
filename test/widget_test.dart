@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
+import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
 import 'package:wcmusic/ui/features/player/playback_controls.dart';
 import 'package:wcmusic/ui/features/player/now_playing_view.dart';
@@ -39,10 +40,11 @@ void main() {
       uri: 'https://audio.example/preview.m4a',
       source: TrackSource.custom,
     );
+    final searchService = FakeOnlineSearchService(const [result]);
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(),
       sourceRepository: MemorySourceRepository(),
-      onlineSearchService: FakeOnlineSearchService(const [result]),
+      onlineSearchService: searchService,
       playerService: FakePlayerService(),
     );
     await viewModel.load();
@@ -59,6 +61,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('在线晴天'), findsOneWidget);
     expect(find.text('测试歌手'), findsOneWidget);
+
+    await tester.tap(find.text('Deezer'));
+    await tester.pumpAndSettle();
+    expect(searchService.lastChannel, OnlineSearchChannel.deezer);
   });
 
   testWidgets('shows progress and volume controls while playing', (

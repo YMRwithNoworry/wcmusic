@@ -109,4 +109,86 @@ void main() {
     expect(playlists.single.artworkUri, 'https://image.example/600x600SC.jpg');
     expect(playlists.single.url, 'https://music.example/playlist-42');
   });
+
+  test('maps Deezer search results into playable tracks', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.first.then((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'data': [
+            {
+              'id': 9,
+              'title': '另一首歌',
+              'duration': 188,
+              'preview': 'https://audio.example/deezer.mp3',
+              'artist': {'name': '另一位歌手'},
+              'album': {
+                'title': '另一张专辑',
+                'cover_big': 'https://image.example/deezer.jpg',
+              },
+            },
+          ],
+        }),
+      );
+      await request.response.close();
+    });
+    final service = AppleOnlineSearchService(
+      deezerEndpoint: Uri.parse('http://127.0.0.1:${server.port}/deezer'),
+    );
+
+    final tracks = await service.search(
+      '另一首歌',
+      channel: OnlineSearchChannel.deezer,
+    );
+
+    expect(tracks.single.id, 'deezer-9');
+    expect(tracks.single.artist, '另一位歌手');
+    expect(tracks.single.uri, 'https://audio.example/deezer.mp3');
+    expect(tracks.single.quality, 'Deezer · 试听');
+  });
+
+  test('aggregates channels and removes duplicate songs', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/apple') {
+        request.response.write(
+          jsonEncode({
+            'results': [
+              {'trackId': 1, 'trackName': '同一首歌', 'artistName': '同一位歌手'},
+            ],
+          }),
+        );
+      } else {
+        request.response.write(
+          jsonEncode({
+            'data': [
+              {
+                'id': 2,
+                'title': '同一首歌',
+                'artist': {'name': '同一位歌手'},
+                'album': {'title': '聚合专辑'},
+              },
+            ],
+          }),
+        );
+      }
+      await request.response.close();
+    });
+    final service = AppleOnlineSearchService(
+      endpoint: Uri.parse('http://127.0.0.1:${server.port}/apple'),
+      deezerEndpoint: Uri.parse('http://127.0.0.1:${server.port}/deezer'),
+    );
+
+    final tracks = await service.search(
+      '同一首歌',
+      channel: OnlineSearchChannel.aggregate,
+    );
+
+    expect(tracks, hasLength(1));
+    expect(tracks.single.title, '同一首歌');
+  });
 }

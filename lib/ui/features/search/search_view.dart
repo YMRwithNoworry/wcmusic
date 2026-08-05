@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/models/track.dart';
+import '../../../data/services/online_search_service.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
@@ -29,7 +30,7 @@ class _SearchViewState extends State<SearchView> {
       title: '在线搜索',
       subtitle: viewModel.onlineQuery.isEmpty
           ? '寻找歌曲、艺术家与专辑'
-          : '${viewModel.onlineResults.length} 条结果 · Apple Music 试听',
+          : '${viewModel.onlineResults.length} 条结果 · ${viewModel.onlineSearchChannel.label}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -60,6 +61,11 @@ class _SearchViewState extends State<SearchView> {
             onSubmitted: viewModel.isSearchingOnline
                 ? null
                 : viewModel.searchOnline,
+          ),
+          const SizedBox(height: 14),
+          _ChannelTabs(
+            selected: viewModel.onlineSearchChannel,
+            onSelected: viewModel.selectOnlineSearchChannel,
           ),
           const SizedBox(height: 24),
           AnimatedSwitcher(
@@ -147,7 +153,9 @@ class _OnlineTrackRow extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   Text(
-                    track.artist,
+                    track.quality == null
+                        ? track.artist
+                        : '${track.artist} · ${track.quality}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -183,6 +191,57 @@ class _OnlineTrackRow extends StatelessWidget {
   String _duration(Duration duration) => duration == Duration.zero
       ? '--:--'
       : '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
+}
+
+class _ChannelTabs extends StatelessWidget {
+  const _ChannelTabs({required this.selected, required this.onSelected});
+
+  final OnlineSearchChannel selected;
+  final ValueChanged<OnlineSearchChannel> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final channel in OnlineSearchChannel.values)
+            Padding(
+              padding: const EdgeInsets.only(right: 22),
+              child: InkWell(
+                onTap: () => onSelected(channel),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(2, 10, 2, 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        channel.label,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: selected == channel
+                                  ? colors.primary
+                                  : colors.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        width: selected == channel ? 30 : 0,
+                        height: 2,
+                        color: colors.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Artwork extends StatelessWidget {

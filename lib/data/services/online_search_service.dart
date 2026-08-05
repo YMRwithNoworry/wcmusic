@@ -3,8 +3,22 @@ import 'dart:io';
 
 import '../../domain/models/track.dart';
 
+enum OnlineSearchChannel { appleMusic, deezer, aggregate }
+
+extension OnlineSearchChannelLabel on OnlineSearchChannel {
+  String get label => switch (this) {
+    OnlineSearchChannel.appleMusic => 'Apple Music',
+    OnlineSearchChannel.deezer => 'Deezer',
+    OnlineSearchChannel.aggregate => '聚合搜索',
+  };
+}
+
 abstract interface class OnlineSearchService {
-  Future<List<Track>> search(String query, {int limit = 30});
+  Future<List<Track>> search(
+    String query, {
+    int limit = 30,
+    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+  });
   Future<List<PlatformPlaylist>> discoverPlaylists();
 }
 
@@ -13,6 +27,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
     HttpClient Function()? clientFactory,
     String Function(Uri)? proxyResolver,
     Uri? endpoint,
+    Uri? deezerEndpoint,
     Uri? playlistEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
@@ -22,6 +37,8 @@ class AppleOnlineSearchService implements OnlineSearchService {
              environment: Platform.environment,
            )),
        _endpoint = endpoint ?? Uri.https('itunes.apple.com', '/search'),
+       _deezerEndpoint =
+           deezerEndpoint ?? Uri.https('api.deezer.com', '/search'),
        _playlistEndpoint =
            playlistEndpoint ??
            Uri.https(
@@ -32,13 +49,26 @@ class AppleOnlineSearchService implements OnlineSearchService {
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
   final Uri _endpoint;
+  final Uri _deezerEndpoint;
   final Uri _playlistEndpoint;
 
   @override
-  Future<List<Track>> search(String query, {int limit = 30}) async {
+  Future<List<Track>> search(
+    String query, {
+    int limit = 30,
+    OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
+  }) async {
     final keyword = query.trim();
     if (keyword.isEmpty) return const [];
 
+    return switch (channel) {
+      OnlineSearchChannel.appleMusic => _searchApple(keyword, limit),
+      OnlineSearchChannel.deezer => _searchDeezer(keyword, limit),
+      OnlineSearchChannel.aggregate => _searchAggregate(keyword, limit),
+    };
+  }
+
+  Future<List<Track>> _searchApple(String keyword, int limit) async {
     final uri = _endpoint.replace(
       queryParameters: {
         ..._endpoint.queryParameters,
@@ -53,7 +83,46 @@ class AppleOnlineSearchService implements OnlineSearchService {
     if (decoded is! Map<String, dynamic> || decoded['results'] is! List) {
       throw const FormatException('在线搜索返回了无法识别的数据');
     }
-    return _parseResults(decoded['results'] as List);
+    return _parseAppleResults(decoded['results'] as List);
+  }
+
+  Future<List<Track>> _searchDeezer(String keyword, int limit) async {
+    final uri = _deezerEndpoint.replace(
+      queryParameters: {
+        ..._deezerEndpoint.queryParameters,
+        'q': keyword,
+        'limit': limit.clamp(1, 50).toString(),
+      },
+    );
+    final decoded = await _getJson(uri);
+    if (decoded is! Map<String, dynamic> || decoded['data'] is! List) {
+      throw const FormatException('Deezer 返回了无法识别的数据');
+    }
+    return _parseDeezerResults(decoded['data'] as List);
+  }
+
+  Future<List<Track>> _searchAggregate(String keyword, int limit) async {
+    Object? appleError;
+    Object? deezerError;
+    final results = await Future.wait([
+      _searchApple(keyword, limit).onError((error, _) {
+        appleError = error;
+        return const [];
+      }),
+      _searchDeezer(keyword, limit).onError((error, _) {
+        deezerError = error;
+        return const [];
+      }),
+    ]);
+    if (appleError != null && deezerError != null) {
+      throw StateError('所有搜索渠道均不可用');
+    }
+    final unique = <String, Track>{};
+    for (final track in results.expand((items) => items)) {
+      final key = '${track.title}\u0000${track.artist}'.toLowerCase();
+      unique.putIfAbsent(key, () => track);
+    }
+    return unique.values.take(limit).toList(growable: false);
   }
 
   @override
@@ -122,7 +191,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
     }
   }
 
-  List<Track> _parseResults(List<dynamic> results) {
+  List<Track> _parseAppleResults(List<dynamic> results) {
     final tracks = <Track>[];
     for (final value in results) {
       if (value is! Map) continue;
@@ -145,7 +214,41 @@ class AppleOnlineSearchService implements OnlineSearchService {
           artworkUri: _largerArtwork(_text(item['artworkUrl100'])),
           source: TrackSource.custom,
           sourceId: id,
-          quality: '试听',
+          quality: 'Apple Music · 试听',
+        ),
+      );
+    }
+    return tracks;
+  }
+
+  List<Track> _parseDeezerResults(List<dynamic> results) {
+    final tracks = <Track>[];
+    for (final value in results) {
+      if (value is! Map) continue;
+      final item = Map<String, dynamic>.from(value);
+      final artistValue = item['artist'];
+      final albumValue = item['album'];
+      final artist = artistValue is Map ? _text(artistValue['name']) : null;
+      final album = albumValue is Map ? _text(albumValue['title']) : null;
+      final artwork = albumValue is Map
+          ? _text(albumValue['cover_big'] ?? albumValue['cover_medium'])
+          : null;
+      final id = item['id']?.toString();
+      final title = _text(item['title']);
+      if (id == null || title == null || artist == null) continue;
+      final seconds = item['duration'];
+      tracks.add(
+        Track(
+          id: 'deezer-$id',
+          title: title,
+          artist: artist,
+          album: album ?? '单曲',
+          duration: Duration(seconds: seconds is num ? seconds.round() : 0),
+          uri: _text(item['preview']) ?? '',
+          artworkUri: artwork,
+          source: TrackSource.custom,
+          sourceId: id,
+          quality: 'Deezer · 试听',
         ),
       );
     }

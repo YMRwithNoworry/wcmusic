@@ -59,6 +59,7 @@ class PlayerViewModel extends ChangeNotifier {
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
   String onlineQuery = '';
+  OnlineSearchChannel onlineSearchChannel = OnlineSearchChannel.appleMusic;
   List<Track> onlineResults = const [];
   List<PlatformPlaylist> platformPlaylists = const [];
   List<PlatformPlaylist> _platformPlaylistCatalog = const [];
@@ -208,7 +209,10 @@ class PlayerViewModel extends ChangeNotifier {
     onlineSearchError = null;
     notifyListeners();
     try {
-      final results = await onlineSearchService.search(keyword);
+      final results = await onlineSearchService.search(
+        keyword,
+        channel: onlineSearchChannel,
+      );
       if (generation != _searchGeneration) return;
       onlineResults = results;
     } on Object catch (error) {
@@ -221,6 +225,13 @@ class PlayerViewModel extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  Future<void> selectOnlineSearchChannel(OnlineSearchChannel channel) async {
+    if (channel == onlineSearchChannel) return;
+    onlineSearchChannel = channel;
+    notifyListeners();
+    if (onlineQuery.isNotEmpty) await searchOnline(onlineQuery);
   }
 
   Future<void> importPlaylist(String path, List<int> bytes) async {
