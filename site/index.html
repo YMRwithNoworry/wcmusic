@@ -213,34 +213,36 @@
           <input class="form-trap" type="text" name="_honey" tabindex="-1" autocomplete="off" aria-hidden="true">
 
           <div class="form-row">
-            <label>
-              <span>问题类型</span>
-              <span class="select-wrap">
-                <select name="问题类型" required>
-                  <option value="" selected disabled>请选择</option>
-                  <option value="播放问题">播放问题</option>
-                  <option value="搜索问题">搜索问题</option>
-                  <option value="音源问题">音源问题</option>
-                  <option value="安装或更新">安装或更新</option>
-                  <option value="功能建议">功能建议</option>
-                  <option value="其他">其他</option>
-                </select>
+            <div class="form-field custom-select" data-custom-select>
+              <span class="field-label" id="issue-type-label">问题类型</span>
+              <input type="hidden" name="问题类型" data-select-value>
+              <button class="select-trigger" type="button" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="issue-type-label issue-type-value" data-select-trigger>
+                <span class="select-value placeholder" id="issue-type-value" data-select-label>请选择</span>
                 <i data-lucide="chevron-down" aria-hidden="true"></i>
-              </span>
-            </label>
-            <label>
-              <span>使用平台</span>
-              <span class="select-wrap">
-                <select name="使用平台" required>
-                  <option value="" selected disabled>请选择</option>
-                  <option value="Windows 11">Windows 11</option>
-                  <option value="Windows 10">Windows 10</option>
-                  <option value="Android">Android</option>
-                  <option value="其他">其他</option>
-                </select>
+              </button>
+              <ul class="select-menu" role="listbox" aria-labelledby="issue-type-label" tabindex="-1" data-select-menu>
+                <li role="option" aria-selected="false" data-value="播放问题"><span>播放问题</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="搜索问题"><span>搜索问题</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="音源问题"><span>音源问题</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="安装或更新"><span>安装或更新</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="功能建议"><span>功能建议</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="其他"><span>其他</span><i data-lucide="check" aria-hidden="true"></i></li>
+              </ul>
+            </div>
+            <div class="form-field custom-select" data-custom-select>
+              <span class="field-label" id="platform-label">使用平台</span>
+              <input type="hidden" name="使用平台" data-select-value>
+              <button class="select-trigger" type="button" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="platform-label platform-value" data-select-trigger>
+                <span class="select-value placeholder" id="platform-value" data-select-label>请选择</span>
                 <i data-lucide="chevron-down" aria-hidden="true"></i>
-              </span>
-            </label>
+              </button>
+              <ul class="select-menu" role="listbox" aria-labelledby="platform-label" tabindex="-1" data-select-menu>
+                <li role="option" aria-selected="false" data-value="Windows 11"><span>Windows 11</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="Windows 10"><span>Windows 10</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="Android"><span>Android</span><i data-lucide="check" aria-hidden="true"></i></li>
+                <li role="option" aria-selected="false" data-value="其他"><span>其他</span><i data-lucide="check" aria-hidden="true"></i></li>
+              </ul>
+            </div>
           </div>
           <label>
             <span>联系邮箱 <small>选填，用于回复</small></span>

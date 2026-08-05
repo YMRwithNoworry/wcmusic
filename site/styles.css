@@ -163,24 +163,44 @@ details p { max-width: 760px; margin: -5px 0 27px; color: rgba(32,35,31,.68); li
 .feedback-note { display: flex; align-items: center; gap: 11px; margin-top: 36px; color: rgba(242,239,231,.72); font-family: var(--mono); font-size: 11px; }
 .feedback-note svg { color: #a7c58f; }
 .feedback-form { align-self: start; padding: 36px; border: 1px solid rgba(242,239,231,.22); border-radius: 8px; background: rgba(242,239,231,.055); }
-.feedback-form label { display: grid; gap: 10px; margin-bottom: 24px; font-size: 13px; font-weight: 620; }
+.feedback-form label, .form-field { display: grid; gap: 10px; margin-bottom: 24px; font-size: 13px; font-weight: 620; }
 .feedback-form label > span:first-child { display: flex; align-items: baseline; gap: 8px; }
+.field-label { display: block; }
 .feedback-form small { color: rgba(242,239,231,.55); font-size: 11px; font-weight: 400; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .form-row label { min-width: 0; }
-.feedback-form input, .feedback-form select, .feedback-form textarea {
+.feedback-form input, .feedback-form textarea, .select-trigger {
   width: 100%; border: 1px solid rgba(242,239,231,.2); border-radius: 6px; outline: none;
   color: var(--paper); background: rgba(24,27,24,.3); font: inherit; font-weight: 400;
   transition: border-color 160ms, background-color 160ms;
 }
-.feedback-form input, .feedback-form select { height: 50px; padding: 0 14px; }
+.feedback-form input, .select-trigger { height: 50px; padding: 0 14px; }
 .feedback-form textarea { min-height: 160px; padding: 14px; resize: vertical; line-height: 1.55; }
 .feedback-form input::placeholder, .feedback-form textarea::placeholder { color: rgba(242,239,231,.4); }
-.feedback-form input:focus, .feedback-form select:focus, .feedback-form textarea:focus { border-color: #a7c58f; background: rgba(24,27,24,.52); }
-.select-wrap { position: relative; display: block; }
-.select-wrap select { appearance: none; padding-right: 42px; cursor: pointer; }
-.select-wrap svg { position: absolute; top: 50%; right: 14px; width: 16px; transform: translateY(-50%); pointer-events: none; }
-.feedback-form option { color: var(--ink); background: var(--surface); }
+.feedback-form input:focus, .feedback-form textarea:focus, .select-trigger:focus-visible { border-color: #a7c58f; background: rgba(24,27,24,.52); }
+.custom-select { position: relative; }
+.select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; text-align: left; }
+.select-trigger svg { width: 17px; flex: 0 0 auto; transition: transform 180ms; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-value.placeholder { color: rgba(242,239,231,.44); }
+.custom-select.open .select-trigger { border-color: #a7c58f; background: rgba(24,27,24,.62); }
+.custom-select.open .select-trigger svg { transform: rotate(180deg); }
+.custom-select.invalid .select-trigger { border-color: #f0ab9d; }
+.select-menu {
+  position: absolute; z-index: 12; top: calc(100% - 17px); left: 0; right: 0; margin: 0; padding: 7px;
+  border: 1px solid rgba(167,197,143,.48); border-radius: 7px; list-style: none;
+  background: #252d23; box-shadow: 0 18px 42px rgba(14,18,13,.34);
+  opacity: 0; visibility: hidden; transform: translateY(-5px); transition: opacity 150ms, transform 150ms, visibility 150ms;
+}
+.custom-select.open .select-menu { opacity: 1; visibility: visible; transform: none; }
+.select-menu li {
+  min-height: 42px; padding: 0 11px; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  color: rgba(242,239,231,.78); cursor: pointer; font-weight: 400; transition: color 120ms, background-color 120ms;
+}
+.select-menu li:hover, .select-menu li.focused { color: var(--paper); background: rgba(167,197,143,.12); }
+.select-menu li[aria-selected="true"] { color: #d4e7c6; background: rgba(167,197,143,.18); }
+.select-menu li svg { width: 16px; opacity: 0; }
+.select-menu li[aria-selected="true"] svg { opacity: 1; }
 .form-trap { position: absolute !important; left: -10000px !important; width: 1px !important; height: 1px !important; opacity: 0; }
 .form-submit-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 20px; }
 .feedback-submit { min-width: 158px; border: 0; color: var(--ink); background: var(--paper); cursor: pointer; }
