@@ -95,7 +95,7 @@ class PlaylistsView extends StatelessWidget {
     if (file == null) return;
     final bytes = await file.readAsBytes();
     if (!context.mounted) return;
-    await context.read<PlayerViewModel>().importPlaylist(file.name, bytes);
+    await context.read<PlayerViewModel>().importPlaylist(file.path, bytes);
   }
 }
 

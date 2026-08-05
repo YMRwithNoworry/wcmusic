@@ -159,7 +159,7 @@ class PlayerViewModel extends ChangeNotifier {
     duration = track.duration;
     message = track.uri.isEmpty
         ? track.source == TrackSource.local
-              ? '这是演示曲目；导入本地歌单后即可播放'
+              ? '本地歌曲文件不可用'
               : '该歌曲暂无可用的在线试听地址'
         : null;
     if (track.uri.isNotEmpty) {
@@ -274,11 +274,15 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> addTracks(List<Track> additions) async {
-    if (additions.isEmpty) return;
-    tracks = [...tracks, ...additions];
-    await musicRepository.saveTracks(tracks);
-    message = '已添加 ${additions.length} 首本地音乐';
+  Future<void> importLocalAudio(List<String> paths) async {
+    if (paths.isEmpty) return;
+    try {
+      final imported = await musicRepository.importAudioFiles(paths);
+      tracks = await musicRepository.loadTracks();
+      message = '已复制并添加 ${imported.length} 首本地音乐';
+    } on Object catch (error) {
+      message = '导入本地音乐失败：$error';
+    }
     notifyListeners();
   }
 

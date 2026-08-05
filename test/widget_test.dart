@@ -15,7 +15,7 @@ import 'test_support.dart';
 void main() {
   testWidgets('renders the music workspace', (tester) async {
     final viewModel = PlayerViewModel(
-      musicRepository: MemoryMusicRepository(),
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
@@ -42,7 +42,7 @@ void main() {
     );
     final searchService = FakeOnlineSearchService(const [result]);
     final viewModel = PlayerViewModel(
-      musicRepository: MemoryMusicRepository(),
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: searchService,
       playerService: FakePlayerService(),
@@ -71,7 +71,7 @@ void main() {
     tester,
   ) async {
     final viewModel = PlayerViewModel(
-      musicRepository: MemoryMusicRepository(),
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),

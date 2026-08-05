@@ -37,7 +37,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final viewModel = PlayerViewModel(
-      musicRepository: MemoryMusicRepository(),
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(
         const [],

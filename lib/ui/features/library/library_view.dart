@@ -1,8 +1,6 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
-
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
@@ -52,22 +50,9 @@ class LibraryView extends StatelessWidget {
       mimeTypes: ['audio/*'],
     );
     final files = await openFiles(acceptedTypeGroups: const [audioTypes]);
-    final additions = <Track>[];
-    for (final file in files) {
-      final path = file.path;
-      if (path.isEmpty) continue;
-      additions.add(
-        Track(
-          id: const Uuid().v4(),
-          title: file.name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-          artist: '本地音乐',
-          album: '最近添加',
-          duration: Duration.zero,
-          uri: path,
-        ),
-      );
-    }
-    await viewModel.addTracks(additions);
+    await viewModel.importLocalAudio(
+      files.map((file) => file.path).where((path) => path.isNotEmpty).toList(),
+    );
   }
 }
 

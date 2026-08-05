@@ -3,7 +3,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 
 import 'app.dart';
-import 'data/repositories/memory_music_repository.dart';
+import 'data/repositories/file_music_repository.dart';
 import 'data/repositories/memory_source_repository.dart';
 import 'data/services/source_storage.dart';
 import 'data/services/online_search_service.dart';
@@ -18,7 +18,7 @@ Future<void> main() async {
   runApp(
     ChangeNotifierProvider(
       create: (_) => PlayerViewModel(
-        musicRepository: MemoryMusicRepository(),
+        musicRepository: FileMusicRepository(),
         sourceRepository: MemorySourceRepository(storage: FileSourceStorage()),
         onlineSearchService: AppleOnlineSearchService(),
         windowLifecycleService: windowService,

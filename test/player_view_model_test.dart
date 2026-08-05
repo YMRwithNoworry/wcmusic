@@ -43,7 +43,7 @@ void main() {
   test('controls playback position, volume, and mute restoration', () async {
     final player = FakePlayerService();
     final viewModel = PlayerViewModel(
-      musicRepository: MemoryMusicRepository(),
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: player,

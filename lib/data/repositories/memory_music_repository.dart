@@ -1,17 +1,22 @@
 import 'dart:typed_data';
 
+import 'package:uuid/uuid.dart';
+
 import '../../domain/models/track.dart';
 import '../../domain/repositories/music_repository.dart';
 import '../services/playlist_parser.dart';
 
 class MemoryMusicRepository implements MusicRepository {
-  MemoryMusicRepository({this._parser = const PlaylistParser()});
+  MemoryMusicRepository({
+    this._parser = const PlaylistParser(),
+    List<Track> initialTracks = const [],
+    List<Playlist> initialPlaylists = const [],
+  }) : _tracks = List.of(initialTracks),
+       _playlists = List.of(initialPlaylists);
 
   final PlaylistParser _parser;
-  final List<Track> _tracks = List.of(_seedTracks);
-  final List<Playlist> _playlists = [
-    Playlist(id: 'morning', name: '晨光漫游', tracks: _seedTracks.take(3).toList()),
-  ];
+  final List<Track> _tracks;
+  final List<Playlist> _playlists;
 
   @override
   Future<List<Track>> loadTracks() async => List.unmodifiable(_tracks);
@@ -42,48 +47,24 @@ class MemoryMusicRepository implements MusicRepository {
     _tracks.addAll(playlist.tracks);
   }
 
+  @override
+  Future<List<Track>> importAudioFiles(List<String> paths) async {
+    final imported = paths
+        .where((path) => path.isNotEmpty)
+        .map(
+          (path) => Track(
+            id: const Uuid().v4(),
+            title: _basename(path).replaceFirst(RegExp(r'\.[^.]+$'), ''),
+            artist: '本地音乐',
+            album: '最近添加',
+            duration: Duration.zero,
+            uri: path,
+          ),
+        )
+        .toList(growable: false);
+    _tracks.addAll(imported);
+    return imported;
+  }
+
   String _basename(String value) => value.replaceAll('\\', '/').split('/').last;
 }
-
-const _seedTracks = <Track>[
-  Track(
-    id: 'seedling',
-    title: 'Seedling',
-    artist: 'North Field',
-    album: 'The Quiet Orchard',
-    duration: Duration(minutes: 3, seconds: 42),
-    uri: '',
-  ),
-  Track(
-    id: 'waterline',
-    title: 'Waterline',
-    artist: 'Mira Sol',
-    album: 'Tidal Memory',
-    duration: Duration(minutes: 4, seconds: 8),
-    uri: '',
-  ),
-  Track(
-    id: 'greenhouse',
-    title: 'Greenhouse',
-    artist: 'Fallow & Form',
-    album: 'Soft Machinery',
-    duration: Duration(minutes: 2, seconds: 58),
-    uri: '',
-  ),
-  Track(
-    id: 'hush',
-    title: 'Hush Before Rain',
-    artist: 'Arden Sleep',
-    album: 'Weather Rooms',
-    duration: Duration(minutes: 5, seconds: 12),
-    uri: '',
-  ),
-  Track(
-    id: 'moss',
-    title: 'Moss on Stone',
-    artist: 'Lumen Garden',
-    album: 'Low Sun',
-    duration: Duration(minutes: 3, seconds: 26),
-    uri: '',
-  ),
-];
