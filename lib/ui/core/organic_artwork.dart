@@ -83,6 +83,12 @@ class _OrganicArtworkState extends State<OrganicArtwork>
                 height: double.infinity,
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
+                headers: const {
+                  'User-Agent': 'Mozilla/5.0',
+                  'Referer': 'https://music.163.com/',
+                },
+                loadingBuilder: (context, child, progress) =>
+                    progress == null ? child : fallback,
                 errorBuilder: (_, _, _) => fallback,
               ),
       ),

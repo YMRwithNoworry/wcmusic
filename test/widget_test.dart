@@ -78,6 +78,46 @@ void main() {
     expect(searchService.lastChannel, OnlineSearchChannel.qqMusic);
   });
 
+  testWidgets('home shows covers for platform playlists and new tracks', (
+    tester,
+  ) async {
+    const platformPlaylist = PlatformPlaylist(
+      id: 'playlist-cover',
+      name: '热门歌单',
+      artworkUri: 'https://image.example/playlist.jpg',
+      url: 'https://music.example/playlist-cover',
+      platform: '网易云音乐',
+    );
+    const newTrack = Track(
+      id: 'new-cover',
+      title: '封面新曲',
+      artist: '封面歌手',
+      album: '封面专辑',
+      duration: Duration(minutes: 3),
+      uri: '',
+      artworkUri: 'https://image.example/track.jpg',
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [platformPlaylist],
+        const [newTrack],
+      ),
+      playerService: FakePlayerService(),
+    );
+    await viewModel.load();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('热门歌单'), findsOneWidget);
+    expect(find.text('封面新曲'), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(2));
+  });
+
   testWidgets('favorites a platform playlist from the home view', (
     tester,
   ) async {

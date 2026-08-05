@@ -241,6 +241,17 @@ class _PlatformPlaylistTile extends StatelessWidget {
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
+                          headers: const {
+                            'User-Agent': 'Mozilla/5.0',
+                            'Referer': 'https://music.163.com/',
+                          },
+                          loadingBuilder: (context, child, progress) =>
+                              progress == null
+                              ? child
+                              : OrganicArtwork(
+                                  seed: playlist.id,
+                                  size: double.infinity,
+                                ),
                           errorBuilder: (_, _, _) => OrganicArtwork(
                             seed: playlist.id,
                             size: double.infinity,
@@ -416,6 +427,17 @@ class _AlbumTileState extends State<_AlbumTile> {
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
+                          headers: const {
+                            'User-Agent': 'Mozilla/5.0',
+                            'Referer': 'https://music.163.com/',
+                          },
+                          loadingBuilder: (context, child, progress) =>
+                              progress == null
+                              ? child
+                              : OrganicArtwork(
+                                  seed: widget.seed,
+                                  size: double.infinity,
+                                ),
                           errorBuilder: (_, _, _) => OrganicArtwork(
                             seed: widget.seed,
                             size: double.infinity,
