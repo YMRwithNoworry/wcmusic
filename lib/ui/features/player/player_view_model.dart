@@ -262,13 +262,51 @@ class PlayerViewModel extends ChangeNotifier {
     current = track;
     position = Duration.zero;
     duration = track.duration;
-    message = track.uri.isEmpty
-        ? track.source == TrackSource.local
-              ? '本地歌曲文件不可用'
-              : '该歌曲暂无可用的在线试听地址'
-        : null;
-    if (track.uri.isNotEmpty) {
-      await playerService.play(track);
+    message = null;
+    notifyListeners();
+
+    var playbackTrack = track;
+    if (track.source != TrackSource.local && sources.isNotEmpty) {
+      try {
+        final sourceKeys = sources
+            .expand((source) => source.sourceKeys)
+            .toSet();
+        if (!sourceKeys.contains(playbackTrack.source.name)) {
+          final matched = await onlineSearchService.matchTrackToSources(
+            track,
+            sourceKeys,
+          );
+          if (matched != null) playbackTrack = matched;
+        }
+        if (sourceKeys.contains(playbackTrack.source.name)) {
+          message = '正在通过洛雪音源解析整曲...';
+          notifyListeners();
+          final url = await sourceRepository.resolveUrl(
+            playbackTrack,
+            quality: '320k',
+          );
+          playbackTrack = track.copyWith(
+            uri: url,
+            source: playbackTrack.source,
+            sourceId: playbackTrack.sourceId,
+            quality: '洛雪音源 · 整曲',
+          );
+          current = playbackTrack;
+          message = null;
+        }
+      } on Object {
+        message = track.uri.isEmpty ? '整曲解析失败，该歌曲暂无播放地址' : '整曲解析失败，已回退平台试听';
+        playbackTrack = track;
+        current = track;
+      }
+    }
+
+    if (playbackTrack.uri.isEmpty) {
+      message ??= playbackTrack.source == TrackSource.local
+          ? '本地歌曲文件不可用'
+          : '该歌曲暂无可用的播放地址';
+    } else {
+      await playerService.play(playbackTrack);
       isPlaying = true;
     }
     notifyListeners();

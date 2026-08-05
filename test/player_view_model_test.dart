@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/domain/models/track.dart';
+import 'package:wcmusic/domain/repositories/source_repository.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
 
 import 'test_support.dart';
@@ -61,6 +62,52 @@ void main() {
     expect(player.setVolumeValue, 0);
     await viewModel.toggleMute();
     expect(player.setVolumeValue, .35);
+  });
+
+  test('prefers a full track url resolved by an imported source', () async {
+    const previewTrack = Track(
+      id: 'apple-42',
+      title: '目标歌曲',
+      artist: '目标歌手',
+      album: '测试专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.custom,
+      sourceId: '42',
+    );
+    const matchedTrack = Track(
+      id: 'apple-42',
+      title: '目标歌曲',
+      artist: '目标歌手',
+      album: '测试专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.wy,
+      sourceId: '123',
+    );
+    final player = FakePlayerService();
+    final sourceRepository = _FullTrackSourceRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [],
+        const [],
+        const {},
+        matchedTrack,
+      ),
+      playerService: player,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.playTrack(previewTrack);
+
+    expect(sourceRepository.resolvedTrack?.source, TrackSource.wy);
+    expect(sourceRepository.resolvedTrack?.sourceId, '123');
+    expect(player.playedTrack?.uri, 'https://audio.example/full.flac');
+    expect(viewModel.current?.quality, '洛雪音源 · 整曲');
   });
 
   test('randomly selects at most four platform playlists', () async {
@@ -206,4 +253,34 @@ class _SynchronousTogglePlayerService extends FakePlayerService {
 
   @override
   Future<void> dispose() => _playing.close();
+}
+
+class _FullTrackSourceRepository implements SourceRepository {
+  Track? resolvedTrack;
+
+  @override
+  Future<List<SourceScript>> loadSources() async => const [
+    SourceScript(
+      id: 'source',
+      name: '测试音源',
+      version: '1.0.0',
+      author: 'WCMusic',
+      description: '测试',
+      sourceKeys: ['wy'],
+      rawScript: '',
+    ),
+  ];
+
+  @override
+  Future<String> resolveUrl(Track track, {String quality = '320k'}) async {
+    resolvedTrack = track;
+    return 'https://audio.example/full.flac';
+  }
+
+  @override
+  Future<SourceScript> importScript(String rawScript) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> deleteSource(String id) => throw UnimplementedError();
 }

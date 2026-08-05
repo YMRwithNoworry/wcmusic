@@ -29,17 +29,24 @@ class Track {
   final DateTime? releaseDate;
   final bool isFavorite;
 
-  Track copyWith({String? title, bool? isFavorite}) => Track(
+  Track copyWith({
+    String? title,
+    String? uri,
+    TrackSource? source,
+    String? sourceId,
+    String? quality,
+    bool? isFavorite,
+  }) => Track(
     id: id,
     title: title ?? this.title,
     artist: artist,
     album: album,
     duration: duration,
-    uri: uri,
+    uri: uri ?? this.uri,
     artworkUri: artworkUri,
-    source: source,
-    sourceId: sourceId,
-    quality: quality,
+    source: source ?? this.source,
+    sourceId: sourceId ?? this.sourceId,
+    quality: quality ?? this.quality,
     releaseDate: releaseDate,
     isFavorite: isFavorite ?? this.isFavorite,
   );

@@ -54,6 +54,55 @@ void main() {
     expect(await service.search('   '), isEmpty);
   });
 
+  test('matches an online track to a supported source song id', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final requestFuture = server.first.then((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'result': {
+            'songs': [
+              {
+                'id': 123,
+                'name': '目标歌曲',
+                'artists': [
+                  {'name': '目标歌手'},
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      await request.response.close();
+      return request.uri;
+    });
+    final service = AppleOnlineSearchService(
+      neteaseSearchEndpoint: Uri.parse(
+        'http://127.0.0.1:${server.port}/search',
+      ),
+    );
+    const track = Track(
+      id: 'apple-42',
+      title: '目标歌曲',
+      artist: '目标歌手',
+      album: '测试专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.custom,
+      sourceId: '42',
+    );
+
+    final matched = await service.matchTrackToSources(track, const {'wy'});
+    final requestUri = await requestFuture;
+
+    expect(requestUri.queryParameters['s'], contains('目标歌曲'));
+    expect(requestUri.queryParameters['s'], contains('目标歌手'));
+    expect(matched?.source, TrackSource.wy);
+    expect(matched?.sourceId, '123');
+    expect(matched?.quality, '洛雪音源 · 整曲');
+  });
+
   test('retries directly when the configured proxy is unavailable', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));

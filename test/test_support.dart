@@ -49,6 +49,7 @@ const testLibraryTracks = <Track>[
 class FakePlayerService implements AudioPlayerService {
   Duration? soughtPosition;
   double? setVolumeValue;
+  Track? playedTrack;
 
   @override
   Stream<Duration> get duration => const Stream.empty();
@@ -66,7 +67,9 @@ class FakePlayerService implements AudioPlayerService {
   Future<void> dispose() async {}
 
   @override
-  Future<void> play(Track track) async {}
+  Future<void> play(Track track) async {
+    playedTrack = track;
+  }
 
   @override
   Future<void> seek(Duration position) async {
@@ -88,12 +91,14 @@ class FakeOnlineSearchService implements OnlineSearchService {
     this.playlists = const [],
     this.newTracks = const [],
     this.playlistTracks = const {},
+    this.matchedTrack,
   ]);
 
   final List<Track> results;
   final List<PlatformPlaylist> playlists;
   final List<Track> newTracks;
   final Map<String, List<Track>> playlistTracks;
+  final Track? matchedTrack;
   OnlineSearchChannel? lastChannel;
 
   @override
@@ -105,6 +110,12 @@ class FakeOnlineSearchService implements OnlineSearchService {
   @override
   Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async =>
       playlistTracks[playlist.id] ?? const [];
+
+  @override
+  Future<Track?> matchTrackToSources(
+    Track track,
+    Set<String> sourceKeys,
+  ) async => matchedTrack;
 
   @override
   Future<List<Track>> search(

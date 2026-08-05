@@ -44,9 +44,129 @@ pub fn validate_source_script(
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
 
-    let metadata_json = serde_json::to_string(&metadata)?;
+    let bootstrap = source_bootstrap(script, environment, &metadata)?;
+
+    context.with(|ctx| {
+        ctx.eval::<(), _>(bootstrap)
+            .and_then(|_| ctx.eval::<(), _>(script))
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })?;
+
+    drain_jobs(&runtime)?;
+
+    context.with(|ctx| {
+        let messages_json: String = ctx
+            .eval("JSON.stringify(globalThis.__wcmusicMessages)")
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+        let messages: Vec<RuntimeMessage> = serde_json::from_str(&messages_json)?;
+        let init = messages
+            .into_iter()
+            .find(|message| message.name == "inited")
+            .ok_or_else(|| CoreError::SourceInitialization("脚本没有发送 inited 事件".into()))?;
+        let init: InitPayload = serde_json::from_value(init.data)?;
+        let mut sources = Vec::with_capacity(init.sources.len());
+        for (key, source) in init.sources {
+            if source.source_type.as_deref().unwrap_or("music") != "music" {
+                return Err(CoreError::SourceInitialization(format!(
+                    "音源 {key} 的类型必须为 music"
+                )));
+            }
+            sources.push(SourceCapability {
+                key,
+                name: source.name.unwrap_or_else(|| "未命名音源".into()),
+                actions: source.actions,
+                qualities: source.qualities,
+            });
+        }
+        Ok(SourceManifest {
+            metadata,
+            sources,
+            requests_dev_tools: init.open_dev_tools,
+        })
+    })
+}
+
+pub fn resolve_source_url(
+    script: &str,
+    environment: SourceEnvironment,
+    source: &str,
+    song_id: &str,
+    quality: &str,
+) -> Result<String, CoreError> {
+    let metadata = parse_script_metadata(script)?;
+    let runtime =
+        Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+    runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
+    runtime.set_max_stack_size(512 * 1024);
+    let context = Context::full(&runtime)
+        .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+    let bootstrap = source_bootstrap(script, environment, &metadata)?;
+    context.with(|ctx| {
+        ctx.eval::<(), _>(bootstrap)
+            .and_then(|_| ctx.eval::<(), _>(script))
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })?;
+    drain_jobs(&runtime)?;
+
+    let source_json = serde_json::to_string(source)?;
+    let song_id_json = serde_json::to_string(song_id)?;
+    let quality_json = serde_json::to_string(quality)?;
+    let invoke = format!(
+        r#"
+        globalThis.__wcmusicResolvedUrl = null;
+        globalThis.__wcmusicResolveError = null;
+        (() => {{
+          const handler = globalThis.__wcmusicHandlers.request;
+          if (typeof handler !== 'function') throw new Error('音源没有注册 request 处理器');
+          const songId = {song_id_json};
+          const musicInfo = Object.freeze({{
+            songmid: songId, id: songId, hash: songId,
+            musicId: songId, rid: songId
+          }});
+          Promise.resolve(handler({{
+            source: {source_json},
+            action: 'musicUrl',
+            info: {{ type: {quality_json}, musicInfo }}
+          }})).then(
+            value => {{ globalThis.__wcmusicResolvedUrl = value == null ? null : String(value); }},
+            error => {{ globalThis.__wcmusicResolveError = String(error); }}
+          );
+        }})();
+        "#
+    );
+    context.with(|ctx| {
+        ctx.eval::<(), _>(invoke)
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })?;
+    drain_jobs(&runtime)?;
+    context.with(|ctx| {
+        let state_json: String = ctx
+            .eval(
+                "JSON.stringify({ url: globalThis.__wcmusicResolvedUrl, error: globalThis.__wcmusicResolveError })",
+            )
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+        let state: ResolveState = serde_json::from_str(&state_json)?;
+        if let Some(error) = state.error {
+            return Err(CoreError::SourceInitialization(error));
+        }
+        let url = state.url.unwrap_or_default();
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(CoreError::SourceInitialization(
+                "音源没有返回有效的播放地址".into(),
+            ));
+        }
+        Ok(url)
+    })
+}
+
+fn source_bootstrap(
+    script: &str,
+    environment: SourceEnvironment,
+    metadata: &SourceScriptMetadata,
+) -> Result<String, CoreError> {
+    let metadata_json = serde_json::to_string(metadata)?;
     let script_json = serde_json::to_string(script)?;
-    let bootstrap = format!(
+    Ok(format!(
         r#"
         globalThis.__wcmusicHandlers = Object.create(null);
         globalThis.__wcmusicMessages = [];
@@ -94,14 +214,10 @@ pub fn validate_source_script(
         environment.as_str(),
         metadata_json,
         script_json,
-    );
+    ))
+}
 
-    context.with(|ctx| {
-        ctx.eval::<(), _>(bootstrap)
-            .and_then(|_| ctx.eval::<(), _>(script))
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
-    })?;
-
+fn drain_jobs(runtime: &Runtime) -> Result<(), CoreError> {
     for _ in 0..MAX_INITIALIZATION_JOBS {
         match runtime.execute_pending_job() {
             Ok(true) => {}
@@ -112,47 +228,21 @@ pub fn validate_source_script(
         }
     }
     if runtime.is_job_pending() {
-        return Err(CoreError::SourceInitialization(
-            "脚本异步初始化任务过多".into(),
-        ));
+        return Err(CoreError::SourceInitialization("脚本异步任务过多".into()));
     }
-
-    context.with(|ctx| {
-        let messages_json: String = ctx
-            .eval("JSON.stringify(globalThis.__wcmusicMessages)")
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
-        let messages: Vec<RuntimeMessage> = serde_json::from_str(&messages_json)?;
-        let init = messages
-            .into_iter()
-            .find(|message| message.name == "inited")
-            .ok_or_else(|| CoreError::SourceInitialization("脚本没有发送 inited 事件".into()))?;
-        let init: InitPayload = serde_json::from_value(init.data)?;
-        let mut sources = Vec::with_capacity(init.sources.len());
-        for (key, source) in init.sources {
-            if source.source_type.as_deref().unwrap_or("music") != "music" {
-                return Err(CoreError::SourceInitialization(format!(
-                    "音源 {key} 的类型必须为 music"
-                )));
-            }
-            sources.push(SourceCapability {
-                key,
-                name: source.name.unwrap_or_else(|| "未命名音源".into()),
-                actions: source.actions,
-                qualities: source.qualities,
-            });
-        }
-        Ok(SourceManifest {
-            metadata,
-            sources,
-            requests_dev_tools: init.open_dev_tools,
-        })
-    })
+    Ok(())
 }
 
 #[derive(Deserialize)]
 struct RuntimeMessage {
     name: String,
     data: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct ResolveState {
+    url: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -226,5 +316,12 @@ new Promise((resolve) => {{
         let manifest = validate_source_script(&source, SourceEnvironment::Desktop).unwrap();
         assert_eq!(manifest.sources[0].key, "wy");
         assert_eq!(manifest.sources[0].qualities, ["flac"]);
+    }
+
+    #[test]
+    fn resolves_a_music_url_from_the_registered_handler() {
+        let url =
+            resolve_source_url(SOURCE, SourceEnvironment::Desktop, "kw", "12345", "320k").unwrap();
+        assert_eq!(url, "https://example.com/music.flac");
     }
 }

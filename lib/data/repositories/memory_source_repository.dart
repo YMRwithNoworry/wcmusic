@@ -52,7 +52,22 @@ class MemorySourceRepository implements SourceRepository {
 
   @override
   Future<String> resolveUrl(Track track, {String quality = '320k'}) async {
-    throw UnsupportedError('需要已加载的 Rust 音源运行时解析 ${track.title} ($quality)');
+    await _ensureLoaded();
+    final sourceId = track.sourceId;
+    if (sourceId == null || sourceId.isEmpty) {
+      throw StateError('${track.title} 缺少平台歌曲 ID');
+    }
+    final sourceKey = track.source.name;
+    final candidates = _sources
+        .where((source) => source.sourceKeys.contains(sourceKey))
+        .toList(growable: false);
+    if (candidates.isEmpty) throw StateError('没有支持 $sourceKey 的已启用音源');
+    return _nativeCore.resolveSourceUrl(
+      script: candidates.last.rawScript,
+      source: sourceKey,
+      songId: sourceId,
+      quality: quality,
+    );
   }
 
   Future<void> _ensureLoaded() async {

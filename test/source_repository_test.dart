@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
+import 'package:wcmusic/data/services/native_core_bridge.dart';
 import 'package:wcmusic/data/services/source_script_parser.dart';
 import 'package:wcmusic/data/services/source_storage.dart';
+import 'package:wcmusic/domain/models/track.dart';
 
 const _script = r'''
 /**
@@ -53,4 +55,39 @@ void main() {
     await restored.deleteSource(imported.id);
     expect(await restored.loadSources(), isEmpty);
   });
+
+  test(
+    'resolves a full track url through the imported source runtime',
+    () async {
+      final repository = MemorySourceRepository(nativeCore: _FakeNativeCore());
+      await repository.importScript(_script);
+      const track = Track(
+        id: 'online-123',
+        title: '整曲测试',
+        artist: '测试歌手',
+        album: '测试专辑',
+        duration: Duration(minutes: 4),
+        uri: 'https://audio.example/preview.m4a',
+        source: TrackSource.kw,
+        sourceId: '123',
+      );
+
+      final url = await repository.resolveUrl(track);
+
+      expect(url, 'https://audio.example/full.flac');
+    },
+  );
+}
+
+class _FakeNativeCore extends NativeCoreBridge {
+  @override
+  Map<String, dynamic>? validateSource(String script) => null;
+
+  @override
+  String resolveSourceUrl({
+    required String script,
+    required String source,
+    required String songId,
+    required String quality,
+  }) => 'https://audio.example/full.flac';
 }

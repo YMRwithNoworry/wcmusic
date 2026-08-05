@@ -24,6 +24,7 @@ abstract interface class OnlineSearchService {
   Future<List<PlatformPlaylist>> discoverPlaylists();
   Future<List<Track>> discoverNewTracks();
   Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist);
+  Future<Track?> matchTrackToSources(Track track, Set<String> sourceKeys);
 }
 
 class AppleOnlineSearchService implements OnlineSearchService {
@@ -35,6 +36,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
     Uri? playlistEndpoint,
     Uri? newTracksEndpoint,
     Uri? lookupEndpoint,
+    Uri? neteaseSearchEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
@@ -58,7 +60,10 @@ class AppleOnlineSearchService implements OnlineSearchService {
              '/api/v2/cn/music/most-played/100/songs.json',
            ),
        _lookupEndpoint =
-           lookupEndpoint ?? Uri.https('itunes.apple.com', '/lookup');
+           lookupEndpoint ?? Uri.https('itunes.apple.com', '/lookup'),
+       _neteaseSearchEndpoint =
+           neteaseSearchEndpoint ??
+           Uri.https('music.163.com', '/api/search/get');
 
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
@@ -67,6 +72,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
   final Uri _playlistEndpoint;
   final Uri _newTracksEndpoint;
   final Uri _lookupEndpoint;
+  final Uri _neteaseSearchEndpoint;
 
   @override
   Future<List<Track>> search(
@@ -240,6 +246,66 @@ class AppleOnlineSearchService implements OnlineSearchService {
     return _lookupAppleTracks(ids);
   }
 
+  @override
+  Future<Track?> matchTrackToSources(
+    Track track,
+    Set<String> sourceKeys,
+  ) async {
+    if (!sourceKeys.contains('wy')) return null;
+    final uri = _neteaseSearchEndpoint.replace(
+      queryParameters: {
+        ..._neteaseSearchEndpoint.queryParameters,
+        's': '${track.title} ${track.artist}',
+        'type': '1',
+        'limit': '10',
+        'offset': '0',
+      },
+    );
+    final decoded = await _getJson(uri);
+    if (decoded is! Map || decoded['result'] is! Map) return null;
+    final songs = (decoded['result'] as Map)['songs'];
+    if (songs is! List) return null;
+    final expectedTitle = _normalized(track.title);
+    final expectedArtist = _normalized(track.artist);
+    Track? best;
+    var bestScore = 0;
+    for (final value in songs) {
+      if (value is! Map) continue;
+      final id = value['id']?.toString();
+      final title = _text(value['name']);
+      final artistsValue = value['artists'];
+      if (id == null || title == null || artistsValue is! List) continue;
+      final artists = artistsValue
+          .whereType<Map>()
+          .map((artist) => _text(artist['name']))
+          .whereType<String>()
+          .join(' / ');
+      final candidateTitle = _normalized(title);
+      final candidateArtist = _normalized(artists);
+      var score = 0;
+      if (candidateTitle == expectedTitle) {
+        score += 4;
+      } else if (candidateTitle.contains(expectedTitle) ||
+          expectedTitle.contains(candidateTitle)) {
+        score += 2;
+      }
+      if (expectedArtist.isNotEmpty &&
+          (candidateArtist.contains(expectedArtist) ||
+              expectedArtist.contains(candidateArtist))) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = track.copyWith(
+          source: TrackSource.wy,
+          sourceId: id,
+          quality: '洛雪音源 · 整曲',
+        );
+      }
+    }
+    return bestScore >= 4 ? best : null;
+  }
+
   Future<List<Track>> _lookupAppleTracks(List<String> ids) async {
     final tracksById = <String, Track>{};
     for (var start = 0; start < ids.length; start += 50) {
@@ -403,4 +469,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
 
   String? _largerArtwork(String? value) =>
       value?.replaceFirst('100x100bb', '300x300bb');
+
+  String _normalized(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[\s\-_.,·•()\[\]{}]'), '');
 }
