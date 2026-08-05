@@ -133,7 +133,7 @@ class _OnlineTrackRow extends StatelessWidget {
     final viewModel = context.watch<PlayerViewModel>();
     final active = viewModel.current?.id == track.id;
     return InkWell(
-      onTap: track.uri.isEmpty ? null : () => viewModel.playTrack(track),
+      onTap: () => viewModel.playTrack(track),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
@@ -177,8 +177,6 @@ class _OnlineTrackRow extends StatelessWidget {
             Icon(
               active && viewModel.isPlaying
                   ? Icons.graphic_eq
-                  : track.uri.isEmpty
-                  ? Icons.block
                   : Icons.play_circle_outline,
               color: active ? Theme.of(context).colorScheme.primary : null,
             ),

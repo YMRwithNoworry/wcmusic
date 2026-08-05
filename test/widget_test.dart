@@ -42,11 +42,12 @@ void main() {
       source: TrackSource.custom,
     );
     final searchService = FakeOnlineSearchService(const [result]);
+    final player = FakePlayerService();
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: searchService,
-      playerService: FakePlayerService(),
+      playerService: player,
     );
     await viewModel.load();
     await tester.pumpWidget(
@@ -63,8 +64,13 @@ void main() {
     expect(find.text('在线晴天'), findsOneWidget);
     expect(find.text('测试歌手'), findsOneWidget);
 
+    await tester.tap(find.text('在线晴天'));
+    await tester.pump();
+    expect(viewModel.current?.id, result.id);
+    expect(player.playedTrack?.id, result.id);
+
     await tester.tap(find.text('QQ 音乐'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(searchService.lastChannel, OnlineSearchChannel.qqMusic);
   });
 
