@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../data/services/player_service.dart';
+import '../../../data/services/online_search_service.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -11,8 +12,11 @@ class PlayerViewModel extends ChangeNotifier {
   PlayerViewModel({
     required this.musicRepository,
     required this.sourceRepository,
+    OnlineSearchService? onlineSearchService,
     AudioPlayerService? playerService,
-  }) : playerService = playerService ?? PlayerService() {
+  }) : onlineSearchService =
+           onlineSearchService ?? AppleOnlineSearchService(),
+       playerService = playerService ?? PlayerService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
@@ -25,6 +29,7 @@ class PlayerViewModel extends ChangeNotifier {
 
   final MusicRepository musicRepository;
   final SourceRepository sourceRepository;
+  final OnlineSearchService onlineSearchService;
   final AudioPlayerService playerService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
@@ -36,6 +41,11 @@ class PlayerViewModel extends ChangeNotifier {
   Duration buffered = Duration.zero;
   String? message;
   String query = '';
+  String onlineQuery = '';
+  List<Track> onlineResults = const [];
+  bool isSearchingOnline = false;
+  String? onlineSearchError;
+  int _searchGeneration = 0;
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
 
@@ -68,7 +78,11 @@ class PlayerViewModel extends ChangeNotifier {
 
   Future<void> playTrack(Track track) async {
     current = track;
-    message = track.uri.isEmpty ? '这是演示曲目；导入本地歌单后即可播放' : null;
+    message = track.uri.isEmpty
+        ? track.source == TrackSource.local
+              ? '这是演示曲目；导入本地歌单后即可播放'
+              : '该歌曲暂无可用的在线试听地址'
+        : null;
     if (track.uri.isNotEmpty) {
       await playerService.play(track);
       isPlaying = true;
@@ -98,6 +112,37 @@ class PlayerViewModel extends ChangeNotifier {
   void setQuery(String value) {
     query = value;
     notifyListeners();
+  }
+
+  Future<void> searchOnline(String value) async {
+    final keyword = value.trim();
+    onlineQuery = keyword;
+    final generation = ++_searchGeneration;
+    if (keyword.isEmpty) {
+      onlineResults = const [];
+      onlineSearchError = null;
+      isSearchingOnline = false;
+      notifyListeners();
+      return;
+    }
+
+    isSearchingOnline = true;
+    onlineSearchError = null;
+    notifyListeners();
+    try {
+      final results = await onlineSearchService.search(keyword);
+      if (generation != _searchGeneration) return;
+      onlineResults = results;
+    } on Object catch (error) {
+      if (generation != _searchGeneration) return;
+      onlineResults = const [];
+      onlineSearchError = '搜索失败，请检查网络后重试：$error';
+    } finally {
+      if (generation == _searchGeneration) {
+        isSearchingOnline = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> importPlaylist(String path, List<int> bytes) async {

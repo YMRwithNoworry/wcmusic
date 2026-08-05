@@ -8,6 +8,7 @@ import '../player/player_bar.dart';
 import '../player/player_view_model.dart';
 import '../playlists/playlists_view.dart';
 import '../settings/settings_view.dart';
+import '../search/search_view.dart';
 import '../sources/sources_view.dart';
 
 class MusicShell extends StatefulWidget {
@@ -22,6 +23,7 @@ class _MusicShellState extends State<MusicShell> {
 
   static const _destinations = [
     (icon: Icons.spa_outlined, selected: Icons.spa, label: '此刻'),
+    (icon: Icons.search, selected: Icons.manage_search, label: '搜索'),
     (
       icon: Icons.library_music_outlined,
       selected: Icons.library_music,
@@ -38,6 +40,7 @@ class _MusicShellState extends State<MusicShell> {
 
   static const _pages = [
     HomeView(),
+    SearchView(),
     LibraryView(),
     PlaylistsView(),
     SourcesView(),

@@ -1,4 +1,5 @@
 import 'package:wcmusic/data/services/player_service.dart';
+import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/domain/models/track.dart';
 
 class FakePlayerService implements AudioPlayerService {
@@ -19,4 +20,13 @@ class FakePlayerService implements AudioPlayerService {
 
   @override
   Future<void> toggle() async {}
+}
+
+class FakeOnlineSearchService implements OnlineSearchService {
+  FakeOnlineSearchService([this.results = const []]);
+
+  final List<Track> results;
+
+  @override
+  Future<List<Track>> search(String query, {int limit = 30}) async => results;
 }

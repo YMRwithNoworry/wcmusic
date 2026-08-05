@@ -6,6 +6,7 @@ import 'app.dart';
 import 'data/repositories/memory_music_repository.dart';
 import 'data/repositories/memory_source_repository.dart';
 import 'data/services/source_storage.dart';
+import 'data/services/online_search_service.dart';
 import 'ui/features/player/player_view_model.dart';
 
 void main() {
@@ -16,6 +17,7 @@ void main() {
       create: (_) => PlayerViewModel(
         musicRepository: MemoryMusicRepository(),
         sourceRepository: MemorySourceRepository(storage: FileSourceStorage()),
+        onlineSearchService: AppleOnlineSearchService(),
       )..load(),
       child: const WcMusicApp(),
     ),
