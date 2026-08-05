@@ -25,7 +25,7 @@ class PlayerBar extends StatelessWidget {
           top: false,
           bottom: false,
           child: SizedBox(
-            height: compact ? 92 : 104,
+            height: compact ? 132 : 148,
             child: Column(
               children: [
                 Expanded(
@@ -93,10 +93,7 @@ class PlayerBar extends StatelessWidget {
                         ),
                         const SizedBox(width: 2),
                         const DownloadButton(),
-                        const SizedBox(
-                          width: 132,
-                          child: VolumeControl(showLabel: false),
-                        ),
+                        const SizedBox(width: 190, child: VolumeControl()),
                       ],
                       if (compact) ...[
                         PlaybackModeButton(),
@@ -106,9 +103,9 @@ class PlayerBar extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(
-                  height: 28,
-                  child: PlaybackProgress(showTimes: false, compact: true),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+                  child: PlaybackProgress(compact: true),
                 ),
               ],
             ),
