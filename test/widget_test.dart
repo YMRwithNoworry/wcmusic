@@ -202,6 +202,7 @@ void main() {
     expect(find.byTooltip('关闭聚焦播放'), findsOneWidget);
     expect(find.byType(VolumeControl), findsOneWidget);
     expect(find.byType(PlaybackProgress), findsOneWidget);
+    expect(find.byKey(const ValueKey('floatingLyricsToggle')), findsWidgets);
   });
 }
 

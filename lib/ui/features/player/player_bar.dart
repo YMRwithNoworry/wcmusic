@@ -92,6 +92,8 @@ class PlayerBar extends StatelessWidget {
                           tooltip: '下一首',
                         ),
                         const SizedBox(width: 2),
+                        const FloatingLyricsButton(),
+                        const SizedBox(width: 2),
                         const DownloadButton(),
                         const SizedBox(width: 190, child: VolumeControl()),
                       ],

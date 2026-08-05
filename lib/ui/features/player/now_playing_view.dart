@@ -161,6 +161,8 @@ class _FocusedPlayer extends StatelessWidget {
                         tooltip: '下一首',
                       ),
                       const SizedBox(width: 12),
+                      const FloatingLyricsButton(),
+                      const SizedBox(width: 6),
                       const DownloadButton(),
                     ],
                   ),

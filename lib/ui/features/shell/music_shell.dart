@@ -52,7 +52,6 @@ class _MusicShellState extends State<MusicShell> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= 860;
-        final wide = constraints.maxWidth >= 1240;
         final viewModel = context.watch<PlayerViewModel>();
         final content = AnimatedSwitcher(
           duration: const Duration(milliseconds: 360),
@@ -87,7 +86,6 @@ class _MusicShellState extends State<MusicShell> {
                     ],
                   ),
                 ),
-                if (wide) const _QueuePanel(),
               ],
             ),
           ),
@@ -182,66 +180,6 @@ class _BrandMark extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Icon(Icons.graphic_eq, color: Colors.white),
-      ),
-    );
-  }
-}
-
-class _QueuePanel extends StatelessWidget {
-  const _QueuePanel();
-
-  @override
-  Widget build(BuildContext context) {
-    final viewModel = context.watch<PlayerViewModel>();
-    return Container(
-      width: 320,
-      padding: const EdgeInsets.fromLTRB(24, 30, 18, 24),
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(
-            color: Theme.of(context).dividerColor.withValues(alpha: .16),
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('接下来', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 18),
-          Expanded(
-            child: ReorderableListView.builder(
-              itemCount: viewModel.tracks.length,
-              onReorderItem: viewModel.reorderTracks,
-              buildDefaultDragHandles: false,
-              itemBuilder: (context, index) {
-                final track = viewModel.tracks[index];
-                return ListTile(
-                  key: ValueKey(track.id),
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  onTap: () => viewModel.playTrack(track),
-                  title: Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    track.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: ReorderableDragStartListener(
-                    index: index,
-                    child: const Tooltip(
-                      message: '拖动排序',
-                      child: Icon(Icons.drag_indicator, size: 19),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -118,3 +118,22 @@ class DownloadButton extends StatelessWidget {
     );
   }
 }
+
+class FloatingLyricsButton extends StatelessWidget {
+  const FloatingLyricsButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+    final label = isAndroid ? '悬浮窗歌词' : '桌面歌词';
+    final enabled = viewModel.floatingLyricsEnabled;
+    return IconButton(
+      key: const ValueKey('floatingLyricsToggle'),
+      onPressed: () => viewModel.setFloatingLyrics(!enabled),
+      icon: Icon(enabled ? Icons.lyrics : Icons.lyrics_outlined),
+      color: enabled ? Theme.of(context).colorScheme.primary : null,
+      tooltip: enabled ? '关闭$label' : '开启$label',
+    );
+  }
+}
