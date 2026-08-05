@@ -563,11 +563,10 @@ class PlayerViewModel extends ChangeNotifier {
     try {
       final downloadQuality = quality ?? playbackQuality;
       var downloadTrack = track;
-      if (track.source != TrackSource.local) {
-        final sourceId = track.sourceId;
-        if (sourceId == null || sourceId.isEmpty) {
-          throw StateError('当前歌曲缺少平台 ID，无法选择下载音质');
-        }
+      final canResolveQuality =
+          track.source != TrackSource.local &&
+          (track.sourceId?.isNotEmpty ?? false);
+      if (canResolveQuality) {
         message = '正在解析 ${downloadQuality.label} 下载地址...';
         notifyListeners();
         final url = await sourceRepository.resolveUrl(
@@ -590,7 +589,7 @@ class PlayerViewModel extends ChangeNotifier {
           notifyListeners();
         },
       );
-      message = track.source == TrackSource.local
+      message = !canResolveQuality
           ? '已下载到 $path'
           : '${downloadQuality.label} 已下载到 $path';
     } on Object catch (error) {

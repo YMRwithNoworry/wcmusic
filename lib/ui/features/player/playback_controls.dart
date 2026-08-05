@@ -117,27 +117,36 @@ class DownloadButton extends StatelessWidget {
       );
     }
     final track = viewModel.current;
-    if (track?.source == TrackSource.local) {
-      return IconButton(
-        onPressed: viewModel.downloadCurrentTrack,
-        icon: const Icon(Icons.download_outlined),
-        tooltip: '下载原始文件',
-      );
-    }
+    final supportsQualitySelection =
+        track != null &&
+        track.source != TrackSource.local &&
+        (track.sourceId?.isNotEmpty ?? false);
     return PopupMenuButton<PlaybackQuality>(
       enabled: track != null,
       tooltip: '选择音质并下载',
       icon: const Icon(Icons.download_outlined),
       onSelected: viewModel.downloadCurrentTrack,
       itemBuilder: (context) => [
-        for (final quality in PlaybackQuality.values)
+        if (supportsQualitySelection)
+          for (final quality in PlaybackQuality.values)
+            PopupMenuItem(
+              value: quality,
+              child: Row(
+                children: [
+                  Icon(_qualityIcon(quality), size: 20),
+                  const SizedBox(width: 10),
+                  Text(quality.label),
+                ],
+              ),
+            )
+        else
           PopupMenuItem(
-            value: quality,
-            child: Row(
+            value: viewModel.playbackQuality,
+            child: const Row(
               children: [
-                Icon(_qualityIcon(quality), size: 20),
-                const SizedBox(width: 10),
-                Text(quality.label),
+                Icon(Icons.audio_file_outlined, size: 20),
+                SizedBox(width: 10),
+                Text('原始音质（由音源决定）'),
               ],
             ),
           ),

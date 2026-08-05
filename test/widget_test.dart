@@ -319,6 +319,31 @@ void main() {
     expect(find.text('高品 320k'), findsOneWidget);
     expect(find.text('无损 flac'), findsOneWidget);
   });
+
+  testWidgets('shows an original-quality option for a local track download', (
+    tester,
+  ) async {
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    await viewModel.playTrack(viewModel.tracks.first);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: const MaterialApp(home: Scaffold(body: DownloadButton())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('选择音质并下载'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('原始音质（由音源决定）'), findsOneWidget);
+  });
 }
 
 class _FakeCacheDownloader extends TrackDownloadService {
