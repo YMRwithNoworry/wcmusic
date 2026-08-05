@@ -78,11 +78,11 @@ h1 { max-width: 620px; margin: 0; font-size: clamp(64px, 7.4vw, 112px); line-hei
 .hero-note { margin: 22px 0 0; color: rgba(32,35,31,.64); font-size: 12px; }
 .hero-caption { position: absolute; z-index: 2; right: 35px; bottom: 28px; display: flex; gap: 25px; font-family: var(--mono); font-size: 11px; color: rgba(32,35,31,.68); }
 
-.intro-band, .release-section, .questions { padding: 105px clamp(24px, 7vw, 108px); }
+.intro-band, .release-section, .questions, .feedback { padding: 105px clamp(24px, 7vw, 108px); }
 .section-kicker { display: flex; align-items: center; gap: 12px; margin-bottom: 56px; }
 .section-kicker span { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; }
 .intro-heading { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .55fr); gap: 80px; align-items: end; margin-bottom: 68px; }
-.intro-heading h2, .download-lead h2, .release-sticky h2, .questions h2 { margin: 0; font-size: clamp(46px, 6vw, 82px); line-height: 1.03; font-weight: 620; }
+.intro-heading h2, .download-lead h2, .release-sticky h2, .questions h2, .feedback h2 { margin: 0; font-size: clamp(46px, 6vw, 82px); line-height: 1.03; font-weight: 620; }
 .intro-heading p, .download-lead > p { margin: 0 0 5px; font-size: 17px; line-height: 1.75; color: rgba(32,35,31,.72); }
 .feature-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
 .feature {
@@ -157,6 +157,36 @@ summary::-webkit-details-marker { display: none; }
 summary svg { transition: transform 180ms; }
 details[open] summary svg { transform: rotate(45deg); }
 details p { max-width: 760px; margin: -5px 0 27px; color: rgba(32,35,31,.68); line-height: 1.7; }
+.feedback { display: grid; grid-template-columns: minmax(0, .85fr) minmax(480px, 1.15fr); gap: clamp(60px, 9vw, 150px); color: var(--paper); background: var(--moss-dark); }
+.feedback .section-kicker { margin-bottom: 48px; }
+.feedback-intro > p { max-width: 510px; margin: 28px 0 0; color: rgba(242,239,231,.7); font-size: 17px; line-height: 1.7; }
+.feedback-note { display: flex; align-items: center; gap: 11px; margin-top: 36px; color: rgba(242,239,231,.72); font-family: var(--mono); font-size: 11px; }
+.feedback-note svg { color: #a7c58f; }
+.feedback-form { align-self: start; padding: 36px; border: 1px solid rgba(242,239,231,.22); border-radius: 8px; background: rgba(242,239,231,.055); }
+.feedback-form label { display: grid; gap: 10px; margin-bottom: 24px; font-size: 13px; font-weight: 620; }
+.feedback-form label > span:first-child { display: flex; align-items: baseline; gap: 8px; }
+.feedback-form small { color: rgba(242,239,231,.55); font-size: 11px; font-weight: 400; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-row label { min-width: 0; }
+.feedback-form input, .feedback-form select, .feedback-form textarea {
+  width: 100%; border: 1px solid rgba(242,239,231,.2); border-radius: 6px; outline: none;
+  color: var(--paper); background: rgba(24,27,24,.3); font: inherit; font-weight: 400;
+  transition: border-color 160ms, background-color 160ms;
+}
+.feedback-form input, .feedback-form select { height: 50px; padding: 0 14px; }
+.feedback-form textarea { min-height: 160px; padding: 14px; resize: vertical; line-height: 1.55; }
+.feedback-form input::placeholder, .feedback-form textarea::placeholder { color: rgba(242,239,231,.4); }
+.feedback-form input:focus, .feedback-form select:focus, .feedback-form textarea:focus { border-color: #a7c58f; background: rgba(24,27,24,.52); }
+.select-wrap { position: relative; display: block; }
+.select-wrap select { appearance: none; padding-right: 42px; cursor: pointer; }
+.select-wrap svg { position: absolute; top: 50%; right: 14px; width: 16px; transform: translateY(-50%); pointer-events: none; }
+.feedback-form option { color: var(--ink); background: var(--surface); }
+.form-trap { position: absolute !important; left: -10000px !important; width: 1px !important; height: 1px !important; opacity: 0; }
+.form-submit-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 20px; }
+.feedback-submit { min-width: 158px; border: 0; color: var(--ink); background: var(--paper); cursor: pointer; }
+.feedback-submit:disabled { cursor: wait; opacity: .65; transform: none; }
+.form-status { margin: 0; color: rgba(242,239,231,.72); font-size: 12px; line-height: 1.5; }
+.form-status.success { color: #c6dfaF; }.form-status.error { color: #f0ab9d; }
 footer { padding: 55px clamp(24px, 7vw, 108px); display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 18px; background: var(--ink); color: var(--paper); }
 .footer-mark { background: var(--moss); }.footer-mark span { border-color: var(--ink); }
 footer strong { font-size: 18px; } footer p { margin: 3px 0 0; color: rgba(242,239,231,.58); }
@@ -182,6 +212,7 @@ footer strong { font-size: 18px; } footer p { margin: 3px 0 0; color: rgba(242,2
   .feature-wide { grid-row: auto; min-height: 650px; }
   .download-lead .section-kicker { grid-row: auto; }
   .release-sticky { position: static; }
+  .feedback { grid-template-columns: 1fr; gap: 48px; }
 }
 
 @media (max-width: 680px) {
@@ -198,10 +229,10 @@ footer strong { font-size: 18px; } footer p { margin: 3px 0 0; color: rgba(242,2
   .button-primary { flex: 1; }
   .text-link { justify-content: center; }
   .hero-note { margin-top: 16px; }
-  .intro-band, .downloads, .release-section, .questions { padding: 78px 22px; }
+  .intro-band, .downloads, .release-section, .questions, .feedback { padding: 78px 22px; }
   .section-kicker { margin-bottom: 38px; }
   .intro-heading { margin-bottom: 45px; gap: 22px; }
-  .intro-heading h2, .download-lead h2, .release-sticky h2, .questions h2 { font-size: 43px; }
+  .intro-heading h2, .download-lead h2, .release-sticky h2, .questions h2, .feedback h2 { font-size: 43px; }
   .feature { min-height: 440px; padding: 14px; }
   .feature-wide { min-height: 580px; }
   .feature-art { min-height: 350px; }
@@ -211,6 +242,10 @@ footer strong { font-size: 18px; } footer p { margin: 3px 0 0; color: rgba(242,2
   .download-footnote { align-items: flex-start; line-height: 1.5; }
   .change-group { grid-template-columns: 42px 1fr; gap: 14px; }
   summary { min-height: 74px; font-size: 17px; }
+  .feedback-form { padding: 22px 18px; }
+  .form-row { grid-template-columns: 1fr; gap: 0; }
+  .form-submit-row { grid-template-columns: 1fr; gap: 14px; }
+  .feedback-submit { width: 100%; }
   footer { grid-template-columns: auto 1fr auto; padding: 40px 22px; }
   .footer-tech { display: none; }
 }

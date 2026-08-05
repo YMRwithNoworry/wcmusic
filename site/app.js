@@ -42,6 +42,41 @@ document.querySelectorAll('details').forEach((detail) => {
   });
 });
 
+const feedbackForm = document.querySelector('[data-feedback-form]');
+if (feedbackForm) {
+  feedbackForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!feedbackForm.reportValidity()) return;
+
+    const submitButton = feedbackForm.querySelector('button[type="submit"]');
+    const submitLabel = submitButton.querySelector('span');
+    const status = feedbackForm.querySelector('[data-form-status]');
+    submitButton.disabled = true;
+    submitLabel.textContent = '正在发送';
+    status.className = 'form-status';
+    status.textContent = '';
+
+    try {
+      const response = await fetch(feedbackForm.action, {
+        method: 'POST',
+        body: new FormData(feedbackForm),
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`FormSubmit returned ${response.status}`);
+      feedbackForm.reset();
+      status.className = 'form-status success';
+      status.textContent = '已送出，感谢你帮助 WCMusic 变得更好。';
+    } catch (error) {
+      console.error(error);
+      status.className = 'form-status error';
+      status.textContent = '暂时没有发送成功，请稍后再试。';
+    } finally {
+      submitButton.disabled = false;
+      submitLabel.textContent = '发送反馈';
+    }
+  });
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   if (window.lucide) window.lucide.createIcons();
 });

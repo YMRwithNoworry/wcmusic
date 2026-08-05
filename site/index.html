@@ -26,6 +26,7 @@
         <a href="#experience">体验</a>
         <a href="#releases">更新</a>
         <a href="#questions">问答</a>
+        <a href="#feedback">反馈</a>
       </nav>
       <a class="header-download" href="#downloads">
         <i data-lucide="download" aria-hidden="true"></i>
@@ -193,6 +194,70 @@
             <p>音源脚本属于第三方代码。导入校验运行在 32 MB 内存限制的 QuickJS 环境中，且校验阶段不开放网络请求。</p>
           </details>
         </div>
+      </section>
+
+      <section class="feedback" id="feedback" aria-labelledby="feedback-title">
+        <div class="feedback-intro reveal">
+          <div class="section-kicker light"><span>05</span> 告诉我们</div>
+          <h2 id="feedback-title">遇到问题？<br>让我们知道</h2>
+          <p>请尽量写清出现问题前的操作和你看到的现象。具体的信息，能让修复来得更快。</p>
+          <div class="feedback-note">
+            <i data-lucide="mail" aria-hidden="true"></i>
+            <span>反馈将通过邮件送达开发者</span>
+          </div>
+        </div>
+        <form class="feedback-form reveal" data-feedback-form action="https://formsubmit.co/ajax/paojiao134@outlook.com" method="POST">
+          <input type="hidden" name="_subject" value="WCMusic 发布页问题反馈">
+          <input type="hidden" name="_template" value="table">
+          <input type="hidden" name="_captcha" value="false">
+          <input class="form-trap" type="text" name="_honey" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+          <div class="form-row">
+            <label>
+              <span>问题类型</span>
+              <span class="select-wrap">
+                <select name="问题类型" required>
+                  <option value="" selected disabled>请选择</option>
+                  <option value="播放问题">播放问题</option>
+                  <option value="搜索问题">搜索问题</option>
+                  <option value="音源问题">音源问题</option>
+                  <option value="安装或更新">安装或更新</option>
+                  <option value="功能建议">功能建议</option>
+                  <option value="其他">其他</option>
+                </select>
+                <i data-lucide="chevron-down" aria-hidden="true"></i>
+              </span>
+            </label>
+            <label>
+              <span>使用平台</span>
+              <span class="select-wrap">
+                <select name="使用平台" required>
+                  <option value="" selected disabled>请选择</option>
+                  <option value="Windows 11">Windows 11</option>
+                  <option value="Windows 10">Windows 10</option>
+                  <option value="Android">Android</option>
+                  <option value="其他">其他</option>
+                </select>
+                <i data-lucide="chevron-down" aria-hidden="true"></i>
+              </span>
+            </label>
+          </div>
+          <label>
+            <span>联系邮箱 <small>选填，用于回复</small></span>
+            <input type="email" name="email" autocomplete="email" placeholder="you@example.com">
+          </label>
+          <label>
+            <span>问题描述</span>
+            <textarea name="问题描述" rows="6" minlength="10" maxlength="2000" required placeholder="发生了什么？怎样可以再次遇到这个问题？"></textarea>
+          </label>
+          <div class="form-submit-row">
+            <button class="button feedback-submit" type="submit">
+              <span>发送反馈</span>
+              <i data-lucide="send" aria-hidden="true"></i>
+            </button>
+            <p class="form-status" data-form-status role="status" aria-live="polite"></p>
+          </div>
+        </form>
       </section>
     </main>
 
