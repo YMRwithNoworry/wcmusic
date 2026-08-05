@@ -7,6 +7,7 @@ import '../../domain/models/track.dart';
 
 typedef DownloadPathResolver =
     Future<String?> Function(Track track, String extension);
+typedef DownloadProxyResolver = String Function(Uri uri);
 
 const _audioExtensions = {
   '.mp3',
@@ -25,13 +26,21 @@ class TrackDownloadService {
     HttpClient Function()? clientFactory,
     this._pathResolver,
     Future<Directory> Function()? cacheDirectoryProvider,
+    DownloadProxyResolver? proxyResolver,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _cacheDirectoryProvider =
-           cacheDirectoryProvider ?? getTemporaryDirectory;
+           cacheDirectoryProvider ?? getTemporaryDirectory,
+       _proxyResolver =
+           proxyResolver ??
+           ((uri) => HttpClient.findProxyFromEnvironment(
+             uri,
+             environment: Platform.environment,
+           ));
 
   final HttpClient Function() _clientFactory;
   final DownloadPathResolver? _pathResolver;
   final Future<Directory> Function() _cacheDirectoryProvider;
+  final DownloadProxyResolver _proxyResolver;
 
   Future<String> download(
     Track track, {
@@ -46,7 +55,7 @@ class TrackDownloadService {
         : await _defaultPath(track, extension);
     if (path == null) throw StateError('已取消下载');
     if (_isNetworkUri(uri)) {
-      return _downloadTo(uri, path, onProgress, null);
+      return _downloadTo(track, uri, path, onProgress, null);
     }
     return _copyLocalTo(track.uri, uri, path, onProgress);
   }
@@ -65,30 +74,71 @@ class TrackDownloadService {
         '${directory.path}${Platform.pathSeparator}${_safeName('wcmusic-${track.id}$extension')}';
     final file = File(path);
     if (await file.exists() && await file.length() > 1024) return path;
-    return _downloadTo(uri, path, onProgress, shouldCancel);
+    return _downloadTo(track, uri, path, onProgress, shouldCancel);
   }
 
   Future<String> _downloadTo(
+    Track track,
     Uri uri,
     String path,
     void Function(double progress) onProgress,
     bool Function()? shouldCancel,
   ) async {
+    final proxy = _proxyResolver(uri);
+    try {
+      return await _downloadToOnce(
+        track,
+        uri,
+        path,
+        onProgress,
+        shouldCancel,
+        proxy,
+      );
+    } on Object {
+      if (proxy == 'DIRECT') rethrow;
+      return _downloadToOnce(
+        track,
+        uri,
+        path,
+        onProgress,
+        shouldCancel,
+        'DIRECT',
+      );
+    }
+  }
+
+  Future<String> _downloadToOnce(
+    Track track,
+    Uri uri,
+    String path,
+    void Function(double progress) onProgress,
+    bool Function()? shouldCancel,
+    String proxy,
+  ) async {
     final client = _clientFactory()
-      ..connectionTimeout = const Duration(seconds: 20);
+      ..connectionTimeout = const Duration(seconds: 20)
+      ..findProxy = (_) => proxy;
+    final target = File(path);
+    final partial = File('$path.part');
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      );
+      request.headers.set(HttpHeaders.acceptHeader, '*/*');
+      request.headers.set(HttpHeaders.refererHeader, _refererFor(track.source));
       final response = await request.close();
-      if (response.statusCode != HttpStatus.ok) {
+      if (response.statusCode < HttpStatus.ok ||
+          response.statusCode >= HttpStatus.multipleChoices) {
         await response.drain<void>();
         throw HttpException('下载服务返回 ${response.statusCode}', uri: uri);
       }
       final total = response.contentLength;
       var received = 0;
-      final file = File(path);
-      await file.parent.create(recursive: true);
-      final sink = file.openWrite();
+      await target.parent.create(recursive: true);
+      if (await partial.exists()) await partial.delete();
+      final sink = partial.openWrite();
       try {
         await for (final chunk in response) {
           if (shouldCancel?.call() ?? false) {
@@ -104,7 +154,13 @@ class TrackDownloadService {
       } finally {
         await sink.close();
       }
+      if (received == 0) throw StateError('下载服务返回了空文件');
+      if (await target.exists()) await target.delete();
+      await partial.rename(target.path);
       return path;
+    } on Object {
+      if (await partial.exists()) await partial.delete();
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -133,6 +189,15 @@ class TrackDownloadService {
     final scheme = uri.scheme.toLowerCase();
     return scheme == 'http' || scheme == 'https';
   }
+
+  String _refererFor(TrackSource source) => switch (source) {
+    TrackSource.kw => 'https://www.kuwo.cn/',
+    TrackSource.kg => 'https://www.kugou.com/',
+    TrackSource.tx => 'https://y.qq.com/',
+    TrackSource.wy => 'https://music.163.com/',
+    TrackSource.mg => 'https://music.migu.cn/',
+    _ => 'https://music.163.com/',
+  };
 
   String _extensionFor(Uri uri, String fallback) {
     final segments = uri.pathSegments;

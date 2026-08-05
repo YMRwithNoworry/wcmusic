@@ -10,6 +10,14 @@ void main() {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
+      expect(
+        request.headers.value(HttpHeaders.userAgentHeader),
+        contains('Mozilla/5.0'),
+      );
+      expect(
+        request.headers.value(HttpHeaders.refererHeader),
+        'https://music.163.com/',
+      );
       request.response.headers.contentType = ContentType.binary;
       request.response.contentLength = bytes.length;
       request.response.add(bytes);
@@ -31,6 +39,7 @@ void main() {
         album: '下载专辑',
         duration: const Duration(minutes: 3),
         uri: 'http://127.0.0.1:${server.port}/song.mp3',
+        source: TrackSource.wy,
       ),
       onProgress: progress.add,
     );
@@ -38,6 +47,78 @@ void main() {
     expect(path, target);
     expect(await File(path).readAsBytes(), bytes);
     expect(progress.last, 1.0);
+    expect(await File('$target.part').exists(), isFalse);
+  });
+
+  test(
+    'accepts partial-content audio responses after a proxy failure',
+    () async {
+      final bytes = List<int>.generate(640, (index) => index % 251);
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.partialContent;
+        request.response.contentLength = bytes.length;
+        request.response.add(bytes);
+        await request.response.close();
+      });
+      final directory = await Directory.systemTemp.createTemp('wcmusic-proxy-');
+      addTearDown(() => directory.delete(recursive: true));
+      final target = '${directory.path}${Platform.pathSeparator}partial.mp3';
+      final service = TrackDownloadService(
+        pathResolver: (track, extension) async => target,
+        proxyResolver: (_) => 'PROXY 127.0.0.1:1',
+      );
+
+      final path = await service.download(
+        Track(
+          id: 'partial',
+          title: '分段下载',
+          artist: '歌手',
+          album: '专辑',
+          duration: const Duration(minutes: 3),
+          uri: 'http://127.0.0.1:${server.port}/song.mp3',
+        ),
+        onProgress: (_) {},
+      );
+
+      expect(path, target);
+      expect(await File(path).readAsBytes(), bytes);
+    },
+  );
+
+  test('keeps the destination intact when a download fails', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((request) async {
+      request.response.statusCode = HttpStatus.internalServerError;
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp('wcmusic-failed-');
+    addTearDown(() => directory.delete(recursive: true));
+    final target = '${directory.path}${Platform.pathSeparator}existing.mp3';
+    await File(target).writeAsBytes([1, 2, 3]);
+    final service = TrackDownloadService(
+      pathResolver: (track, extension) async => target,
+    );
+
+    await expectLater(
+      service.download(
+        Track(
+          id: 'failed',
+          title: '失败下载',
+          artist: '歌手',
+          album: '专辑',
+          duration: const Duration(minutes: 3),
+          uri: 'http://127.0.0.1:${server.port}/song.mp3',
+        ),
+        onProgress: (_) {},
+      ),
+      throwsA(isA<HttpException>()),
+    );
+
+    expect(await File(target).readAsBytes(), [1, 2, 3]);
+    expect(await File('$target.part').exists(), isFalse);
   });
 
   test('streams a remote track into the cache directory', () async {
