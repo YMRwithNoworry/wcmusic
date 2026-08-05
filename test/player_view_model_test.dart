@@ -128,6 +128,11 @@ void main() {
     expect(style.alignment, 'right');
     expect(style.fontSize, 24);
     expect(style.backgroundColor, 0xFF141416);
+    expect(style.opacity, 0.92);
+    expect(style.cornerRadius, 0);
+    expect(style.positionX, isNull);
+    expect(style.positionY, isNull);
+    expect(style.toJson()['layoutVersion'], 2);
   });
 
   test('prefers a full track url resolved by an imported source', () async {

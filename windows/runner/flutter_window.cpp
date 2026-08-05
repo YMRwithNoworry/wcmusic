@@ -154,9 +154,9 @@ bool FlutterWindow::OnCreate() {
               DoubleValue(FindArgument(arguments, "backgroundColor"),
                           0xFF141416)));
           style.opacity = static_cast<int>(
-              DoubleValue(FindArgument(arguments, "opacity"), 0.96) * 255);
+              DoubleValue(FindArgument(arguments, "opacity"), 0.92) * 255);
           style.corner_radius = static_cast<int>(DoubleValue(
-              FindArgument(arguments, "cornerRadius"), 8));
+              FindArgument(arguments, "cornerRadius"), 0));
           style.locked = BoolValue(FindArgument(arguments, "locked"), true);
           const auto* x = FindArgument(arguments, "x");
           const auto* y = FindArgument(arguments, "y");

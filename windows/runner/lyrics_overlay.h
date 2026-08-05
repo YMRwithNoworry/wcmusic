@@ -14,8 +14,8 @@ struct LyricsOverlayStyle {
   int align = DT_RIGHT;
   COLORREF text_color = RGB(243, 243, 243);
   COLORREF background_color = RGB(20, 20, 22);
-  int opacity = 245;
-  int corner_radius = 8;
+  int opacity = 235;
+  int corner_radius = 0;
   bool locked = true;
   bool has_position = false;
   int x = 0;

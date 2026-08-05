@@ -10,7 +10,6 @@
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayWidth = 480;
-constexpr int kOverlayHeight = 680;
 constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
 constexpr float kLyricsAnimationSeconds = 0.38f;
@@ -68,14 +67,14 @@ bool LyricsOverlay::Create() {
   SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
   const int work_width = work_area.right - work_area.left;
   const int work_height = work_area.bottom - work_area.top;
-  const int width = std::min(kOverlayWidth, std::max(360, work_width / 3));
-  const int height = std::min(kOverlayHeight, std::max(420, work_height - 96));
+  const int width = std::min(kOverlayWidth, std::max(380, work_width / 3));
+  const int height = work_height;
   int x = style_.has_position
       ? style_.x
-      : work_area.right - width - 24;
+      : work_area.right - width;
   int y = style_.has_position
       ? style_.y
-      : work_area.top + (work_height - height) / 2;
+      : work_area.top;
   window_ = CreateWindowEx(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE |
           0,
@@ -134,6 +133,13 @@ void LyricsOverlay::ApplyStyle(const LyricsOverlayStyle& style) {
   if (style_.has_position) {
     SetWindowPos(window_, HWND_TOPMOST, style_.x, style_.y, 0, 0,
                  SWP_NOSIZE | SWP_NOACTIVATE);
+  } else {
+    RECT work_area{};
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
+    const int work_width = work_area.right - work_area.left;
+    const int width = std::min(kOverlayWidth, std::max(380, work_width / 3));
+    SetWindowPos(window_, HWND_TOPMOST, work_area.right - width, work_area.top,
+                 width, work_area.bottom - work_area.top, SWP_NOACTIVATE);
   }
   InvalidateRect(window_, nullptr, TRUE);
 }
@@ -288,10 +294,11 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
              static_cast<float>(current_index_),
              EaseInOutCubic(animation_t_))
       : static_cast<float>(current_index_);
-  const float center_y = height * 0.56f;
-  const float spacing = std::max(38.0f, style_.font_size * 1.65f);
+  const float center_y = height * 0.62f;
+  const float spacing = std::max(42.0f, style_.font_size * 1.85f);
   const float max_distance = std::ceil(height / spacing / 2.0f) + 1.0f;
-  const float horizontal_padding = 28.0f;
+  const float left_padding = 34.0f;
+  const float right_padding = 20.0f;
 
   Gdiplus::FontFamily font_family(style_.font_family.c_str());
   const Gdiplus::Color text_color(
@@ -306,15 +313,17 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
     if (y < -spacing || y > height + spacing) continue;
     const bool is_center = distance < 0.5f;
     const bool is_played = index < current_index_;
-    const int font_size = is_center ? style_.font_size + 2 : style_.font_size;
-    const float line_width = width - horizontal_padding * 2.0f;
+    const int font_size = is_center ? style_.font_size + 4 : style_.font_size;
+    const float line_width = width - left_padding - right_padding;
     const float line_height = spacing;
     const float edge_fade = std::clamp(
         std::min(y / (spacing * 1.5f),
                  (height - y) / (spacing * 1.5f)),
         0.18f, 1.0f);
     const BYTE alpha = static_cast<BYTE>(
-        std::clamp((is_center ? 255.0f : 220.0f) * edge_fade, 0.0f, 255.0f));
+        std::clamp((is_center ? 255.0f : (is_played ? 230.0f : 185.0f)) *
+                       edge_fade,
+                   0.0f, 255.0f));
 
     Gdiplus::Font font(&font_family, static_cast<float>(font_size),
                        is_center ? Gdiplus::FontStyleBold
@@ -334,7 +343,7 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                                        : Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-    Gdiplus::RectF text_rect(horizontal_padding, y - line_height / 2.0f,
+    Gdiplus::RectF text_rect(left_padding, y - line_height / 2.0f,
                              line_width, line_height);
     graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
                         &base_brush);
