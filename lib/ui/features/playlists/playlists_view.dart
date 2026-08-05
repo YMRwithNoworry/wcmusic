@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
@@ -44,11 +45,11 @@ class PlaylistsView extends StatelessWidget {
             itemBuilder: (context, index) {
               final playlist = viewModel.playlists[index];
               return InkWell(
-                onTap: playlist.isPlatformFavorite
+                onTap: playlist.tracks.isNotEmpty
+                    ? () => _showPlaylist(context, playlist)
+                    : playlist.isPlatformFavorite
                     ? () => _open(context, playlist.externalUrl!)
-                    : playlist.tracks.isEmpty
-                    ? null
-                    : () => viewModel.playTrack(playlist.tracks.first),
+                    : null,
                 borderRadius: BorderRadius.circular(8),
                 child: Ink(
                   padding: const EdgeInsets.all(12),
@@ -125,6 +126,103 @@ class PlaylistsView extends StatelessWidget {
     final bytes = await file.readAsBytes();
     if (!context.mounted) return;
     await context.read<PlayerViewModel>().importPlaylist(file.path, bytes);
+  }
+
+  Future<void> _showPlaylist(BuildContext context, Playlist playlist) {
+    final viewModel = context.read<PlayerViewModel>();
+    return showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .82,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          playlist.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(
+                            sheetContext,
+                          ).textTheme.headlineMedium,
+                        ),
+                        Text(
+                          playlist.isPlatformFavorite
+                              ? '${playlist.platform ?? '平台'} · ${playlist.tracks.length} 首可播放'
+                              : '${playlist.tracks.length} 首',
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (playlist.isPlatformFavorite)
+                    IconButton(
+                      onPressed: () =>
+                          _open(sheetContext, playlist.externalUrl!),
+                      icon: const Icon(Icons.open_in_new),
+                      tooltip: '打开平台页面',
+                    ),
+                  IconButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    icon: const Icon(Icons.close),
+                    tooltip: '关闭',
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: playlist.tracks.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final track = playlist.tracks[index];
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child:
+                          track.artworkUri == null || track.artworkUri!.isEmpty
+                          ? OrganicArtwork(seed: track.id, size: 48)
+                          : Image.network(
+                              track.artworkUri!,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) =>
+                                  OrganicArtwork(seed: track.id, size: 48),
+                            ),
+                    ),
+                    title: Text(
+                      track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      track.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.play_arrow),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      viewModel.playTrack(track);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _open(BuildContext context, String value) async {

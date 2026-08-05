@@ -179,6 +179,7 @@ class _PlatformPlaylists extends StatelessWidget {
                   return _PlatformPlaylistTile(
                     playlist: playlist,
                     isFavorite: viewModel.isPlatformPlaylistFavorite(playlist),
+                    isLoading: viewModel.isPlatformPlaylistLoading(playlist),
                     onTap: () => _open(context, playlist.url),
                     onToggleFavorite: () =>
                         viewModel.togglePlatformPlaylistFavorite(playlist),
@@ -208,12 +209,14 @@ class _PlatformPlaylistTile extends StatelessWidget {
   const _PlatformPlaylistTile({
     required this.playlist,
     required this.isFavorite,
+    required this.isLoading,
     required this.onTap,
     required this.onToggleFavorite,
   });
 
   final PlatformPlaylist playlist;
   final bool isFavorite;
+  final bool isLoading;
   final VoidCallback onTap;
   final VoidCallback onToggleFavorite;
 
@@ -248,11 +251,20 @@ class _PlatformPlaylistTile extends StatelessWidget {
                   top: 8,
                   right: 8,
                   child: IconButton.filledTonal(
-                    onPressed: onToggleFavorite,
-                    icon: Icon(
-                      isFavorite ? Icons.bookmark : Icons.bookmark_border,
-                    ),
-                    tooltip: isFavorite ? '取消收藏' : '收藏到本地',
+                    onPressed: isLoading ? null : onToggleFavorite,
+                    icon: isLoading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            isFavorite ? Icons.bookmark : Icons.bookmark_border,
+                          ),
+                    tooltip: isLoading
+                        ? '正在载入歌单'
+                        : isFavorite
+                        ? '取消收藏'
+                        : '收藏并载入歌曲',
                   ),
                 ),
               ],

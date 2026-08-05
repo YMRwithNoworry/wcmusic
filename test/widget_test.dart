@@ -77,12 +77,25 @@ void main() {
       url: 'https://music.example/playlist-42',
       platform: 'Apple Music',
     );
+    const playlistTrack = Track(
+      id: 'apple-7',
+      title: '歌单歌曲',
+      artist: '歌手',
+      album: '专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+    );
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(),
       sourceRepository: MemorySourceRepository(),
-      onlineSearchService: FakeOnlineSearchService(const [], const [
-        platformPlaylist,
-      ]),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [platformPlaylist],
+        const [],
+        const {
+          'playlist-42': [playlistTrack],
+        },
+      ),
       playerService: FakePlayerService(),
     );
     await viewModel.load();
@@ -91,12 +104,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('收藏到本地'));
+    await tester.tap(find.byTooltip('收藏并载入歌曲'));
     await tester.pumpAndSettle();
 
     expect(viewModel.playlists.single.name, '今日热门');
     expect(viewModel.playlists.single.externalUrl, platformPlaylist.url);
+    expect(viewModel.playlists.single.tracks, const [playlistTrack]);
     expect(find.byTooltip('取消收藏'), findsOneWidget);
+
+    await tester.tap(find.text('歌单').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('今日热门'));
+    await tester.pumpAndSettle();
+    expect(find.text('歌单歌曲'), findsOneWidget);
+
+    await tester.tap(find.text('歌单歌曲'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(viewModel.current, playlistTrack);
   });
 
   testWidgets('shows progress and volume controls while playing', (

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:html/parser.dart' as html_parser;
+
 import '../../domain/models/track.dart';
 
 enum OnlineSearchChannel { appleMusic, deezer, aggregate }
@@ -21,6 +23,7 @@ abstract interface class OnlineSearchService {
   });
   Future<List<PlatformPlaylist>> discoverPlaylists();
   Future<List<Track>> discoverNewTracks();
+  Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist);
 }
 
 class AppleOnlineSearchService implements OnlineSearchService {
@@ -201,20 +204,67 @@ class AppleOnlineSearchService implements OnlineSearchService {
     }
     if (ids.isEmpty) return const [];
 
-    final uri = _lookupEndpoint.replace(
-      queryParameters: {
-        ..._lookupEndpoint.queryParameters,
-        'id': ids.join(','),
-        'country': 'CN',
-      },
-    );
-    final lookup = await _getJson(uri);
-    if (lookup is! Map<String, dynamic> || lookup['results'] is! List) {
-      throw const FormatException('新曲试听信息返回了无法识别的数据');
+    return _lookupAppleTracks(ids);
+  }
+
+  @override
+  Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async {
+    final document = html_parser.parse(await _getText(Uri.parse(playlist.url)));
+    List<dynamic>? entries;
+    for (final script in document.querySelectorAll(
+      'script[type="application/ld+json"]',
+    )) {
+      try {
+        final decoded = jsonDecode(script.text);
+        if (decoded is Map && decoded['@type'] == 'MusicPlaylist') {
+          final trackValue = decoded['track'];
+          if (trackValue is List) entries = trackValue;
+        }
+      } on FormatException {
+        continue;
+      }
     }
-    return _parseAppleResults(
-      lookup['results'] as List,
-    ).where((track) => track.uri.isNotEmpty).toList(growable: false);
+    if (entries == null) {
+      throw const FormatException('平台歌单页面缺少曲目数据');
+    }
+    final ids = <String>[];
+    for (final value in entries) {
+      if (value is! Map) continue;
+      final url = _text(value['url']);
+      final segments = url == null
+          ? const <String>[]
+          : Uri.parse(url).pathSegments;
+      if (segments.isNotEmpty) ids.add(segments.last);
+    }
+    if (ids.isEmpty) throw const FormatException('平台歌单没有可识别的曲目');
+    return _lookupAppleTracks(ids);
+  }
+
+  Future<List<Track>> _lookupAppleTracks(List<String> ids) async {
+    final tracksById = <String, Track>{};
+    for (var start = 0; start < ids.length; start += 50) {
+      final end = (start + 50).clamp(0, ids.length);
+      final uri = _lookupEndpoint.replace(
+        queryParameters: {
+          ..._lookupEndpoint.queryParameters,
+          'id': ids.sublist(start, end).join(','),
+          'country': 'CN',
+        },
+      );
+      final lookup = await _getJson(uri);
+      if (lookup is! Map<String, dynamic> || lookup['results'] is! List) {
+        throw const FormatException('歌曲试听信息返回了无法识别的数据');
+      }
+      for (final track in _parseAppleResults(lookup['results'] as List)) {
+        if (track.uri.isNotEmpty && track.sourceId != null) {
+          tracksById[track.sourceId!] = track;
+        }
+      }
+    }
+    return ids
+        .map((id) => tracksById[id])
+        .whereType<Track>()
+        .toList(growable: false);
   }
 
   Future<dynamic> _getJson(Uri uri) async {
@@ -224,6 +274,37 @@ class AppleOnlineSearchService implements OnlineSearchService {
     } on Object {
       if (proxy == 'DIRECT') rethrow;
       return _getJsonOnce(uri, 'DIRECT');
+    }
+  }
+
+  Future<String> _getText(Uri uri) async {
+    final proxy = _proxyResolver(uri);
+    try {
+      return await _getTextOnce(uri, proxy);
+    } on Object {
+      if (proxy == 'DIRECT') rethrow;
+      return _getTextOnce(uri, 'DIRECT');
+    }
+  }
+
+  Future<String> _getTextOnce(Uri uri, String proxy) async {
+    final client = _clientFactory()
+      ..connectionTimeout = const Duration(seconds: 10)
+      ..findProxy = (_) => proxy;
+    try {
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.acceptHeader, 'text/html');
+      request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
+      final response = await request.close().timeout(
+        const Duration(seconds: 15),
+      );
+      if (response.statusCode != HttpStatus.ok) {
+        await response.drain<void>();
+        throw HttpException('在线服务返回 ${response.statusCode}', uri: uri);
+      }
+      return await utf8.decoder.bind(response).join();
+    } finally {
+      client.close(force: true);
     }
   }
 

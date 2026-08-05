@@ -99,11 +99,26 @@ void main() {
       url: 'https://music.example/playlist/42',
       platform: 'Apple Music',
     );
+    const playableTrack = Track(
+      id: 'apple-7',
+      title: '歌单歌曲',
+      artist: '歌手',
+      album: '专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+    );
     final repository = MemoryMusicRepository();
     final viewModel = PlayerViewModel(
       musicRepository: repository,
       sourceRepository: MemorySourceRepository(),
-      onlineSearchService: FakeOnlineSearchService(),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [],
+        const [],
+        const {
+          '42': [playableTrack],
+        },
+      ),
       playerService: FakePlayerService(),
     );
     addTearDown(viewModel.dispose);
@@ -112,6 +127,7 @@ void main() {
 
     expect(viewModel.isPlatformPlaylistFavorite(platformPlaylist), isTrue);
     expect(viewModel.playlists.single.externalUrl, platformPlaylist.url);
+    expect(viewModel.playlists.single.tracks, const [playableTrack]);
 
     await viewModel.togglePlatformPlaylistFavorite(platformPlaylist);
 

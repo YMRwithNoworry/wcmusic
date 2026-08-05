@@ -87,11 +87,13 @@ class FakeOnlineSearchService implements OnlineSearchService {
     this.results = const [],
     this.playlists = const [],
     this.newTracks = const [],
+    this.playlistTracks = const {},
   ]);
 
   final List<Track> results;
   final List<PlatformPlaylist> playlists;
   final List<Track> newTracks;
+  final Map<String, List<Track>> playlistTracks;
   OnlineSearchChannel? lastChannel;
 
   @override
@@ -99,6 +101,10 @@ class FakeOnlineSearchService implements OnlineSearchService {
 
   @override
   Future<List<Track>> discoverNewTracks() async => newTracks;
+
+  @override
+  Future<List<Track>> discoverPlaylistTracks(PlatformPlaylist playlist) async =>
+      playlistTracks[playlist.id] ?? const [];
 
   @override
   Future<List<Track>> search(

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
+import 'package:wcmusic/domain/models/track.dart';
 
 void main() {
   test('searches online and maps playable tracks', () async {
@@ -110,6 +111,68 @@ void main() {
     expect(playlists.single.url, 'https://music.example/playlist-42');
   });
 
+  test('loads playable tracks from an Apple Music playlist page', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    Uri? lookupRequest;
+    server.listen((request) async {
+      if (request.uri.path == '/playlist') {
+        request.response.headers.contentType = ContentType.html;
+        request.response.write('''
+<!doctype html><html><head>
+<script type="application/ld+json">
+${jsonEncode({
+          '@type': 'MusicPlaylist',
+          'track': [
+            {'url': 'https://music.apple.com/cn/song/first/11'},
+            {'url': 'https://music.apple.com/cn/song/second/22'},
+          ],
+        })}
+</script></head></html>
+''');
+      } else if (request.uri.path == '/lookup') {
+        lookupRequest = request.uri;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'results': [
+              {
+                'trackId': 22,
+                'trackName': '第二首',
+                'artistName': '歌手二',
+                'previewUrl': 'https://audio.example/22.m4a',
+              },
+              {
+                'trackId': 11,
+                'trackName': '第一首',
+                'artistName': '歌手一',
+                'previewUrl': 'https://audio.example/11.m4a',
+              },
+            ],
+          }),
+        );
+      }
+      await request.response.close();
+    });
+    final playlistUri = Uri.parse('http://127.0.0.1:${server.port}/playlist');
+    final service = AppleOnlineSearchService(
+      lookupEndpoint: Uri.parse('http://127.0.0.1:${server.port}/lookup'),
+    );
+    final playlist = PlatformPlaylist(
+      id: 'playlist-42',
+      name: '今日热门',
+      artworkUri: '',
+      url: playlistUri.toString(),
+      platform: 'Apple Music',
+    );
+
+    final tracks = await service.discoverPlaylistTracks(playlist);
+
+    expect(lookupRequest?.queryParameters['id'], '11,22');
+    expect(tracks.map((track) => track.sourceId), ['11', '22']);
+    expect(tracks.every((track) => track.uri.isNotEmpty), isTrue);
+  });
+
   test('loads recently released playable tracks from the chart feed', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
@@ -125,10 +188,7 @@ void main() {
           jsonEncode({
             'feed': {
               'results': [
-                {
-                  'id': 'recent-42',
-                  'releaseDate': recentDate.toIso8601String(),
-                },
+                {'id': '42', 'releaseDate': recentDate.toIso8601String()},
                 {'id': 'old-7', 'releaseDate': oldDate.toIso8601String()},
               ],
             },
@@ -162,7 +222,7 @@ void main() {
 
     final tracks = await service.discoverNewTracks();
 
-    expect(lookupRequest?.queryParameters['id'], 'recent-42');
+    expect(lookupRequest?.queryParameters['id'], '42');
     expect(lookupRequest?.queryParameters['country'], 'CN');
     expect(tracks, hasLength(1));
     expect(tracks.single.title, '十天前的新歌');

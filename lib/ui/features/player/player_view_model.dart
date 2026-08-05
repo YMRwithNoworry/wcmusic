@@ -63,6 +63,7 @@ class PlayerViewModel extends ChangeNotifier {
   List<Track> onlineResults = const [];
   List<PlatformPlaylist> platformPlaylists = const [];
   List<PlatformPlaylist> _platformPlaylistCatalog = const [];
+  final Set<String> loadingPlatformPlaylistIds = {};
   List<Track> recentTracks = const [];
   List<Track> _recentTrackCatalog = const [];
   bool isLoadingPlatformPlaylists = false;
@@ -89,6 +90,7 @@ class PlayerViewModel extends ChangeNotifier {
       sources = await sourceRepository.loadSources();
       unawaited(refreshPlatformPlaylists());
       unawaited(refreshRecentTracks());
+      unawaited(_upgradeEmptyPlatformFavorites());
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
@@ -125,30 +127,90 @@ class PlayerViewModel extends ChangeNotifier {
   bool isPlatformPlaylistFavorite(PlatformPlaylist playlist) =>
       playlists.any((item) => item.id == _platformPlaylistId(playlist));
 
+  bool isPlatformPlaylistLoading(PlatformPlaylist playlist) =>
+      loadingPlatformPlaylistIds.contains(_platformPlaylistId(playlist));
+
   Future<void> togglePlatformPlaylistFavorite(PlatformPlaylist playlist) async {
     final id = _platformPlaylistId(playlist);
+    if (loadingPlatformPlaylistIds.contains(id)) return;
     try {
       if (isPlatformPlaylistFavorite(playlist)) {
         await musicRepository.deletePlaylist(id);
         message = '已取消收藏 ${playlist.name}';
       } else {
+        loadingPlatformPlaylistIds.add(id);
+        notifyListeners();
+        final tracks = await onlineSearchService.discoverPlaylistTracks(
+          playlist,
+        );
+        if (tracks.isEmpty) throw StateError('歌单暂无可播放歌曲');
         await musicRepository.savePlaylist(
           Playlist(
             id: id,
             name: playlist.name,
-            tracks: const [],
+            tracks: tracks,
             artworkUri: playlist.artworkUri,
             externalUrl: playlist.url,
             platform: playlist.platform,
           ),
         );
-        message = '已收藏 ${playlist.name}';
+        message = '已收藏 ${playlist.name}，共 ${tracks.length} 首可播放歌曲';
       }
       playlists = await musicRepository.loadPlaylists();
     } on Object catch (error) {
       message = '更新歌单收藏失败：$error';
+    } finally {
+      loadingPlatformPlaylistIds.remove(id);
     }
     notifyListeners();
+  }
+
+  Future<void> _upgradeEmptyPlatformFavorites() async {
+    final pending = playlists
+        .where(
+          (playlist) => playlist.isPlatformFavorite && playlist.tracks.isEmpty,
+        )
+        .toList(growable: false);
+    for (final saved in pending) {
+      final url = saved.externalUrl;
+      if (url == null) continue;
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.pathSegments.isEmpty) continue;
+      final platformPlaylist = PlatformPlaylist(
+        id: uri.pathSegments.last,
+        name: saved.name,
+        artworkUri: saved.artworkUri ?? '',
+        url: url,
+        platform: saved.platform ?? 'Apple Music',
+      );
+      loadingPlatformPlaylistIds.add(saved.id);
+      notifyListeners();
+      try {
+        final tracks = await onlineSearchService.discoverPlaylistTracks(
+          platformPlaylist,
+        );
+        if (tracks.isEmpty) continue;
+        final latest = await musicRepository.loadPlaylists();
+        if (!latest.any((playlist) => playlist.id == saved.id)) continue;
+        await musicRepository.savePlaylist(
+          Playlist(
+            id: saved.id,
+            name: saved.name,
+            tracks: tracks,
+            artworkUri: saved.artworkUri,
+            externalUrl: saved.externalUrl,
+            platform: saved.platform,
+          ),
+        );
+        playlists = await musicRepository.loadPlaylists();
+        notifyListeners();
+      } on Object {
+        continue;
+      } finally {
+        loadingPlatformPlaylistIds.remove(saved.id);
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> removeSavedPlaylist(Playlist playlist) async {
