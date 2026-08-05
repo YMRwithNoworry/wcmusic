@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/native_core_bridge.dart';
@@ -184,6 +185,24 @@ void main() {
       () => repository.deleteSource(source.id),
       throwsA(isA<StateError>()),
     );
+  });
+
+  testWidgets('packages the built-in Paojiao source asset', (_) async {
+    final script = await rootBundle.loadString(
+      'assets/sources/paojiao_internal_source.js',
+    );
+    final repository = MemorySourceRepository(
+      nativeCore: _UnavailableNativeCore(),
+      builtInScript: script,
+      builtInSourceName: '泡椒内部测试音源',
+    );
+
+    final source = (await repository.loadSources()).single;
+
+    expect(script, contains('@version 1.2.0'));
+    expect(source.id, MemorySourceRepository.builtInSourceId);
+    expect(source.name, '泡椒内部测试音源');
+    expect(source.isBuiltIn, isTrue);
   });
 
   test(
