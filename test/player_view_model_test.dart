@@ -492,6 +492,34 @@ void main() {
     expect(viewModel.message, contains('已下载到'));
   });
 
+  test('downloads network tracks to cache before playing', () async {
+    const track = Track(
+      id: 'network-play',
+      title: '网络歌曲',
+      artist: '网络歌手',
+      album: '网络专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/song.mp3',
+    );
+    final downloader = _FakeTrackDownloadService();
+    final player = FakePlayerService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+      downloadService: downloader,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.playTrack(track);
+
+    expect(downloader.downloadedTrack?.id, 'network-play');
+    expect(player.playedTrack?.uri, downloader.cachedPath);
+    expect(viewModel.current?.uri, downloader.cachedPath);
+  });
+
   test('imports a folder of sources and reports failures', () async {
     final repository = _BulkSourceRepository();
     final viewModel = PlayerViewModel(
@@ -690,6 +718,7 @@ class _FullTrackSourceRepository implements SourceRepository {
 
 class _FakeTrackDownloadService extends TrackDownloadService {
   Track? downloadedTrack;
+  String cachedPath = 'C:/cache/wcmusic-network-play.mp3';
 
   @override
   Future<String> download(
@@ -700,6 +729,17 @@ class _FakeTrackDownloadService extends TrackDownloadService {
     downloadedTrack = track;
     onProgress(1);
     return 'D:/music/${track.title}.mp3';
+  }
+
+  @override
+  Future<String> downloadToCache(
+    Track track, {
+    String fallbackExtension = '.mp3',
+    required void Function(double progress) onProgress,
+  }) async {
+    downloadedTrack = track;
+    onProgress(1);
+    return cachedPath;
   }
 }
 

@@ -12,10 +12,14 @@ class TrackDownloadService {
   TrackDownloadService({
     HttpClient Function()? clientFactory,
     this._pathResolver,
-  }) : _clientFactory = clientFactory ?? HttpClient.new;
+    Future<Directory> Function()? cacheDirectoryProvider,
+  }) : _clientFactory = clientFactory ?? HttpClient.new,
+       _cacheDirectoryProvider =
+           cacheDirectoryProvider ?? getTemporaryDirectory;
 
   final HttpClient Function() _clientFactory;
   final DownloadPathResolver? _pathResolver;
+  final Future<Directory> Function() _cacheDirectoryProvider;
 
   Future<String> download(
     Track track, {
@@ -29,7 +33,30 @@ class TrackDownloadService {
         ? await _pathResolver(track, extension)
         : await _defaultPath(track, extension);
     if (path == null) throw StateError('已取消下载');
+    return _downloadTo(uri, path, onProgress);
+  }
 
+  Future<String> downloadToCache(
+    Track track, {
+    String fallbackExtension = '.mp3',
+    required void Function(double progress) onProgress,
+  }) async {
+    if (track.uri.isEmpty) throw StateError('当前歌曲没有可下载的音频地址');
+    final uri = Uri.parse(track.uri);
+    final extension = _extensionFor(uri, fallbackExtension);
+    final directory = await _cacheDirectoryProvider();
+    final path =
+        '${directory.path}${Platform.pathSeparator}${_safeName('wcmusic-${track.id}$extension')}';
+    final file = File(path);
+    if (await file.exists() && await file.length() > 1024) return path;
+    return _downloadTo(uri, path, onProgress);
+  }
+
+  Future<String> _downloadTo(
+    Uri uri,
+    String path,
+    void Function(double progress) onProgress,
+  ) async {
     final client = _clientFactory()
       ..connectionTimeout = const Duration(seconds: 20);
     try {

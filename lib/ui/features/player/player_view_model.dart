@@ -364,11 +364,41 @@ class PlayerViewModel extends ChangeNotifier {
           ? '本地歌曲文件不可用'
           : '该歌曲暂无可用的播放地址';
     } else {
-      await playerService.play(playbackTrack);
-      isPlaying = true;
-      if (floatingLyricsEnabled) unawaited(_loadLyrics(playbackTrack));
+      var finalTrack = playbackTrack;
+      if (_isNetworkUri(finalTrack.uri)) {
+        message = '正在下载整曲，请稍候...';
+        notifyListeners();
+        try {
+          final localPath = await downloadService.downloadToCache(
+            finalTrack,
+            fallbackExtension: playbackQuality.sourceValue == 'flac'
+                ? '.flac'
+                : '.mp3',
+            onProgress: (_) {},
+          );
+          finalTrack = finalTrack.copyWith(uri: localPath);
+        } on Object catch (error) {
+          message = '下载播放失败，尝试直接播放：$error';
+          notifyListeners();
+        }
+      }
+      try {
+        await playerService.play(finalTrack);
+        isPlaying = true;
+        current = finalTrack;
+        message = null;
+        if (floatingLyricsEnabled) unawaited(_loadLyrics(finalTrack));
+      } on Object catch (error) {
+        message = '播放失败：$error';
+        isPlaying = false;
+      }
     }
     notifyListeners();
+  }
+
+  bool _isNetworkUri(String uri) {
+    final scheme = Uri.tryParse(uri)?.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
   }
 
   Future<void> togglePlayback() async {

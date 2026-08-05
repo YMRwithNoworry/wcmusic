@@ -5,6 +5,7 @@ import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
+import 'package:wcmusic/data/services/track_download_service.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
 import 'package:wcmusic/ui/features/player/playback_controls.dart';
 import 'package:wcmusic/ui/features/player/now_playing_view.dart';
@@ -43,11 +44,13 @@ void main() {
     );
     final searchService = FakeOnlineSearchService(const [result]);
     final player = FakePlayerService();
+    final downloader = _FakeCacheDownloader();
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: searchService,
       playerService: player,
+      downloadService: downloader,
     );
     await viewModel.load();
     await tester.pumpWidget(
@@ -66,6 +69,7 @@ void main() {
 
     await tester.tap(find.text('在线晴天'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
     expect(viewModel.current?.id, result.id);
     expect(player.playedTrack?.id, result.id);
 
@@ -159,4 +163,13 @@ void main() {
     expect(find.byType(VolumeControl), findsOneWidget);
     expect(find.byType(PlaybackProgress), findsOneWidget);
   });
+}
+
+class _FakeCacheDownloader extends TrackDownloadService {
+  @override
+  Future<String> downloadToCache(
+    Track track, {
+    String fallbackExtension = '.mp3',
+    required void Function(double progress) onProgress,
+  }) async => 'C:/cache/${track.id}.mp3';
 }

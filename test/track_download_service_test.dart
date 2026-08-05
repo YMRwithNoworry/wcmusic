@@ -40,6 +40,37 @@ void main() {
     expect(progress.last, 1.0);
   });
 
+  test('streams a remote track into the cache directory', () async {
+    final bytes = List<int>.generate(512, (index) => index % 251);
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.binary;
+      request.response.contentLength = bytes.length;
+      request.response.add(bytes);
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp('wcmusic-cache-');
+    addTearDown(() => directory.delete(recursive: true));
+    final service = TrackDownloadService(
+      cacheDirectoryProvider: () async => directory,
+    );
+
+    final path = await service.downloadToCache(
+      Track(
+        id: 'cache-song',
+        title: '缓存歌曲',
+        artist: '缓存歌手',
+        album: '缓存专辑',
+        duration: const Duration(minutes: 3),
+        uri: 'http://127.0.0.1:${server.port}/song.mp3',
+      ),
+      onProgress: (_) {},
+    );
+
+    expect(await File(path).readAsBytes(), bytes);
+  });
+
   test('throws when the download is cancelled', () async {
     final service = TrackDownloadService(
       pathResolver: (track, extension) async => null,
