@@ -51,6 +51,18 @@ void main() {
             platform: 'Apple Music',
           ),
         ),
+        List.generate(
+          4,
+          (index) => Track(
+            id: 'new-$index',
+            title: ['凌晨信号', '潮汐来信', '玻璃晴空', '静默花园'][index],
+            artist: ['林间回声', '夏屿', '蓝色房间', '北岸'][index],
+            album: '新曲推荐',
+            duration: const Duration(minutes: 3),
+            uri: 'https://audio.example/$index.m4a',
+            releaseDate: DateTime(2026, 7, 20 - index),
+          ),
+        ),
       ),
       playerService: FakePlayerService(),
     );

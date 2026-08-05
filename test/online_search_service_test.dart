@@ -110,6 +110,66 @@ void main() {
     expect(playlists.single.url, 'https://music.example/playlist-42');
   });
 
+  test('loads recently released playable tracks from the chart feed', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final recentDate = DateTime.now().toUtc().subtract(
+      const Duration(days: 10),
+    );
+    final oldDate = DateTime.now().toUtc().subtract(const Duration(days: 500));
+    Uri? lookupRequest;
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/feed') {
+        request.response.write(
+          jsonEncode({
+            'feed': {
+              'results': [
+                {
+                  'id': 'recent-42',
+                  'releaseDate': recentDate.toIso8601String(),
+                },
+                {'id': 'old-7', 'releaseDate': oldDate.toIso8601String()},
+              ],
+            },
+          }),
+        );
+      } else if (request.uri.path == '/lookup') {
+        lookupRequest = request.uri;
+        request.response.write(
+          jsonEncode({
+            'results': [
+              {
+                'trackId': 42,
+                'trackName': '十天前的新歌',
+                'artistName': '新歌手',
+                'collectionName': '新专辑',
+                'trackTimeMillis': 180000,
+                'previewUrl': 'https://audio.example/new.m4a',
+                'artworkUrl100': 'https://image.example/100x100bb.jpg',
+                'releaseDate': recentDate.toIso8601String(),
+              },
+            ],
+          }),
+        );
+      }
+      await request.response.close();
+    });
+    final service = AppleOnlineSearchService(
+      newTracksEndpoint: Uri.parse('http://127.0.0.1:${server.port}/feed'),
+      lookupEndpoint: Uri.parse('http://127.0.0.1:${server.port}/lookup'),
+    );
+
+    final tracks = await service.discoverNewTracks();
+
+    expect(lookupRequest?.queryParameters['id'], 'recent-42');
+    expect(lookupRequest?.queryParameters['country'], 'CN');
+    expect(tracks, hasLength(1));
+    expect(tracks.single.title, '十天前的新歌');
+    expect(tracks.single.uri, 'https://audio.example/new.m4a');
+    expect(tracks.single.releaseDate, recentDate);
+  });
+
   test('maps Deezer search results into playable tracks', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));

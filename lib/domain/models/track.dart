@@ -12,6 +12,7 @@ class Track {
     this.source = TrackSource.local,
     this.sourceId,
     this.quality,
+    this.releaseDate,
     this.isFavorite = false,
   });
 
@@ -25,6 +26,7 @@ class Track {
   final TrackSource source;
   final String? sourceId;
   final String? quality;
+  final DateTime? releaseDate;
   final bool isFavorite;
 
   Track copyWith({String? title, bool? isFavorite}) => Track(
@@ -38,6 +40,7 @@ class Track {
     source: source,
     sourceId: sourceId,
     quality: quality,
+    releaseDate: releaseDate,
     isFavorite: isFavorite ?? this.isFavorite,
   );
 }

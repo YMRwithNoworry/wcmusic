@@ -30,49 +30,79 @@ class HomeView extends StatelessWidget {
               const SizedBox(height: 48),
               Row(
                 children: [
-                  Text(
-                    '刚刚落下的声音',
-                    style: Theme.of(context).textTheme.headlineLarge,
+                  Expanded(
+                    child: Text(
+                      '最近发布的新曲',
+                      style: Theme.of(context).textTheme.headlineLarge,
+                    ),
                   ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('查看曲库'),
+                  IconButton(
+                    onPressed: viewModel.recentTracks.isEmpty
+                        ? viewModel.refreshRecentTracks
+                        : viewModel.shuffleRecentTracks,
+                    icon: const Icon(Icons.casino_outlined),
+                    tooltip: '换一批',
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final count = constraints.maxWidth > 800
-                      ? 4
-                      : constraints.maxWidth > 520
-                      ? 3
-                      : 2;
-                  final items = viewModel.tracks.take(count).toList();
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: count,
-                      crossAxisSpacing: 14,
-                      mainAxisSpacing: 14,
-                      childAspectRatio: .82,
+              if (viewModel.isLoadingRecentTracks)
+                const LinearProgressIndicator()
+              else if (viewModel.recentTracks.isEmpty)
+                InkWell(
+                  onTap: viewModel.refreshRecentTracks,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.cloud_off_outlined),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            viewModel.recentTracksError ?? '点击载入最近新曲',
+                          ),
+                        ),
+                      ],
                     ),
-                    itemCount: items.length,
-                    itemBuilder: (context, index) {
-                      final track = items[index];
-                      return _AlbumTile(
-                        title: track.title,
-                        artist: track.artist,
-                        seed: track.id,
-                        onTap: () => viewModel.playTrack(track),
-                      );
-                    },
-                  );
-                },
-              ),
+                  ),
+                )
+              else
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final count = constraints.maxWidth > 800
+                        ? 4
+                        : constraints.maxWidth > 520
+                        ? 3
+                        : 2;
+                    final items = viewModel.recentTracks.take(count).toList();
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: count,
+                        crossAxisSpacing: 14,
+                        mainAxisSpacing: 14,
+                        childAspectRatio: .82,
+                      ),
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final track = items[index];
+                        final released = track.releaseDate;
+                        return _AlbumTile(
+                          title: track.title,
+                          artist: released == null
+                              ? track.artist
+                              : '${track.artist} · ${released.month}/${released.day}',
+                          seed: track.id,
+                          artworkUri: track.artworkUri,
+                          onTap: () => viewModel.playTrack(track),
+                        );
+                      },
+                    );
+                  },
+                ),
             ],
           ),
         ),
@@ -308,11 +338,13 @@ class _AlbumTile extends StatefulWidget {
     required this.artist,
     required this.seed,
     required this.onTap,
+    this.artworkUri,
   });
 
   final String title;
   final String artist;
   final String seed;
+  final String? artworkUri;
   final VoidCallback onTap;
 
   @override
@@ -337,7 +369,21 @@ class _AlbumTileState extends State<_AlbumTile> {
                 scale: _hovered ? 1.025 : 1,
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                child: OrganicArtwork(seed: widget.seed, size: double.infinity),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: widget.artworkUri == null || widget.artworkUri!.isEmpty
+                      ? OrganicArtwork(seed: widget.seed, size: double.infinity)
+                      : Image.network(
+                          widget.artworkUri!,
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => OrganicArtwork(
+                            seed: widget.seed,
+                            size: double.infinity,
+                          ),
+                        ),
+                ),
               ),
             ),
             const SizedBox(height: 10),

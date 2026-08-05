@@ -91,6 +91,37 @@ void main() {
     );
   });
 
+  test('randomly selects four unique recently released tracks', () async {
+    final newTracks = List.generate(
+      6,
+      (index) => Track(
+        id: 'new-$index',
+        title: '新曲 $index',
+        artist: '歌手 $index',
+        album: '新专辑',
+        duration: const Duration(minutes: 3),
+        uri: 'https://audio.example/$index.m4a',
+        releaseDate: DateTime.now().subtract(Duration(days: index)),
+      ),
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        const [],
+        newTracks,
+      ),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.refreshRecentTracks();
+
+    expect(viewModel.recentTracks, hasLength(4));
+    expect(viewModel.recentTracks.map((item) => item.id).toSet(), hasLength(4));
+  });
+
   test('updates the close-to-tray background playback setting', () async {
     final lifecycle = FakeWindowLifecycleService();
     final viewModel = PlayerViewModel(

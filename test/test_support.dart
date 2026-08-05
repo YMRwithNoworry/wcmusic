@@ -40,14 +40,22 @@ class FakePlayerService implements AudioPlayerService {
 }
 
 class FakeOnlineSearchService implements OnlineSearchService {
-  FakeOnlineSearchService([this.results = const [], this.playlists = const []]);
+  FakeOnlineSearchService([
+    this.results = const [],
+    this.playlists = const [],
+    this.newTracks = const [],
+  ]);
 
   final List<Track> results;
   final List<PlatformPlaylist> playlists;
+  final List<Track> newTracks;
   OnlineSearchChannel? lastChannel;
 
   @override
   Future<List<PlatformPlaylist>> discoverPlaylists() async => playlists;
+
+  @override
+  Future<List<Track>> discoverNewTracks() async => newTracks;
 
   @override
   Future<List<Track>> search(

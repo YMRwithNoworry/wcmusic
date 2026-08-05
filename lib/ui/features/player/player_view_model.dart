@@ -63,8 +63,12 @@ class PlayerViewModel extends ChangeNotifier {
   List<Track> onlineResults = const [];
   List<PlatformPlaylist> platformPlaylists = const [];
   List<PlatformPlaylist> _platformPlaylistCatalog = const [];
+  List<Track> recentTracks = const [];
+  List<Track> _recentTrackCatalog = const [];
   bool isLoadingPlatformPlaylists = false;
   String? platformPlaylistError;
+  bool isLoadingRecentTracks = false;
+  String? recentTracksError;
   bool isSearchingOnline = false;
   String? onlineSearchError;
   int _searchGeneration = 0;
@@ -84,6 +88,7 @@ class PlayerViewModel extends ChangeNotifier {
       playlists = await musicRepository.loadPlaylists();
       sources = await sourceRepository.loadSources();
       unawaited(refreshPlatformPlaylists());
+      unawaited(refreshRecentTracks());
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
@@ -111,6 +116,28 @@ class PlayerViewModel extends ChangeNotifier {
     final shuffled = [..._platformPlaylistCatalog];
     if (shuffled.length > 4) shuffled.shuffle(Random());
     platformPlaylists = shuffled.take(4).toList(growable: false);
+    notifyListeners();
+  }
+
+  Future<void> refreshRecentTracks() async {
+    isLoadingRecentTracks = true;
+    recentTracksError = null;
+    notifyListeners();
+    try {
+      _recentTrackCatalog = await onlineSearchService.discoverNewTracks();
+      shuffleRecentTracks();
+    } on Object catch (_) {
+      recentTracksError = '新曲推荐暂时不可用';
+    } finally {
+      isLoadingRecentTracks = false;
+      notifyListeners();
+    }
+  }
+
+  void shuffleRecentTracks() {
+    final shuffled = [..._recentTrackCatalog];
+    if (shuffled.length > 4) shuffled.shuffle(Random());
+    recentTracks = shuffled.take(4).toList(growable: false);
     notifyListeners();
   }
 

@@ -20,6 +20,7 @@ abstract interface class OnlineSearchService {
     OnlineSearchChannel channel = OnlineSearchChannel.appleMusic,
   });
   Future<List<PlatformPlaylist>> discoverPlaylists();
+  Future<List<Track>> discoverNewTracks();
 }
 
 class AppleOnlineSearchService implements OnlineSearchService {
@@ -29,6 +30,8 @@ class AppleOnlineSearchService implements OnlineSearchService {
     Uri? endpoint,
     Uri? deezerEndpoint,
     Uri? playlistEndpoint,
+    Uri? newTracksEndpoint,
+    Uri? lookupEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
@@ -44,13 +47,23 @@ class AppleOnlineSearchService implements OnlineSearchService {
            Uri.https(
              'rss.marketingtools.apple.com',
              '/api/v2/cn/music/most-played/20/playlists.json',
-           );
+           ),
+       _newTracksEndpoint =
+           newTracksEndpoint ??
+           Uri.https(
+             'rss.marketingtools.apple.com',
+             '/api/v2/cn/music/most-played/100/songs.json',
+           ),
+       _lookupEndpoint =
+           lookupEndpoint ?? Uri.https('itunes.apple.com', '/lookup');
 
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
   final Uri _endpoint;
   final Uri _deezerEndpoint;
   final Uri _playlistEndpoint;
+  final Uri _newTracksEndpoint;
+  final Uri _lookupEndpoint;
 
   @override
   Future<List<Track>> search(
@@ -160,6 +173,50 @@ class AppleOnlineSearchService implements OnlineSearchService {
     return playlists;
   }
 
+  @override
+  Future<List<Track>> discoverNewTracks() async {
+    final decoded = await _getJson(_newTracksEndpoint);
+    if (decoded is! Map<String, dynamic> || decoded['feed'] is! Map) {
+      throw const FormatException('新曲推荐返回了无法识别的数据');
+    }
+    final feed = Map<String, dynamic>.from(decoded['feed'] as Map);
+    final results = feed['results'];
+    if (results is! List) {
+      throw const FormatException('新曲推荐缺少结果列表');
+    }
+
+    final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 365));
+    final ids = <String>[];
+    for (final value in results) {
+      if (value is! Map) continue;
+      final item = Map<String, dynamic>.from(value);
+      final id = _text(item['id']);
+      final releaseDate = DateTime.tryParse(_text(item['releaseDate']) ?? '');
+      if (id != null &&
+          releaseDate != null &&
+          !releaseDate.toUtc().isBefore(cutoff)) {
+        ids.add(id);
+      }
+      if (ids.length == 50) break;
+    }
+    if (ids.isEmpty) return const [];
+
+    final uri = _lookupEndpoint.replace(
+      queryParameters: {
+        ..._lookupEndpoint.queryParameters,
+        'id': ids.join(','),
+        'country': 'CN',
+      },
+    );
+    final lookup = await _getJson(uri);
+    if (lookup is! Map<String, dynamic> || lookup['results'] is! List) {
+      throw const FormatException('新曲试听信息返回了无法识别的数据');
+    }
+    return _parseAppleResults(
+      lookup['results'] as List,
+    ).where((track) => track.uri.isNotEmpty).toList(growable: false);
+  }
+
   Future<dynamic> _getJson(Uri uri) async {
     final proxy = _proxyResolver(uri);
     try {
@@ -201,6 +258,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
       final artist = _text(item['artistName']);
       if (id == null || title == null || artist == null) continue;
       final durationMs = item['trackTimeMillis'];
+      final releaseDate = DateTime.tryParse(_text(item['releaseDate']) ?? '');
       tracks.add(
         Track(
           id: 'apple-$id',
@@ -215,6 +273,7 @@ class AppleOnlineSearchService implements OnlineSearchService {
           source: TrackSource.custom,
           sourceId: id,
           quality: 'Apple Music · 试听',
+          releaseDate: releaseDate,
         ),
       );
     }
