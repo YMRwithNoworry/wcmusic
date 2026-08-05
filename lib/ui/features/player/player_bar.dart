@@ -37,6 +37,7 @@ class PlayerBar extends StatelessWidget {
                           seed: track.id,
                           size: 56,
                           playing: viewModel.isPlaying,
+                          artworkUri: track.artworkUri,
                         ),
                       ),
                       const SizedBox(width: 14),

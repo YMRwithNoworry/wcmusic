@@ -8,6 +8,7 @@ import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
+import 'package:wcmusic/ui/features/player/player_bar.dart';
 
 import 'test_support.dart';
 
@@ -19,6 +20,7 @@ void main() {
     Size size,
     String golden, {
     Future<void> Function(WidgetTester tester)? beforeCapture,
+    bool disableAnimations = false,
   }) async {
     if (!fontLoaded) {
       final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
@@ -33,6 +35,13 @@ void main() {
     }
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
+    if (disableAnimations) {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+    }
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -100,4 +109,25 @@ void main() {
       },
     );
   }, skip: !Platform.isWindows);
+
+  testWidgets(
+    'desktop focused player has a stable immersive layout',
+    (tester) async {
+      await render(
+        tester,
+        const Size(1440, 900),
+        'goldens/now_playing_desktop.png',
+        disableAnimations: true,
+        beforeCapture: (tester) async {
+          final context = tester.element(find.byType(MaterialApp));
+          final viewModel = context.read<PlayerViewModel>();
+          await viewModel.playTrack(viewModel.tracks.first);
+          await tester.pump();
+          await tester.tap(find.byType(PlayerBar));
+          await tester.pumpAndSettle();
+        },
+      );
+    },
+    skip: !Platform.isWindows,
+  );
 }

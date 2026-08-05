@@ -8,11 +8,13 @@ class OrganicArtwork extends StatefulWidget {
     required this.seed,
     this.size = 120,
     this.playing = false,
+    this.artworkUri,
   });
 
   final String seed;
   final double size;
   final bool playing;
+  final String? artworkUri;
 
   @override
   State<OrganicArtwork> createState() => _OrganicArtworkState();
@@ -28,16 +30,31 @@ class _OrganicArtworkState extends State<OrganicArtwork>
   @override
   void initState() {
     super.initState();
-    if (widget.playing) _controller.repeat(reverse: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
   }
 
   @override
   void didUpdateWidget(covariant OrganicArtwork oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.playing == widget.playing) return;
-    widget.playing
-        ? _controller.repeat(reverse: true)
-        : _controller.animateBack(0);
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller
+        ..stop()
+        ..value = 0;
+    } else if (widget.playing) {
+      if (!_controller.isAnimating) _controller.repeat(reverse: true);
+    } else {
+      _controller.animateBack(0);
+    }
   }
 
   @override
@@ -48,15 +65,26 @@ class _OrganicArtworkState extends State<OrganicArtwork>
 
   @override
   Widget build(BuildContext context) {
+    final fallback = AnimatedBuilder(
+      animation: _controller,
+      builder: (_, _) => CustomPaint(
+        painter: _ArtworkPainter(widget.seed.hashCode, _controller.value),
+      ),
+    );
+    final uri = widget.artworkUri;
     final artwork = RepaintBoundary(
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (_, _) => CustomPaint(
-            painter: _ArtworkPainter(widget.seed.hashCode, _controller.value),
-          ),
-        ),
+        child: uri == null || uri.isEmpty
+            ? fallback
+            : Image.network(
+                uri,
+                width: double.infinity,
+                height: double.infinity,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => fallback,
+              ),
       ),
     );
     if (widget.size.isInfinite) return SizedBox.expand(child: artwork);

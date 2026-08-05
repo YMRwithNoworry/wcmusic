@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
@@ -126,6 +127,9 @@ void main() {
   testWidgets('shows progress and volume controls while playing', (
     tester,
   ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
@@ -144,6 +148,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(NowPlayingView), findsOneWidget);
+    expect(find.byType(ImageFiltered), findsOneWidget);
+    expect(find.byTooltip('关闭聚焦播放'), findsOneWidget);
     expect(find.byType(VolumeControl), findsOneWidget);
     expect(find.byType(PlaybackProgress), findsOneWidget);
   });
