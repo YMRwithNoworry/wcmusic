@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
@@ -116,6 +116,35 @@ void main() {
     expect(find.text('热门歌单'), findsOneWidget);
     expect(find.text('封面新曲'), findsOneWidget);
     expect(find.byType(Image), findsNWidgets(2));
+  });
+
+  testWidgets('favorites a library track into a folder from the menu', (
+    tester,
+  ) async {
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    await viewModel.load();
+    await viewModel.createFolder('我的收藏');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('曲库').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收藏到 我的收藏'));
+    await tester.pumpAndSettle();
+
+    expect(
+      viewModel.folders.single.trackIds,
+      contains(testLibraryTracks.first.id),
+    );
   });
 
   testWidgets('favorites a platform playlist from the home view', (

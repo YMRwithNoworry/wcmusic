@@ -549,6 +549,29 @@ void main() {
     expect(viewModel.lyricsStyle.fontSize, 36);
   });
 
+  test('creates folders and favorites tracks into them', () async {
+    final repository = MemoryMusicRepository(initialTracks: testLibraryTracks);
+    final viewModel = PlayerViewModel(
+      musicRepository: repository,
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    final folder = await viewModel.createFolder('  我的收藏  ');
+    expect(folder?.name, '我的收藏');
+    await viewModel.addTrackToFolder(folder!.id, testLibraryTracks.first.id);
+
+    expect(
+      viewModel.folders.single.trackIds,
+      contains(testLibraryTracks.first.id),
+    );
+    viewModel.selectFolder(folder.id);
+    expect(viewModel.folderTracks.single.id, testLibraryTracks.first.id);
+  });
+
   test('imports a folder of sources and reports failures', () async {
     final repository = _BulkSourceRepository();
     final viewModel = PlayerViewModel(

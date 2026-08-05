@@ -11,6 +11,7 @@ import '../../../data/services/lyric_service.dart';
 import '../../../data/services/track_download_service.dart';
 import '../../../domain/models/lyric_line.dart';
 import '../../../domain/models/lyrics_overlay_style.dart';
+import '../../../domain/models/music_folder.dart';
 import '../../../domain/models/playback_mode.dart';
 import '../../../domain/models/playback_quality.dart';
 import '../../../domain/models/source_import_result.dart';
@@ -73,6 +74,8 @@ class PlayerViewModel extends ChangeNotifier {
   final TrackDownloadService downloadService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
+  List<MusicFolder> folders = const [];
+  String? selectedFolderId;
   List<SourceScript> sources = const [];
   String? selectedSourceId;
   Track? current;
@@ -141,6 +144,7 @@ class PlayerViewModel extends ChangeNotifier {
     try {
       tracks = await musicRepository.loadTracks();
       playlists = await musicRepository.loadPlaylists();
+      folders = await musicRepository.loadFolders();
       sources = await sourceRepository.loadSources();
       selectedSourceId = await sourceRepository.loadSelectedSourceId();
       unawaited(refreshPlatformPlaylists());
@@ -303,15 +307,96 @@ class PlayerViewModel extends ChangeNotifier {
   }
 
   List<Track> get visibleTracks {
+    final base = selectedFolder == null ? tracks : folderTracks;
     final needle = query.trim().toLowerCase();
-    if (needle.isEmpty) return tracks;
-    return tracks
+    if (needle.isEmpty) return base;
+    return base
         .where(
           (track) => '${track.title} ${track.artist} ${track.album}'
               .toLowerCase()
               .contains(needle),
         )
         .toList();
+  }
+
+  MusicFolder? get selectedFolder {
+    for (final folder in folders) {
+      if (folder.id == selectedFolderId) return folder;
+    }
+    return null;
+  }
+
+  List<Track> get folderTracks {
+    final folder = selectedFolder;
+    if (folder == null) return const [];
+    final byId = {for (final track in tracks) track.id: track};
+    return [for (final id in folder.trackIds) ?byId[id]];
+  }
+
+  Set<String> folderIdsOf(String trackId) => {
+    for (final folder in folders)
+      if (folder.trackIds.contains(trackId)) folder.id,
+  };
+
+  void selectFolder(String? id) {
+    selectedFolderId = id;
+    notifyListeners();
+  }
+
+  Future<MusicFolder?> createFolder(String name) async {
+    try {
+      final folder = await musicRepository.createFolder(name);
+      folders = await musicRepository.loadFolders();
+      message = '已创建文件夹 ${folder.name}';
+      notifyListeners();
+      return folder;
+    } on Object catch (error) {
+      message = '创建文件夹失败：$error';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<void> deleteFolder(String id) async {
+    try {
+      await musicRepository.deleteFolder(id);
+      folders = await musicRepository.loadFolders();
+      if (selectedFolderId == id) selectedFolderId = null;
+      message = '已删除文件夹';
+    } on Object catch (error) {
+      message = '删除文件夹失败：$error';
+    }
+    notifyListeners();
+  }
+
+  Future<void> addTrackToFolder(String folderId, String trackId) async {
+    try {
+      await musicRepository.addTrackToFolder(folderId, trackId);
+      folders = await musicRepository.loadFolders();
+      final name = selectedFolderName(folderId);
+      message = '已收藏到 ${name ?? '文件夹'}';
+    } on Object catch (error) {
+      message = '收藏失败：$error';
+    }
+    notifyListeners();
+  }
+
+  Future<void> removeTrackFromFolder(String folderId, String trackId) async {
+    try {
+      await musicRepository.removeTrackFromFolder(folderId, trackId);
+      folders = await musicRepository.loadFolders();
+      message = '已移出文件夹';
+    } on Object catch (error) {
+      message = '移出失败：$error';
+    }
+    notifyListeners();
+  }
+
+  String? selectedFolderName(String id) {
+    for (final folder in folders) {
+      if (folder.id == id) return folder.name;
+    }
+    return null;
   }
 
   Future<void> playTrack(Track track) async {

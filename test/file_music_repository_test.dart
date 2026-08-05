@@ -90,4 +90,36 @@ void main() {
     );
     expect(await afterDeletion.loadPlaylists(), isEmpty);
   });
+
+  test('persists music folders and track favorites', () async {
+    final directory = await Directory.systemTemp.createTemp('wcmusic-folder-');
+    addTearDown(() => directory.delete(recursive: true));
+    final repository = FileMusicRepository(
+      directoryProvider: () async => directory,
+    );
+    await repository.saveTracks(const [
+      Track(
+        id: 'track-1',
+        title: '收藏测试',
+        artist: '歌手',
+        album: '专辑',
+        duration: Duration(minutes: 3),
+        uri: 'D:/music/test.mp3',
+      ),
+    ]);
+
+    final folder = await repository.createFolder('我的收藏');
+    await repository.addTrackToFolder(folder.id, 'track-1');
+
+    final restored = FileMusicRepository(
+      directoryProvider: () async => directory,
+    );
+    final folders = await restored.loadFolders();
+
+    expect(folders.single.name, '我的收藏');
+    expect(folders.single.trackIds, ['track-1']);
+
+    await restored.removeTrackFromFolder(folder.id, 'track-1');
+    expect((await restored.loadFolders()).single.trackIds, isEmpty);
+  });
 }

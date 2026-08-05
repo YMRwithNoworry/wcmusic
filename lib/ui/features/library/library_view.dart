@@ -17,6 +17,11 @@ class LibraryView extends StatelessWidget {
       subtitle: '${viewModel.tracks.length} 首声音，安静地留在这里',
       actions: [
         IconButton.filledTonal(
+          onPressed: () => _createFolder(context),
+          icon: const Icon(Icons.create_new_folder_outlined),
+          tooltip: '新建文件夹',
+        ),
+        IconButton.filledTonal(
           onPressed: () => _pickAudio(context),
           icon: const Icon(Icons.add),
           tooltip: '添加本地音乐',
@@ -31,6 +36,10 @@ class LibraryView extends StatelessWidget {
               hintText: '搜索歌曲、艺术家或专辑',
             ),
           ),
+          if (viewModel.folders.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _FolderBar(viewModel: viewModel),
+          ],
           const SizedBox(height: 18),
           if (viewModel.visibleTracks.isEmpty)
             const _EmptyLibrary()
@@ -54,6 +63,99 @@ class LibraryView extends StatelessWidget {
       files.map((file) => file.path).where((path) => path.isNotEmpty).toList(),
     );
   }
+
+  Future<void> _createFolder(BuildContext context) async {
+    final name = await _promptFolderName(context);
+    if (name == null) return;
+    if (!context.mounted) return;
+    final viewModel = context.read<PlayerViewModel>();
+    await viewModel.createFolder(name);
+    if (context.mounted && viewModel.message != null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(viewModel.message!)));
+    }
+  }
+
+  Future<String?> _promptFolderName(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '文件夹名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return name == null || name.isEmpty ? null : name;
+  }
+}
+
+class _FolderBar extends StatelessWidget {
+  const _FolderBar({required this.viewModel});
+
+  final PlayerViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          ChoiceChip(
+            label: const Text('全部歌曲'),
+            selected: viewModel.selectedFolderId == null,
+            onSelected: (_) => viewModel.selectFolder(null),
+          ),
+          for (final folder in viewModel.folders) ...[
+            const SizedBox(width: 8),
+            InputChip(
+              label: Text('${folder.name} (${folder.trackIds.length})'),
+              selected: viewModel.selectedFolderId == folder.id,
+              onSelected: (_) => viewModel.selectFolder(folder.id),
+              onDeleted: () => _confirmDelete(context, folder.id),
+              deleteButtonTooltipMessage: '删除文件夹',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除文件夹？'),
+        content: const Text('只会移除文件夹，不会删除歌曲。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await viewModel.deleteFolder(id);
+  }
 }
 
 class _TrackRow extends StatelessWidget {
@@ -66,6 +168,8 @@ class _TrackRow extends StatelessWidget {
     final viewModel = context.read<PlayerViewModel>();
     return InkWell(
       onTap: () => viewModel.playTrack(track),
+      onSecondaryTap: () => _showMenu(context),
+      onLongPress: () => _showMenu(context),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 8),
@@ -103,7 +207,7 @@ class _TrackRow extends StatelessWidget {
             const SizedBox(width: 12),
             Text(_duration(track.duration)),
             IconButton(
-              onPressed: () {},
+              onPressed: () => _showMenu(context),
               icon: const Icon(Icons.more_horiz),
               tooltip: '更多',
             ),
@@ -116,6 +220,119 @@ class _TrackRow extends StatelessWidget {
   String _duration(Duration duration) {
     if (duration == Duration.zero) return '--:--';
     return '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _showMenu(BuildContext context) async {
+    final viewModel = context.read<PlayerViewModel>();
+    final currentFolder = viewModel.selectedFolder;
+    final inCurrentFolder = currentFolder?.trackIds.contains(track.id) ?? false;
+    final action = await showMenu<String>(
+      context: context,
+      position: _menuPosition(context),
+      items: [
+        if (inCurrentFolder)
+          const PopupMenuItem(
+            value: '__remove__',
+            child: Row(
+              children: [
+                Icon(Icons.folder_off_outlined),
+                SizedBox(width: 12),
+                Text('移出当前文件夹'),
+              ],
+            ),
+          ),
+        for (final folder in viewModel.folders)
+          PopupMenuItem(
+            value: folder.id,
+            child: Row(
+              children: [
+                Icon(
+                  folder.trackIds.contains(track.id)
+                      ? Icons.check_circle_outline
+                      : Icons.folder_outlined,
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    folder.trackIds.contains(track.id)
+                        ? '${folder.name}（已收藏）'
+                        : '收藏到 ${folder.name}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const PopupMenuItem(
+          value: '__new__',
+          child: Row(
+            children: [
+              Icon(Icons.create_new_folder_outlined),
+              SizedBox(width: 12),
+              Text('新建文件夹并收藏'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action == null || !context.mounted) return;
+    if (action == '__remove__' && currentFolder != null) {
+      await viewModel.removeTrackFromFolder(currentFolder.id, track.id);
+      return;
+    }
+    if (action == '__new__') {
+      final name = await _promptFolderName(context);
+      if (name == null || !context.mounted) return;
+      final folder = await viewModel.createFolder(name);
+      if (folder != null) {
+        await viewModel.addTrackToFolder(folder.id, track.id);
+      }
+      return;
+    }
+    await viewModel.addTrackToFolder(action, track.id);
+  }
+
+  Future<String?> _promptFolderName(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '文件夹名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('创建并收藏'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return name == null || name.isEmpty ? null : name;
+  }
+
+  RelativeRect _menuPosition(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null || !box.hasSize) {
+      return RelativeRect.fromLTRB(0, 0, 0, 0);
+    }
+    return RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero),
+        box.localToGlobal(box.size.bottomRight(Offset.zero)),
+      ),
+      Offset.zero & overlay.size,
+    );
   }
 }
 
