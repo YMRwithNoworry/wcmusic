@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../data/services/player_service.dart';
 import '../../../data/services/online_search_service.dart';
+import '../../../data/services/desktop_window_service.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -14,6 +15,7 @@ class PlayerViewModel extends ChangeNotifier {
     required this.musicRepository,
     required this.sourceRepository,
     OnlineSearchService? onlineSearchService,
+    this.windowLifecycleService,
     AudioPlayerService? playerService,
   }) : onlineSearchService = onlineSearchService ?? AppleOnlineSearchService(),
        playerService = playerService ?? PlayerService() {
@@ -40,6 +42,7 @@ class PlayerViewModel extends ChangeNotifier {
   final MusicRepository musicRepository;
   final SourceRepository sourceRepository;
   final OnlineSearchService onlineSearchService;
+  final WindowLifecycleService? windowLifecycleService;
   final AudioPlayerService playerService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
@@ -53,6 +56,7 @@ class PlayerViewModel extends ChangeNotifier {
   double volume = 1;
   double _volumeBeforeMute = .8;
   String? message;
+  late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
   String onlineQuery = '';
   List<Track> onlineResults = const [];
@@ -168,6 +172,19 @@ class PlayerViewModel extends ChangeNotifier {
 
   Future<void> toggleMute() =>
       setVolume(volume <= .001 ? _volumeBeforeMute : 0);
+
+  Future<void> setBackgroundPlayback(bool value) async {
+    backgroundPlayback = value;
+    notifyListeners();
+    try {
+      await windowLifecycleService?.setCloseToTray(value);
+      message = value ? '关闭窗口后将在托盘继续播放' : '关闭窗口将退出 WCMusic';
+    } on Object catch (error) {
+      backgroundPlayback = !value;
+      message = '更新后台播放设置失败：$error';
+    }
+    notifyListeners();
+  }
 
   void setQuery(String value) {
     query = value;

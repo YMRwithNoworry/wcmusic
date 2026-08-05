@@ -1,5 +1,6 @@
 import 'package:wcmusic/data/services/player_service.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
+import 'package:wcmusic/data/services/desktop_window_service.dart';
 import 'package:wcmusic/domain/models/track.dart';
 
 class FakePlayerService implements AudioPlayerService {
@@ -49,4 +50,16 @@ class FakeOnlineSearchService implements OnlineSearchService {
 
   @override
   Future<List<Track>> search(String query, {int limit = 30}) async => results;
+}
+
+class FakeWindowLifecycleService implements WindowLifecycleService {
+  FakeWindowLifecycleService({this.closeToTray = true});
+
+  @override
+  bool closeToTray;
+
+  @override
+  Future<void> setCloseToTray(bool value) async {
+    closeToTray = value;
+  }
 }

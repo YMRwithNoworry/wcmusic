@@ -57,4 +57,22 @@ void main() {
       hasLength(4),
     );
   });
+
+  test('updates the close-to-tray background playback setting', () async {
+    final lifecycle = FakeWindowLifecycleService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      windowLifecycleService: lifecycle,
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+
+    expect(viewModel.backgroundPlayback, isTrue);
+    await viewModel.setBackgroundPlayback(false);
+
+    expect(viewModel.backgroundPlayback, isFalse);
+    expect(lifecycle.closeToTray, isFalse);
+  });
 }

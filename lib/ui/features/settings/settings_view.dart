@@ -13,7 +13,6 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   bool _reduceMotion = false;
-  bool _backgroundPlayback = true;
 
   @override
   Widget build(BuildContext context) {
@@ -27,11 +26,10 @@ class _SettingsViewState extends State<SettingsView> {
             title: '播放',
             children: [
               SwitchListTile(
-                value: _backgroundPlayback,
-                onChanged: (value) =>
-                    setState(() => _backgroundPlayback = value),
-                title: const Text('后台播放'),
-                subtitle: const Text('在通知栏和系统媒体控件中继续控制'),
+                value: viewModel.backgroundPlayback,
+                onChanged: viewModel.setBackgroundPlayback,
+                title: const Text('关闭后继续播放'),
+                subtitle: const Text('关闭窗口时隐藏到系统托盘'),
               ),
               ListTile(
                 title: const Text('播放音量'),
