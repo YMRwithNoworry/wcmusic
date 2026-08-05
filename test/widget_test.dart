@@ -6,6 +6,7 @@ import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/data/services/track_download_service.dart';
+import 'package:wcmusic/ui/core/remote_artwork.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
 import 'package:wcmusic/ui/features/player/playback_controls.dart';
 import 'package:wcmusic/ui/features/player/now_playing_view.dart';
@@ -115,7 +116,7 @@ void main() {
 
     expect(find.text('热门歌单'), findsOneWidget);
     expect(find.text('封面新曲'), findsOneWidget);
-    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.byType(RemoteArtwork), findsNWidgets(2));
   });
 
   testWidgets('favorites a library track into a folder from the menu', (

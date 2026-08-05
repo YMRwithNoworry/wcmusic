@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
+import '../../core/remote_artwork.dart';
 import '../player/player_view_model.dart';
 
 class HomeView extends StatelessWidget {
@@ -236,26 +237,9 @@ class _PlatformPlaylistTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   child: playlist.artworkUri.isEmpty
                       ? OrganicArtwork(seed: playlist.id, size: double.infinity)
-                      : Image.network(
-                          playlist.artworkUri,
-                          width: double.infinity,
-                          height: double.infinity,
-                          fit: BoxFit.cover,
-                          headers: const {
-                            'User-Agent': 'Mozilla/5.0',
-                            'Referer': 'https://music.163.com/',
-                          },
-                          loadingBuilder: (context, child, progress) =>
-                              progress == null
-                              ? child
-                              : OrganicArtwork(
-                                  seed: playlist.id,
-                                  size: double.infinity,
-                                ),
-                          errorBuilder: (_, _, _) => OrganicArtwork(
-                            seed: playlist.id,
-                            size: double.infinity,
-                          ),
+                      : RemoteArtwork(
+                          url: playlist.artworkUri,
+                          seed: playlist.id,
                         ),
                 ),
                 Positioned(
@@ -422,26 +406,9 @@ class _AlbumTileState extends State<_AlbumTile> {
                   borderRadius: BorderRadius.circular(8),
                   child: widget.artworkUri == null || widget.artworkUri!.isEmpty
                       ? OrganicArtwork(seed: widget.seed, size: double.infinity)
-                      : Image.network(
-                          widget.artworkUri!,
-                          width: double.infinity,
-                          height: double.infinity,
-                          fit: BoxFit.cover,
-                          headers: const {
-                            'User-Agent': 'Mozilla/5.0',
-                            'Referer': 'https://music.163.com/',
-                          },
-                          loadingBuilder: (context, child, progress) =>
-                              progress == null
-                              ? child
-                              : OrganicArtwork(
-                                  seed: widget.seed,
-                                  size: double.infinity,
-                                ),
-                          errorBuilder: (_, _, _) => OrganicArtwork(
-                            seed: widget.seed,
-                            size: double.infinity,
-                          ),
+                      : RemoteArtwork(
+                          url: widget.artworkUri!,
+                          seed: widget.seed,
                         ),
                 ),
               ),
