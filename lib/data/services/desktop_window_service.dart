@@ -61,6 +61,9 @@ class DesktopWindowService
   void onTrayIconMouseDown() => unawaited(_showWindow());
 
   @override
+  void onTrayIconRightMouseDown() => unawaited(trayManager.popUpContextMenu());
+
+  @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     switch (menuItem.key) {
       case _showWindowKey:
@@ -79,8 +82,11 @@ class DesktopWindowService
   }
 
   Future<void> _exitApplication() async {
+    if (_exiting) return;
     _exiting = true;
     await windowManager.setPreventClose(false);
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
     await trayManager.destroy();
     await windowManager.destroy();
   }
