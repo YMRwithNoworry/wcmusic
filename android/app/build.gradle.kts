@@ -44,6 +44,10 @@ flutter {
     source = "../.."
 }
 
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+}
+
 val buildRustCore by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds the arm64 WCMusic Rust core with cargo-ndk"

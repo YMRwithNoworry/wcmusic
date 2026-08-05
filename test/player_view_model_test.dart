@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
+import 'package:wcmusic/data/services/floating_lyrics_service.dart';
+import 'package:wcmusic/data/services/lyric_service.dart';
+import 'package:wcmusic/domain/models/lyric_line.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/domain/repositories/source_repository.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
@@ -62,6 +65,41 @@ void main() {
     expect(player.setVolumeValue, 0);
     await viewModel.toggleMute();
     expect(player.setVolumeValue, .35);
+  });
+
+  test('synchronizes floating lyrics with playback position', () async {
+    final player = _PositionPlayerService();
+    final overlay = _FakeFloatingLyricsService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+      lyricService: _FakeLyricService(),
+      floatingLyricsService: overlay,
+    );
+    addTearDown(viewModel.dispose);
+    const track = Track(
+      id: 'lyric-track',
+      title: '歌词歌曲',
+      artist: '歌词歌手',
+      album: '歌词专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/song.mp3',
+      source: TrackSource.wy,
+      sourceId: '123',
+    );
+
+    await viewModel.playTrack(track);
+    await viewModel.setFloatingLyrics(true);
+    expect(overlay.currentLine, '第一句');
+    expect(overlay.nextLine, '第二句');
+
+    player.emitPosition(const Duration(seconds: 6));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(overlay.currentLine, '第二句');
+    expect(overlay.nextLine, isEmpty);
   });
 
   test('prefers a full track url resolved by an imported source', () async {
@@ -253,6 +291,50 @@ class _SynchronousTogglePlayerService extends FakePlayerService {
 
   @override
   Future<void> dispose() => _playing.close();
+}
+
+class _PositionPlayerService extends FakePlayerService {
+  final _positions = StreamController<Duration>.broadcast(sync: true);
+
+  @override
+  Stream<Duration> get position => _positions.stream;
+
+  void emitPosition(Duration position) => _positions.add(position);
+
+  @override
+  Future<void> dispose() => _positions.close();
+}
+
+class _FakeLyricService implements LyricService {
+  @override
+  Future<List<LyricLine>> loadLyrics(Track track) async => const [
+    LyricLine(time: Duration.zero, text: '第一句'),
+    LyricLine(time: Duration(seconds: 5), text: '第二句'),
+  ];
+}
+
+class _FakeFloatingLyricsService implements FloatingLyricsService {
+  String currentLine = '';
+  String nextLine = '';
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<bool> setEnabled(bool enabled) async => enabled;
+
+  @override
+  Future<void> update({
+    required String title,
+    required String currentLine,
+    required String nextLine,
+  }) async {
+    this.currentLine = currentLine;
+    this.nextLine = nextLine;
+  }
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _FullTrackSourceRepository implements SourceRepository {

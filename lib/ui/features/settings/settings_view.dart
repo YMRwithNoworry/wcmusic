@@ -18,6 +18,7 @@ class _SettingsViewState extends State<SettingsView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<PlayerViewModel>();
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
     return PageScaffold(
       title: '设置',
       subtitle: '保持安静，也保持可控',
@@ -31,6 +32,14 @@ class _SettingsViewState extends State<SettingsView> {
                 onChanged: viewModel.setBackgroundPlayback,
                 title: const Text('关闭后继续播放'),
                 subtitle: const Text('关闭窗口时隐藏到系统托盘'),
+              ),
+              SwitchListTile(
+                value: viewModel.floatingLyricsEnabled,
+                onChanged: viewModel.floatingLyricsService.isSupported
+                    ? viewModel.setFloatingLyrics
+                    : null,
+                title: Text(isAndroid ? '悬浮窗歌词' : '桌面歌词'),
+                subtitle: Text(isAndroid ? '在其他应用上方同步显示歌词' : '在桌面置顶窗口中同步显示歌词'),
               ),
               ListTile(
                 title: const Text('播放音量'),

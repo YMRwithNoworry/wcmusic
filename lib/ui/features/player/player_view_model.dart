@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart';
 import '../../../data/services/player_service.dart';
 import '../../../data/services/online_search_service.dart';
 import '../../../data/services/desktop_window_service.dart';
+import '../../../data/services/floating_lyrics_service.dart';
+import '../../../data/services/lyric_service.dart';
+import '../../../domain/models/lyric_line.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -17,15 +20,21 @@ class PlayerViewModel extends ChangeNotifier {
     OnlineSearchService? onlineSearchService,
     this.windowLifecycleService,
     AudioPlayerService? playerService,
+    LyricService? lyricService,
+    FloatingLyricsService? floatingLyricsService,
   }) : onlineSearchService =
            onlineSearchService ?? MultiSourceOnlineSearchService(),
-       playerService = playerService ?? PlayerService() {
+       playerService = playerService ?? PlayerService(),
+       lyricService = lyricService ?? OnlineLyricService(),
+       floatingLyricsService =
+           floatingLyricsService ?? PlatformFloatingLyricsService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
     });
     _positionSubscription = this.playerService.position.listen((value) {
       position = value;
+      _syncLyrics(value);
       notifyListeners();
     });
     _durationSubscription = this.playerService.duration.listen((value) {
@@ -45,6 +54,8 @@ class PlayerViewModel extends ChangeNotifier {
   final OnlineSearchService onlineSearchService;
   final WindowLifecycleService? windowLifecycleService;
   final AudioPlayerService playerService;
+  final LyricService lyricService;
+  final FloatingLyricsService floatingLyricsService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
   List<SourceScript> sources = const [];
@@ -57,6 +68,9 @@ class PlayerViewModel extends ChangeNotifier {
   double volume = 1;
   double _volumeBeforeMute = .8;
   String? message;
+  bool floatingLyricsEnabled = false;
+  List<LyricLine> lyrics = const [];
+  int currentLyricIndex = -1;
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
   String onlineQuery = '';
@@ -74,6 +88,7 @@ class PlayerViewModel extends ChangeNotifier {
   bool isSearchingOnline = false;
   String? onlineSearchError;
   int _searchGeneration = 0;
+  int _lyricGeneration = 0;
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
@@ -309,6 +324,7 @@ class PlayerViewModel extends ChangeNotifier {
     } else {
       await playerService.play(playbackTrack);
       isPlaying = true;
+      if (floatingLyricsEnabled) unawaited(_loadLyrics(playbackTrack));
     }
     notifyListeners();
   }
@@ -357,6 +373,105 @@ class PlayerViewModel extends ChangeNotifier {
       message = '更新后台播放设置失败：$error';
     }
     notifyListeners();
+  }
+
+  Future<void> setFloatingLyrics(bool value) async {
+    try {
+      final enabled = await floatingLyricsService.setEnabled(value);
+      if (value && !enabled) {
+        floatingLyricsEnabled = false;
+        message = '请在系统设置中允许 WCMusic 显示悬浮窗，然后再次启用歌词';
+      } else {
+        floatingLyricsEnabled = value;
+        message = value ? '歌词浮层已开启' : '歌词浮层已关闭';
+        if (value) {
+          final track = current;
+          if (track == null) {
+            await floatingLyricsService.update(
+              title: 'WCMusic',
+              currentLine: '播放歌曲后将在这里显示歌词',
+              nextLine: '',
+            );
+          } else {
+            await _loadLyrics(track);
+          }
+        } else {
+          _lyricGeneration++;
+        }
+      }
+    } on Object catch (error) {
+      floatingLyricsEnabled = false;
+      message = '开启歌词浮层失败：$error';
+    }
+    notifyListeners();
+  }
+
+  Future<void> _loadLyrics(Track track) async {
+    final generation = ++_lyricGeneration;
+    lyrics = const [];
+    currentLyricIndex = -1;
+    await floatingLyricsService.update(
+      title: '${track.title} · ${track.artist}',
+      currentLine: '正在加载歌词...',
+      nextLine: '',
+    );
+    try {
+      var lyricTrack = track;
+      if (track.source == TrackSource.local ||
+          track.source == TrackSource.custom) {
+        final matched = await onlineSearchService.matchTrackToSources(
+          track,
+          const {'wy'},
+        );
+        if (matched != null) lyricTrack = matched;
+      }
+      if (generation != _lyricGeneration || current?.id != track.id) return;
+      final loaded = await lyricService.loadLyrics(lyricTrack);
+      if (generation != _lyricGeneration || current?.id != track.id) return;
+      lyrics = loaded;
+      if (loaded.isEmpty) {
+        await floatingLyricsService.update(
+          title: '${track.title} · ${track.artist}',
+          currentLine: '暂无歌词',
+          nextLine: '',
+        );
+      } else {
+        _syncLyrics(position, force: true);
+      }
+    } on Object {
+      if (generation != _lyricGeneration || current?.id != track.id) return;
+      await floatingLyricsService.update(
+        title: '${track.title} · ${track.artist}',
+        currentLine: '歌词暂时不可用',
+        nextLine: '',
+      );
+    }
+    notifyListeners();
+  }
+
+  void _syncLyrics(Duration value, {bool force = false}) {
+    if (!floatingLyricsEnabled || lyrics.isEmpty) return;
+    var nextIndex = -1;
+    for (var index = 0; index < lyrics.length; index++) {
+      if (lyrics[index].time > value) break;
+      nextIndex = index;
+    }
+    if (!force && nextIndex == currentLyricIndex) return;
+    currentLyricIndex = nextIndex;
+    final track = current;
+    if (track == null) return;
+    final currentLine = nextIndex < 0 ? track.title : lyrics[nextIndex].text;
+    final followingIndex = nextIndex + 1;
+    final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
+        ? lyrics[followingIndex].text
+        : '';
+    unawaited(
+      floatingLyricsService.update(
+        title: '${track.title} · ${track.artist}',
+        currentLine: currentLine,
+        nextLine: nextLine,
+      ),
+    );
   }
 
   void setQuery(String value) {
@@ -465,11 +580,13 @@ class PlayerViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _lyricGeneration++;
     unawaited(_playingSubscription?.cancel());
     unawaited(_positionSubscription?.cancel());
     unawaited(_durationSubscription?.cancel());
     unawaited(_volumeSubscription?.cancel());
     unawaited(playerService.dispose());
+    unawaited(floatingLyricsService.dispose());
     super.dispose();
   }
 }

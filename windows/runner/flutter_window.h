@@ -3,10 +3,13 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
 
 #include <memory>
 
 #include "win32_window.h"
+
+class LyricsOverlay;
 
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
@@ -28,6 +31,9 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      lyrics_channel_;
+  std::unique_ptr<LyricsOverlay> lyrics_overlay_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
