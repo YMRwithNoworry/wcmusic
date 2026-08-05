@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
@@ -14,8 +15,7 @@ class PlayerViewModel extends ChangeNotifier {
     required this.sourceRepository,
     OnlineSearchService? onlineSearchService,
     AudioPlayerService? playerService,
-  }) : onlineSearchService =
-           onlineSearchService ?? AppleOnlineSearchService(),
+  }) : onlineSearchService = onlineSearchService ?? AppleOnlineSearchService(),
        playerService = playerService ?? PlayerService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
@@ -23,6 +23,16 @@ class PlayerViewModel extends ChangeNotifier {
     });
     _positionSubscription = this.playerService.position.listen((value) {
       position = value;
+      notifyListeners();
+    });
+    _durationSubscription = this.playerService.duration.listen((value) {
+      duration = value > Duration.zero
+          ? value
+          : current?.duration ?? Duration.zero;
+      notifyListeners();
+    });
+    _volumeSubscription = this.playerService.volume.listen((value) {
+      volume = value.clamp(0.0, 1.0);
       notifyListeners();
     });
   }
@@ -38,16 +48,28 @@ class PlayerViewModel extends ChangeNotifier {
   bool isLoading = true;
   bool isPlaying = false;
   Duration position = Duration.zero;
+  Duration duration = Duration.zero;
   Duration buffered = Duration.zero;
+  double volume = 1;
+  double _volumeBeforeMute = .8;
   String? message;
   String query = '';
   String onlineQuery = '';
   List<Track> onlineResults = const [];
+  List<PlatformPlaylist> platformPlaylists = const [];
+  List<PlatformPlaylist> _platformPlaylistCatalog = const [];
+  bool isLoadingPlatformPlaylists = false;
+  String? platformPlaylistError;
   bool isSearchingOnline = false;
   String? onlineSearchError;
   int _searchGeneration = 0;
   StreamSubscription<bool>? _playingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<double>? _volumeSubscription;
+
+  Duration get playbackDuration =>
+      duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
 
   Future<void> load() async {
     isLoading = true;
@@ -56,12 +78,35 @@ class PlayerViewModel extends ChangeNotifier {
       tracks = await musicRepository.loadTracks();
       playlists = await musicRepository.loadPlaylists();
       sources = await sourceRepository.loadSources();
+      unawaited(refreshPlatformPlaylists());
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> refreshPlatformPlaylists() async {
+    isLoadingPlatformPlaylists = true;
+    platformPlaylistError = null;
+    notifyListeners();
+    try {
+      _platformPlaylistCatalog = await onlineSearchService.discoverPlaylists();
+      shufflePlatformPlaylists();
+    } on Object catch (_) {
+      platformPlaylistError = '平台歌单暂时不可用';
+    } finally {
+      isLoadingPlatformPlaylists = false;
+      notifyListeners();
+    }
+  }
+
+  void shufflePlatformPlaylists() {
+    final shuffled = [..._platformPlaylistCatalog];
+    if (shuffled.length > 4) shuffled.shuffle(Random());
+    platformPlaylists = shuffled.take(4).toList(growable: false);
+    notifyListeners();
   }
 
   List<Track> get visibleTracks {
@@ -78,6 +123,8 @@ class PlayerViewModel extends ChangeNotifier {
 
   Future<void> playTrack(Track track) async {
     current = track;
+    position = Duration.zero;
+    duration = track.duration;
     message = track.uri.isEmpty
         ? track.source == TrackSource.local
               ? '这是演示曲目；导入本地歌单后即可播放'
@@ -103,11 +150,24 @@ class PlayerViewModel extends ChangeNotifier {
   }
 
   Future<void> seek(double value) async {
-    final target = Duration(milliseconds: value.round());
+    final maximum = playbackDuration.inMilliseconds;
+    if (maximum <= 0) return;
+    final target = Duration(milliseconds: value.round().clamp(0, maximum));
     position = target;
     await playerService.seek(target);
     notifyListeners();
   }
+
+  Future<void> setVolume(double value) async {
+    final next = value.clamp(0.0, 1.0);
+    if (next > .001) _volumeBeforeMute = next;
+    volume = next;
+    notifyListeners();
+    await playerService.setVolume(next);
+  }
+
+  Future<void> toggleMute() =>
+      setVolume(volume <= .001 ? _volumeBeforeMute : 0);
 
   void setQuery(String value) {
     query = value;
@@ -203,6 +263,8 @@ class PlayerViewModel extends ChangeNotifier {
   void dispose() {
     unawaited(_playingSubscription?.cancel());
     unawaited(_positionSubscription?.cancel());
+    unawaited(_durationSubscription?.cancel());
+    unawaited(_volumeSubscription?.cancel());
     unawaited(playerService.dispose());
     super.dispose();
   }

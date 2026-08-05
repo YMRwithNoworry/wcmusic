@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
+import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
 
 import 'test_support.dart';
@@ -33,6 +34,19 @@ void main() {
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(),
       sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(
+        const [],
+        List.generate(
+          4,
+          (index) => PlatformPlaylist(
+            id: 'platform-$index',
+            name: ['今日热门', '华语新声', '轻松周末', '流行精选'][index],
+            artworkUri: '',
+            url: 'https://music.example/$index',
+            platform: 'Apple Music',
+          ),
+        ),
+      ),
       playerService: FakePlayerService(),
     );
     await viewModel.load();

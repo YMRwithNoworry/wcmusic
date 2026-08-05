@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/organic_artwork.dart';
+import 'playback_controls.dart';
 import 'player_view_model.dart';
 
 class NowPlayingView extends StatelessWidget {
@@ -63,30 +64,7 @@ class NowPlayingView extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 30),
-                      Slider(
-                        value: viewModel.position.inMilliseconds
-                            .clamp(
-                              0,
-                              track.duration.inMilliseconds <= 0
-                                  ? 1
-                                  : track.duration.inMilliseconds,
-                            )
-                            .toDouble(),
-                        max: track.duration.inMilliseconds <= 0
-                            ? 1
-                            : track.duration.inMilliseconds.toDouble(),
-                        onChanged: viewModel.seek,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(_time(viewModel.position)),
-                            Text(_time(track.duration)),
-                          ],
-                        ),
-                      ),
+                      const PlaybackProgress(),
                       const SizedBox(height: 18),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -127,6 +105,8 @@ class NowPlayingView extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 18),
+                      const SizedBox(width: 300, child: VolumeControl()),
                     ],
                   ),
                 ),
@@ -137,9 +117,6 @@ class NowPlayingView extends StatelessWidget {
       ),
     );
   }
-
-  String _time(Duration value) =>
-      '${value.inMinutes}:${(value.inSeconds % 60).toString().padLeft(2, '0')}';
 }
 
 class _AmbientField extends StatelessWidget {

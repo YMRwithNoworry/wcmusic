@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
 import '../player/player_view_model.dart';
 
@@ -10,9 +12,7 @@ class HomeView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<PlayerViewModel>();
-    final featured =
-        viewModel.current ??
-        (viewModel.tracks.isEmpty ? null : viewModel.tracks.first);
+    final featured = viewModel.tracks.isEmpty ? null : viewModel.tracks.first;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 28, 24, 48),
       child: Align(
@@ -25,6 +25,8 @@ class HomeView extends StatelessWidget {
               _TopLine(trackCount: viewModel.tracks.length),
               const SizedBox(height: 28),
               if (featured != null) _Featured(trackId: featured.id),
+              const SizedBox(height: 44),
+              const _PlatformPlaylists(),
               const SizedBox(height: 48),
               Row(
                 children: [
@@ -79,6 +81,141 @@ class HomeView extends StatelessWidget {
   }
 }
 
+class _PlatformPlaylists extends StatelessWidget {
+  const _PlatformPlaylists();
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '平台热门歌单',
+                style: Theme.of(context).textTheme.headlineLarge,
+              ),
+            ),
+            IconButton(
+              onPressed: viewModel.platformPlaylists.isEmpty
+                  ? viewModel.refreshPlatformPlaylists
+                  : viewModel.shufflePlatformPlaylists,
+              icon: const Icon(Icons.casino_outlined),
+              tooltip: '换一批',
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (viewModel.isLoadingPlatformPlaylists)
+          const LinearProgressIndicator()
+        else if (viewModel.platformPlaylists.isEmpty)
+          InkWell(
+            onTap: viewModel.refreshPlatformPlaylists,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.cloud_off_outlined),
+                  const SizedBox(width: 10),
+                  Text(viewModel.platformPlaylistError ?? '点击载入平台歌单'),
+                ],
+              ),
+            ),
+          )
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final count = constraints.maxWidth > 800
+                  ? 4
+                  : constraints.maxWidth > 520
+                  ? 3
+                  : 2;
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: count,
+                  crossAxisSpacing: 14,
+                  mainAxisSpacing: 14,
+                  childAspectRatio: .82,
+                ),
+                itemCount: viewModel.platformPlaylists.take(count).length,
+                itemBuilder: (context, index) {
+                  final playlist = viewModel.platformPlaylists[index];
+                  return _PlatformPlaylistTile(
+                    playlist: playlist,
+                    onTap: () => _open(context, playlist.url),
+                  );
+                },
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  Future<void> _open(BuildContext context, String value) async {
+    final opened = await launchUrl(
+      Uri.parse(value),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('无法打开平台歌单')));
+    }
+  }
+}
+
+class _PlatformPlaylistTile extends StatelessWidget {
+  const _PlatformPlaylistTile({required this.playlist, required this.onTap});
+
+  final PlatformPlaylist playlist;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: playlist.artworkUri.isEmpty
+                  ? OrganicArtwork(seed: playlist.id, size: double.infinity)
+                  : Image.network(
+                      playlist.artworkUri,
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => OrganicArtwork(
+                        seed: playlist.id,
+                        size: double.infinity,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            playlist.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          Text(playlist.platform, maxLines: 1),
+        ],
+      ),
+    );
+  }
+}
+
 class _TopLine extends StatelessWidget {
   const _TopLine({required this.trackCount});
 
@@ -114,13 +251,10 @@ class _Featured extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 660;
-        final art = Hero(
-          tag: 'art-${track.id}',
-          child: OrganicArtwork(
-            seed: track.id,
-            size: compact ? constraints.maxWidth : 300,
-            playing: viewModel.isPlaying,
-          ),
+        final art = OrganicArtwork(
+          seed: track.id,
+          size: compact ? constraints.maxWidth : 300,
+          playing: viewModel.isPlaying,
         );
         final copy = Column(
           mainAxisAlignment: MainAxisAlignment.center,

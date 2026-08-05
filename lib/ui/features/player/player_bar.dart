@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/organic_artwork.dart';
+import 'playback_controls.dart';
 import 'player_view_model.dart';
 
 class PlayerBar extends StatelessWidget {
@@ -23,66 +24,82 @@ class PlayerBar extends StatelessWidget {
           top: false,
           bottom: false,
           child: SizedBox(
-            height: 82,
-            child: Row(
+            height: compact ? 92 : 104,
+            child: Column(
               children: [
-                const SizedBox(width: 14),
-                Hero(
-                  tag: 'art-${track.id}',
-                  child: OrganicArtwork(
-                    seed: track.id,
-                    size: 56,
-                    playing: viewModel.isPlaying,
-                  ),
-                ),
-                const SizedBox(width: 14),
                 Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        track.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge,
+                      const SizedBox(width: 14),
+                      Hero(
+                        tag: 'art-${track.id}',
+                        child: OrganicArtwork(
+                          seed: track.id,
+                          size: 56,
+                          playing: viewModel.isPlaying,
+                        ),
                       ),
-                      Text(
-                        track.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              track.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            Text(
+                              track.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
+                      if (!compact) ...[
+                        IconButton(
+                          onPressed: () {},
+                          icon: const Icon(Icons.skip_previous),
+                          tooltip: '上一首',
+                        ),
+                        const SizedBox(width: 2),
+                      ],
+                      IconButton.filled(
+                        onPressed: viewModel.togglePlayback,
+                        icon: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: Icon(
+                            viewModel.isPlaying
+                                ? Icons.pause
+                                : Icons.play_arrow,
+                            key: ValueKey(viewModel.isPlaying),
+                          ),
+                        ),
+                        tooltip: viewModel.isPlaying ? '暂停' : '播放',
+                      ),
+                      if (!compact) ...[
+                        const SizedBox(width: 2),
+                        IconButton(
+                          onPressed: () {},
+                          icon: const Icon(Icons.skip_next),
+                          tooltip: '下一首',
+                        ),
+                        const SizedBox(
+                          width: 132,
+                          child: VolumeControl(showLabel: false),
+                        ),
+                      ],
+                      const SizedBox(width: 14),
                     ],
                   ),
                 ),
-                if (!compact) ...[
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.skip_previous),
-                    tooltip: '上一首',
-                  ),
-                  const SizedBox(width: 2),
-                ],
-                IconButton.filled(
-                  onPressed: viewModel.togglePlayback,
-                  icon: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: Icon(
-                      viewModel.isPlaying ? Icons.pause : Icons.play_arrow,
-                      key: ValueKey(viewModel.isPlaying),
-                    ),
-                  ),
-                  tooltip: viewModel.isPlaying ? '暂停' : '播放',
+                const SizedBox(
+                  height: 28,
+                  child: PlaybackProgress(showTimes: false, compact: true),
                 ),
-                if (!compact) ...[
-                  const SizedBox(width: 2),
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.skip_next),
-                    tooltip: '下一首',
-                  ),
-                ],
-                const SizedBox(width: 14),
               ],
             ),
           ),

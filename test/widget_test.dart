@@ -4,6 +4,9 @@ import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/ui/features/player/player_view_model.dart';
+import 'package:wcmusic/ui/features/player/playback_controls.dart';
+import 'package:wcmusic/ui/features/player/now_playing_view.dart';
+import 'package:wcmusic/ui/features/player/player_bar.dart';
 import 'package:wcmusic/domain/models/track.dart';
 
 import 'test_support.dart';
@@ -13,6 +16,7 @@ void main() {
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(),
       sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
     );
     await viewModel.load();
@@ -55,5 +59,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('在线晴天'), findsOneWidget);
     expect(find.text('测试歌手'), findsOneWidget);
+  });
+
+  testWidgets('shows progress and volume controls while playing', (
+    tester,
+  ) async {
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    await viewModel.load();
+    await viewModel.playTrack(viewModel.tracks.first);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PlaybackProgress), findsOneWidget);
+    await tester.tap(find.byType(PlayerBar));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NowPlayingView), findsOneWidget);
+    expect(find.byType(VolumeControl), findsOneWidget);
+    expect(find.byType(PlaybackProgress), findsOneWidget);
   });
 }

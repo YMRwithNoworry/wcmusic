@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/page_scaffold.dart';
+import '../player/player_view_model.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -12,10 +14,10 @@ class SettingsView extends StatefulWidget {
 class _SettingsViewState extends State<SettingsView> {
   bool _reduceMotion = false;
   bool _backgroundPlayback = true;
-  double _volumeNormalization = .72;
 
   @override
   Widget build(BuildContext context) {
+    final viewModel = context.watch<PlayerViewModel>();
     return PageScaffold(
       title: '设置',
       subtitle: '保持安静，也保持可控',
@@ -32,13 +34,12 @@ class _SettingsViewState extends State<SettingsView> {
                 subtitle: const Text('在通知栏和系统媒体控件中继续控制'),
               ),
               ListTile(
-                title: const Text('响度平衡'),
+                title: const Text('播放音量'),
                 subtitle: Slider(
-                  value: _volumeNormalization,
-                  onChanged: (value) =>
-                      setState(() => _volumeNormalization = value),
+                  value: viewModel.volume,
+                  onChanged: viewModel.setVolume,
                 ),
-                trailing: Text('${(_volumeNormalization * 100).round()}%'),
+                trailing: Text('${(viewModel.volume * 100).round()}%'),
               ),
             ],
           ),

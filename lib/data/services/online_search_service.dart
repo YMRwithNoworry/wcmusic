@@ -5,17 +5,26 @@ import '../../domain/models/track.dart';
 
 abstract interface class OnlineSearchService {
   Future<List<Track>> search(String query, {int limit = 30});
+  Future<List<PlatformPlaylist>> discoverPlaylists();
 }
 
 class AppleOnlineSearchService implements OnlineSearchService {
   AppleOnlineSearchService({
     HttpClient Function()? clientFactory,
     Uri? endpoint,
+    Uri? playlistEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
-       _endpoint = endpoint ?? Uri.https('itunes.apple.com', '/search');
+       _endpoint = endpoint ?? Uri.https('itunes.apple.com', '/search'),
+       _playlistEndpoint =
+           playlistEndpoint ??
+           Uri.https(
+             'rss.marketingtools.apple.com',
+             '/api/v2/cn/music/most-played/20/playlists.json',
+           );
 
   final HttpClient Function() _clientFactory;
   final Uri _endpoint;
+  final Uri _playlistEndpoint;
 
   @override
   Future<List<Track>> search(String query, {int limit = 30}) async {
@@ -32,22 +41,63 @@ class AppleOnlineSearchService implements OnlineSearchService {
         'limit': limit.clamp(1, 50).toString(),
       },
     );
-    final client = _clientFactory()..connectionTimeout = const Duration(seconds: 10);
+    final decoded = await _getJson(uri);
+    if (decoded is! Map<String, dynamic> || decoded['results'] is! List) {
+      throw const FormatException('在线搜索返回了无法识别的数据');
+    }
+    return _parseResults(decoded['results'] as List);
+  }
+
+  @override
+  Future<List<PlatformPlaylist>> discoverPlaylists() async {
+    final decoded = await _getJson(_playlistEndpoint);
+    if (decoded is! Map<String, dynamic> || decoded['feed'] is! Map) {
+      throw const FormatException('平台歌单返回了无法识别的数据');
+    }
+    final feed = Map<String, dynamic>.from(decoded['feed'] as Map);
+    final results = feed['results'];
+    if (results is! List) {
+      throw const FormatException('平台歌单缺少结果列表');
+    }
+    final playlists = <PlatformPlaylist>[];
+    for (final value in results) {
+      if (value is! Map) continue;
+      final item = Map<String, dynamic>.from(value);
+      final id = _text(item['id']);
+      final name = _text(item['name']);
+      final artwork = _text(item['artworkUrl100']);
+      final url = _text(item['url']);
+      if (id == null || name == null || artwork == null || url == null) {
+        continue;
+      }
+      playlists.add(
+        PlatformPlaylist(
+          id: id,
+          name: name,
+          artworkUri: artwork.replaceFirst('100x100', '600x600'),
+          url: url,
+          platform: 'Apple Music',
+        ),
+      );
+    }
+    return playlists;
+  }
+
+  Future<dynamic> _getJson(Uri uri) async {
+    final client = _clientFactory()
+      ..connectionTimeout = const Duration(seconds: 10);
     try {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
-      final response = await request.close().timeout(const Duration(seconds: 15));
+      final response = await request.close().timeout(
+        const Duration(seconds: 15),
+      );
       if (response.statusCode != HttpStatus.ok) {
         await response.drain<void>();
-        throw HttpException('在线搜索服务返回 ${response.statusCode}', uri: uri);
+        throw HttpException('在线服务返回 ${response.statusCode}', uri: uri);
       }
-      final body = await utf8.decoder.bind(response).join();
-      final decoded = jsonDecode(body);
-      if (decoded is! Map<String, dynamic> || decoded['results'] is! List) {
-        throw const FormatException('在线搜索返回了无法识别的数据');
-      }
-      return _parseResults(decoded['results'] as List);
+      return jsonDecode(await utf8.decoder.bind(response).join());
     } finally {
       client.close(force: true);
     }

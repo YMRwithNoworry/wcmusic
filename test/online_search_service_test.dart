@@ -52,4 +52,37 @@ void main() {
 
     expect(await service.search('   '), isEmpty);
   });
+
+  test('loads platform playlists from the public chart feed', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.first.then((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'feed': {
+            'results': [
+              {
+                'id': 'playlist-42',
+                'name': '今日热门',
+                'artworkUrl100': 'https://image.example/100x100SC.jpg',
+                'url': 'https://music.example/playlist-42',
+              },
+            ],
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    final service = AppleOnlineSearchService(
+      playlistEndpoint: Uri.parse('http://127.0.0.1:${server.port}/playlists'),
+    );
+
+    final playlists = await service.discoverPlaylists();
+
+    expect(playlists.single.name, '今日热门');
+    expect(playlists.single.platform, 'Apple Music');
+    expect(playlists.single.artworkUri, 'https://image.example/600x600SC.jpg');
+    expect(playlists.single.url, 'https://music.example/playlist-42');
+  });
 }

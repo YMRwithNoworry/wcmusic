@@ -50,6 +50,22 @@ class Playlist {
   final List<Track> tracks;
 }
 
+class PlatformPlaylist {
+  const PlatformPlaylist({
+    required this.id,
+    required this.name,
+    required this.artworkUri,
+    required this.url,
+    required this.platform,
+  });
+
+  final String id;
+  final String name;
+  final String artworkUri;
+  final String url;
+  final String platform;
+}
+
 class SourceScript {
   const SourceScript({
     required this.id,
