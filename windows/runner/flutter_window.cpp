@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <vector>
 
 #include <flutter/standard_method_codec.h>
 
@@ -111,26 +112,22 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         if (call.method_name() == "update") {
-          std::string current_line;
-          std::string next_line;
-          if (arguments) {
-            const auto current = arguments->find(
-                flutter::EncodableValue("currentLine"));
-            const auto next = arguments->find(
-                flutter::EncodableValue("nextLine"));
-            if (current != arguments->end()) {
-              if (const auto text =
-                      std::get_if<std::string>(&current->second)) {
-                current_line = *text;
-              }
-            }
-            if (next != arguments->end()) {
-              if (const auto text = std::get_if<std::string>(&next->second)) {
-                next_line = *text;
+          std::vector<std::wstring> lines;
+          const auto* lines_value = FindArgument(arguments, "lines");
+          if (lines_value) {
+            if (const auto* list =
+                    std::get_if<std::vector<flutter::EncodableValue>>(
+                        lines_value)) {
+              for (const auto& item : *list) {
+                if (const auto* text = std::get_if<std::string>(&item)) {
+                  lines.push_back(Utf8ToWide(*text));
+                }
               }
             }
           }
-          lyrics_overlay_->Update(current_line, next_line);
+          const int current_index = static_cast<int>(DoubleValue(
+              FindArgument(arguments, "currentIndex"), 0));
+          lyrics_overlay_->Update(lines, current_index);
           result->Success();
           return;
         }

@@ -1,13 +1,26 @@
 #include "lyrics_overlay.h"
 
 #include <algorithm>
+#include <cmath>
 #include <gdiplus.h>
 
 #pragma comment(lib, "gdiplus.lib")
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
-constexpr int kOverlayHeight = 104;
+constexpr int kOverlayHeight = 230;
+constexpr UINT_PTR kLyricsTimerId = 0x4C59;
+constexpr float kLyricsAnimationSeconds = 0.38f;
+
+float EaseInOutCubic(float value) {
+  return value < 0.5f
+      ? 4.0f * value * value * value
+      : static_cast<float>(1 - std::pow(-2 * value + 2, 3) / 2);
+}
+
+float Lerp(float from, float to, float value) {
+  return from + (to - from) * value;
+}
 
 void AddRoundedRectangle(Gdiplus::GraphicsPath& path,
                          const Gdiplus::RectF& rect, float radius) {
@@ -79,11 +92,27 @@ void LyricsOverlay::Hide() {
   if (window_) ShowWindow(window_, SW_HIDE);
 }
 
-void LyricsOverlay::Update(const std::string& current_line,
-                           const std::string& next_line) {
-  current_line_ = Utf8ToWide(current_line);
-  next_line_ = Utf8ToWide(next_line);
-  if (window_) InvalidateRect(window_, nullptr, TRUE);
+void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
+                           int current_index) {
+  lines_ = lines;
+  current_index_ = current_index < 0 ? 0 : current_index;
+  if (lines_.empty()) {
+    if (window_) InvalidateRect(window_, nullptr, TRUE);
+    return;
+  }
+  if (animation_t_ < 1.0f) {
+    displayed_index_ = static_cast<int>(
+        std::round(Lerp(static_cast<float>(displayed_index_),
+                        static_cast<float>(current_index_),
+                        EaseInOutCubic(animation_t_))));
+  } else {
+    displayed_index_ = current_index_;
+  }
+  animation_t_ = 0.0f;
+  if (window_) {
+    SetTimer(window_, kLyricsTimerId, 16, nullptr);
+    InvalidateRect(window_, nullptr, TRUE);
+  }
 }
 
 void LyricsOverlay::ApplyStyle(const LyricsOverlayStyle& style) {
@@ -149,6 +178,17 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
         overlay->position_callback_(bounds.left, bounds.top);
       }
       return 0;
+    case WM_TIMER:
+      if (overlay && wparam == kLyricsTimerId) {
+        overlay->animation_t_ += 0.016f / kLyricsAnimationSeconds;
+        if (overlay->animation_t_ >= 1.0f) {
+          overlay->animation_t_ = 1.0f;
+          overlay->displayed_index_ = overlay->current_index_;
+          KillTimer(window, kLyricsTimerId);
+        }
+        InvalidateRect(window, nullptr, TRUE);
+      }
+      return 0;
     case WM_DESTROY:
       return 0;
   }
@@ -194,38 +234,7 @@ void LyricsOverlay::Paint() {
     Gdiplus::SolidBrush background_brush(background);
     graphics.FillPath(&background_brush, &background_path);
 
-    Gdiplus::FontFamily font_family(style_.font_family.c_str());
-    Gdiplus::StringFormat format;
-    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    if (style_.align == DT_LEFT) {
-      format.SetAlignment(Gdiplus::StringAlignmentNear);
-    } else if (style_.align == DT_RIGHT) {
-      format.SetAlignment(Gdiplus::StringAlignmentFar);
-    } else {
-      format.SetAlignment(Gdiplus::StringAlignmentCenter);
-    }
-
-    Gdiplus::Color text_color(
-        255, GetRValue(style_.text_color), GetGValue(style_.text_color),
-        GetBValue(style_.text_color));
-    Gdiplus::SolidBrush text_brush(text_color);
-
-    Gdiplus::Font current_font(
-        &font_family, static_cast<float>(style_.font_size),
-        Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    Gdiplus::RectF current_rect(28, 8, static_cast<float>(width - 56), 50);
-    graphics.DrawString(current_line_.c_str(), -1, &current_font,
-                        current_rect, &format, &text_brush);
-
-    const int next_size = std::max(12, style_.font_size * 3 / 5);
-    Gdiplus::Font next_font(
-        &font_family, static_cast<float>(next_size),
-        Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::RectF next_rect(32, 56, static_cast<float>(width - 64),
-                             static_cast<float>(height - 66));
-    graphics.DrawString(next_line_.c_str(), -1, &next_font, next_rect,
-                        &format, &text_brush);
+    DrawLyricsWheel(graphics, width, height);
   }
 
   POINT destination{0, 0};
@@ -244,13 +253,64 @@ void LyricsOverlay::Paint() {
   ReleaseDC(nullptr, screen_dc);
 }
 
+void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
+                                    int height) {
+  if (lines_.empty()) return;
+  const float base = animation_t_ < 1.0f
+      ? Lerp(static_cast<float>(displayed_index_),
+             static_cast<float>(current_index_),
+             EaseInOutCubic(animation_t_))
+      : static_cast<float>(current_index_);
+  const float center_x = width / 2.0f;
+  const float center_y = height * 0.46f;
+  const float spacing = std::max(60.0f, width * 0.075f);
+  const float arc_depth = height * 0.20f;
+  const float max_distance = 4.0f;
 
-std::wstring LyricsOverlay::Utf8ToWide(const std::string& value) {
-  if (value.empty()) return L"";
-  const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(),
-                                       static_cast<int>(value.size()), nullptr, 0);
-  std::wstring result(size, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
-                      result.data(), size);
-  return result;
+  Gdiplus::FontFamily font_family(style_.font_family.c_str());
+  const Gdiplus::Color text_color(
+      255, GetRValue(style_.text_color), GetGValue(style_.text_color),
+      GetBValue(style_.text_color));
+
+  for (int index = 0; index < static_cast<int>(lines_.size()); ++index) {
+    const float offset = static_cast<float>(index) - base;
+    const float distance = std::abs(offset);
+    if (distance > max_distance) continue;
+    const float clamped = std::min(distance, max_distance);
+    const float angle = offset * 0.30f;
+    const float x = center_x + std::sin(angle) * spacing * 3.6f;
+    const float y = center_y - (1.0f - std::cos(angle)) * arc_depth;
+    const float scale = 1.0f - clamped * 0.14f;
+    const float alpha = (1.0f - clamped * 0.22f) * 255.0f;
+    const int font_size = distance < 0.5f
+        ? style_.font_size + 8
+        : style_.font_size - 4;
+    const bool is_center = distance < 0.5f;
+    const float line_width = is_center ? width - 220.0f : width - 360.0f;
+    const float line_height = is_center ? 52.0f : 36.0f;
+
+    Gdiplus::Font font(&font_family, static_cast<float>(font_size),
+                       is_center ? Gdiplus::FontStyleBold
+                                 : Gdiplus::FontStyleRegular,
+                       Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush brush(
+        Gdiplus::Color(static_cast<BYTE>(std::max(0.0f, std::min(alpha, 255.0f))),
+                       text_color.GetRed(), text_color.GetGreen(),
+                       text_color.GetBlue()));
+    Gdiplus::StringFormat format;
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+    format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+    Gdiplus::RectF text_rect(-line_width / 2, -line_height / 2, line_width,
+                             line_height);
+    const Gdiplus::GraphicsState state = graphics.Save();
+    graphics.TranslateTransform(x, y);
+    graphics.RotateTransform(offset * 4.0f);
+    graphics.ScaleTransform(scale, scale);
+    graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
+                        &brush);
+    graphics.Restore(state);
+  }
 }

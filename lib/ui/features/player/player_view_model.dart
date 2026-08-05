@@ -776,11 +776,20 @@ class PlayerViewModel extends ChangeNotifier {
     final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
         ? lyrics[followingIndex].text
         : '';
+    const radius = 5;
+    final windowStart = (nextIndex - radius).clamp(0, lyrics.length - 1);
+    final windowEnd = (nextIndex + radius + 1).clamp(0, lyrics.length);
+    final windowLines = [
+      for (var index = windowStart; index < windowEnd; index++)
+        lyrics[index].text,
+    ];
     unawaited(
       floatingLyricsService.update(
         title: '${track.title} · ${track.artist}',
         currentLine: currentLine,
         nextLine: nextLine,
+        lines: windowLines,
+        currentIndex: nextIndex - windowStart,
       ),
     );
   }

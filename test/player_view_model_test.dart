@@ -98,12 +98,15 @@ void main() {
     await viewModel.setFloatingLyrics(true);
     expect(overlay.currentLine, '第一句');
     expect(overlay.nextLine, '第二句');
+    expect(overlay.lines, containsAll(['第一句', '第二句']));
+    expect(overlay.currentIndex, 0);
 
     player.emitPosition(const Duration(seconds: 6));
     await Future<void>.delayed(Duration.zero);
 
     expect(overlay.currentLine, '第二句');
     expect(overlay.nextLine, isEmpty);
+    expect(overlay.currentIndex, 1);
   });
 
   test('prefers a full track url resolved by an imported source', () async {
@@ -703,6 +706,8 @@ class _FakeLyricService implements LyricService {
 class _FakeFloatingLyricsService implements FloatingLyricsService {
   String currentLine = '';
   String nextLine = '';
+  List<String> lines = const [];
+  int currentIndex = -1;
   LyricsOverlayStyle? style;
   LyricsOverlayStyle? savedStyle;
 
@@ -717,9 +722,13 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
     required String title,
     required String currentLine,
     required String nextLine,
+    List<String> lines = const [],
+    int currentIndex = -1,
   }) async {
     this.currentLine = currentLine;
     this.nextLine = nextLine;
+    this.lines = lines;
+    this.currentIndex = currentIndex;
   }
 
   @override

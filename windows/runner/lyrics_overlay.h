@@ -2,9 +2,11 @@
 #define RUNNER_LYRICS_OVERLAY_H_
 
 #include <windows.h>
+#include <gdiplus.h>
 
 #include <functional>
 #include <string>
+#include <vector>
 
 struct LyricsOverlayStyle {
   std::wstring font_family = L"Microsoft YaHei UI";
@@ -30,7 +32,7 @@ class LyricsOverlay {
   bool Create();
   void Show();
   void Hide();
-  void Update(const std::string& current_line, const std::string& next_line);
+  void Update(const std::vector<std::wstring>& lines, int current_index);
   void ApplyStyle(const LyricsOverlayStyle& style);
   void SetPositionCallback(PositionCallback callback);
   void Destroy();
@@ -38,14 +40,16 @@ class LyricsOverlay {
  private:
   static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam,
                                      LPARAM lparam);
-  static std::wstring Utf8ToWide(const std::string& value);
 
   void Paint();
+  void DrawLyricsWheel(Gdiplus::Graphics& graphics, int width, int height);
   void ApplyWindowAttributes();
 
   HWND window_ = nullptr;
-  std::wstring current_line_ = L"WCMusic";
-  std::wstring next_line_;
+  std::vector<std::wstring> lines_;
+  int current_index_ = 0;
+  int displayed_index_ = 0;
+  float animation_t_ = 1.0f;
   LyricsOverlayStyle style_;
   PositionCallback position_callback_;
 };
