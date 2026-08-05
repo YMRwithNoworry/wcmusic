@@ -146,6 +146,27 @@ void main() {
     expect(await repository.loadSelectedSourceId(), isNull);
   });
 
+  test('keeps same-name sources as independent entries', () async {
+    final repository = MemorySourceRepository(nativeCore: _FakeNativeCore());
+
+    await repository.importScript(_script);
+    await repository.importScript(_script);
+
+    final sources = await repository.loadSources();
+    expect(sources.map((source) => source.id).toSet(), hasLength(2));
+  });
+
+  test('imports scripts rejected by the runtime with fallback keys', () async {
+    final repository = MemorySourceRepository(
+      nativeCore: _RejectingNativeCore(),
+    );
+
+    final source = await repository.importScript(_quotedKeysScript);
+
+    expect(source.name, '内嵌兜底源');
+    expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
+  });
+
   test('loads the bundled source with its internal display name', () async {
     final repository = MemorySourceRepository(
       nativeCore: _FakeNativeCore(),

@@ -12,6 +12,7 @@ import '../../../data/services/track_download_service.dart';
 import '../../../domain/models/lyric_line.dart';
 import '../../../domain/models/playback_mode.dart';
 import '../../../domain/models/playback_quality.dart';
+import '../../../domain/models/source_import_result.dart';
 import '../../../domain/models/track.dart';
 import '../../../domain/repositories/music_repository.dart';
 import '../../../domain/repositories/source_repository.dart';
@@ -100,6 +101,7 @@ class PlayerViewModel extends ChangeNotifier {
   bool isLoadingRecentTracks = false;
   String? recentTracksError;
   bool isSearchingOnline = false;
+  bool isImportingSources = false;
   String? onlineSearchError;
   int _searchGeneration = 0;
   int _lyricGeneration = 0;
@@ -710,6 +712,36 @@ class PlayerViewModel extends ChangeNotifier {
       message = '导入失败：$error';
     }
     notifyListeners();
+  }
+
+  Future<SourceImportResult> importSources(
+    List<({String name, String script})> entries,
+  ) async {
+    if (isImportingSources) {
+      return const SourceImportResult(imported: 0, failures: []);
+    }
+    isImportingSources = true;
+    var imported = 0;
+    final failures = <String>[];
+    notifyListeners();
+    try {
+      for (final entry in entries) {
+        try {
+          await sourceRepository.importScript(entry.script);
+          imported++;
+        } on FormatException catch (error) {
+          failures.add('${entry.name}：${error.message}');
+        } on Object catch (error) {
+          failures.add('${entry.name}：$error');
+        }
+      }
+      sources = await sourceRepository.loadSources();
+      message = imported > 0 ? '已导入 $imported 个音源' : '没有可导入的音源';
+    } finally {
+      isImportingSources = false;
+      notifyListeners();
+    }
+    return SourceImportResult(imported: imported, failures: failures);
   }
 
   Future<void> selectSource(String? id) async {

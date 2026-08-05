@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../domain/models/source_import_result.dart';
 import '../../../domain/models/track.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
@@ -18,8 +20,17 @@ class SourcesView extends StatelessWidget {
       title: '音源',
       subtitle: '兼容洛雪自定义源协议；脚本默认视为不可信代码',
       actions: [
+        TextButton.icon(
+          onPressed: viewModel.isImportingSources
+              ? null
+              : () => _pickDirectory(context),
+          icon: const Icon(Icons.folder_open),
+          label: const Text('导入文件夹'),
+        ),
         FilledButton.tonalIcon(
-          onPressed: () => _pickScript(context),
+          onPressed: viewModel.isImportingSources
+              ? null
+              : () => _pickScript(context),
           icon: const Icon(Icons.add_link),
           label: const Text('导入脚本'),
         ),
@@ -93,6 +104,131 @@ class SourcesView extends StatelessWidget {
     } on Object catch (error) {
       if (context.mounted) _showMessage(context, '导入失败：$error');
     }
+  }
+
+  Future<void> _pickDirectory(BuildContext context) async {
+    try {
+      final path = await getDirectoryPath();
+      if (path == null || !context.mounted) return;
+      final directory = Directory(path);
+      if (!await directory.exists()) {
+        if (context.mounted) _showMessage(context, '文件夹不存在');
+        return;
+      }
+      final files = <File>[];
+      await for (final entity in directory.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is File && entity.path.toLowerCase().endsWith('.js')) {
+          files.add(entity);
+        }
+      }
+      files.sort((left, right) => left.path.compareTo(right.path));
+      if (files.isEmpty) {
+        if (context.mounted) _showMessage(context, '没有找到 .js 音源脚本');
+        return;
+      }
+      if (!context.mounted) return;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('批量导入音源？'),
+          content: Text(
+            '找到 ${files.length} 个音源脚本，将逐个检查并导入。'
+            '同名但不同版本的音源会作为独立条目保留。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('检查并导入'),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !context.mounted) return;
+      final entries = <({String name, String script})>[];
+      final readFailures = <String>[];
+      for (final file in files) {
+        final name = file.uri.pathSegments.last;
+        try {
+          final raw = utf8.decode(
+            await file.readAsBytes(),
+            allowMalformed: false,
+          );
+          entries.add((name: name, script: raw));
+        } on FormatException {
+          readFailures.add('$name：不是有效的 UTF-8 编码');
+        } on Object catch (error) {
+          readFailures.add('$name：$error');
+        }
+      }
+      if (entries.isEmpty) {
+        if (context.mounted) _showMessage(context, '没有可读取的音源脚本');
+        return;
+      }
+      if (!context.mounted) return;
+      final viewModel = context.read<PlayerViewModel>();
+      final result = await viewModel.importSources(entries);
+      if (context.mounted) {
+        await _showImportResult(context, result, readFailures);
+      }
+    } on Object catch (error) {
+      if (context.mounted) _showMessage(context, '批量导入失败：$error');
+    }
+  }
+
+  Future<void> _showImportResult(
+    BuildContext context,
+    SourceImportResult result,
+    List<String> readFailures,
+  ) async {
+    final failures = [...readFailures, ...result.failures];
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('导入完成'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '成功导入 ${result.imported} 个音源${failures.isEmpty ? '' : '，失败 ${failures.length} 个'}',
+              ),
+              if (failures.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: failures.length,
+                    itemBuilder: (context, index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        failures[index],
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteSource(BuildContext context, SourceScript source) async {

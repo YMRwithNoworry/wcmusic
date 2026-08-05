@@ -51,17 +51,24 @@ class MemorySourceRepository implements SourceRepository {
   Future<SourceScript> importScript(String rawScript) async {
     await _ensureLoaded();
     final nativeResult = _nativeCore.validateSource(rawScript);
-    if (nativeResult != null && nativeResult['ok'] != true) {
-      throw FormatException(
-        nativeResult['error'] as String? ?? 'Rust 音源运行时拒绝了该脚本',
-      );
-    }
-    final data = nativeResult?['data'];
-    final source = _parser.parse(
+    final data = nativeResult != null && nativeResult['ok'] == true
+        ? nativeResult['data']
+        : null;
+    var source = _parser.parse(
       rawScript,
       manifest: data is Map<String, dynamic> ? data : null,
     );
-    _sources.removeWhere((item) => item.name == source.name);
+    if (source.sourceKeys.isEmpty || data == null) {
+      source = _parser.parse(
+        rawScript,
+        manifest: {
+          'metadata': {'name': source.name},
+          'sources': [
+            for (final key in builtInSourceKeys) {'key': key},
+          ],
+        },
+      );
+    }
     _sources.add(source);
     await _persist();
     return source;

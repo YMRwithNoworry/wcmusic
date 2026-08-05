@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use regex::Regex;
-use rquickjs::{Context, Runtime};
+use rquickjs::{Context, Runtime, function::Func};
 use serde::Deserialize;
 
 use crate::{CoreError, SourceCapability, SourceEnvironment, SourceManifest, SourceScriptMetadata};
@@ -43,16 +44,18 @@ pub fn validate_source_script(
     runtime.set_max_stack_size(512 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+    install_http_guest(&context)?;
 
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
 
     context.with(|ctx| {
         ctx.eval::<(), _>(bootstrap)
-            .and_then(|_| ctx.eval::<(), _>(script))
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+            .map_err(|error| error.to_string())
+            .and_then(|_| eval_script_with_message(&ctx, script))
+            .map_err(|error| CoreError::SourceInitialization(format!("脚本执行失败：{error}")))
     })?;
 
-    drain_jobs(&runtime)?;
+    drain_jobs(&runtime, &context)?;
 
     context.with(|ctx| {
         let messages_json: String = ctx
@@ -100,13 +103,15 @@ pub fn resolve_source_url(
     runtime.set_max_stack_size(512 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
+    install_http_guest(&context)?;
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
     context.with(|ctx| {
         ctx.eval::<(), _>(bootstrap)
-            .and_then(|_| ctx.eval::<(), _>(script))
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+            .map_err(|error| error.to_string())
+            .and_then(|_| eval_script_with_message(&ctx, script))
+            .map_err(|error| CoreError::SourceInitialization(format!("脚本执行失败：{error}")))
     })?;
-    drain_jobs(&runtime)?;
+    drain_jobs(&runtime, &context)?;
 
     let source_json = serde_json::to_string(source)?;
     let song_id_json = serde_json::to_string(song_id)?;
@@ -135,10 +140,10 @@ pub fn resolve_source_url(
         "#
     );
     context.with(|ctx| {
-        ctx.eval::<(), _>(invoke)
-            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+        eval_invoke_with_message(&ctx, &invoke)
+            .map_err(CoreError::SourceInitialization)
     })?;
-    drain_jobs(&runtime)?;
+    drain_jobs(&runtime, &context)?;
     context.with(|ctx| {
         let state_json: String = ctx
             .eval(
@@ -170,6 +175,10 @@ fn source_bootstrap(
         r#"
         globalThis.__wcmusicHandlers = Object.create(null);
         globalThis.__wcmusicMessages = [];
+        globalThis.setTimeout = () => 0;
+        globalThis.clearTimeout = () => {{}};
+        globalThis.setInterval = () => 0;
+        globalThis.clearInterval = () => {{}};
         globalThis.console = Object.freeze({{
           log() {{}}, info() {{}}, warn() {{}}, error() {{}}, debug() {{}}
         }});
@@ -187,14 +196,40 @@ fn source_bootstrap(
           send(name, data) {{ globalThis.__wcmusicMessages.push({{ name, data }}); }},
           request(url, options, callback) {{
             if (typeof options === 'function') callback = options;
-            const error = new Error('network requests are disabled during validation');
+            options = options || {{}};
+            const method = String(options.method || 'GET').toUpperCase();
+            const headers = options.headers || {{}};
+            const body = options.body == null ? null : String(options.body);
+            let parsed;
+            try {{
+              parsed = JSON.parse(globalThis.__wcmusicFetch(
+                String(url), method, JSON.stringify(headers), body
+              ));
+            }} catch (error) {{
+              if (typeof callback === 'function') {{
+                Promise.resolve().then(() => callback(error, null));
+                return;
+              }}
+              return Promise.reject(error);
+            }}
+            if (!parsed.ok) {{
+              const error = new Error(parsed.error || 'request failed');
+              if (typeof callback === 'function') {{
+                Promise.resolve().then(() => callback(error, null));
+                return;
+              }}
+              return Promise.reject(error);
+            }}
+            const response = {{
+              statusCode: parsed.statusCode,
+              headers: parsed.headers || {{}},
+              body: parsed.body
+            }};
             if (typeof callback === 'function') {{
-              Promise.resolve().then(() => callback(error, {{
-                statusCode: 0, body: null, headers: {{}}
-              }}));
+              Promise.resolve().then(() => callback(null, response));
               return;
             }}
-            return Promise.reject(error);
+            return Promise.resolve(response);
           }},
           utils: Object.freeze({{
             buffer: Object.freeze({{ from(value) {{ return value; }}, bufToString(value) {{ return String(value); }} }}),
@@ -217,20 +252,126 @@ fn source_bootstrap(
     ))
 }
 
-fn drain_jobs(runtime: &Runtime) -> Result<(), CoreError> {
+fn install_http_guest(context: &Context) -> Result<(), CoreError> {
+    context.with(|ctx| {
+        let fetch = Func::new(
+            |url: String, method: String, headers_json: String, body: Option<String>| -> String {
+                match http_request_json(&url, &method, &headers_json, body.as_deref()) {
+                    Ok(value) => value,
+                    Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
+                }
+            },
+        );
+        ctx.globals()
+            .set("__wcmusicFetch", fetch)
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })
+}
+
+fn eval_script_with_message(ctx: &rquickjs::Ctx<'_>, script: &str) -> Result<(), String> {
+    let script_json = serde_json::to_string(script)
+        .map_err(|error| error.to_string())?;
+    let wrapped = format!(
+        "(function() {{ try {{ eval({script_json}) }} catch (error) {{ \
+         throw new Error(error && error.message ? error.message : String(error)); }} }})()"
+    );
+    ctx.eval::<(), _>(wrapped).map_err(|error| error.to_string())
+}
+
+fn eval_invoke_with_message(ctx: &rquickjs::Ctx<'_>, invoke: &str) -> Result<(), String> {
+    let invoke_json = serde_json::to_string(invoke)
+        .map_err(|error| error.to_string())?;
+    let wrapped = format!(
+        "(function() {{ try {{ eval({invoke_json}) }} catch (error) {{ \
+         throw new Error(error && error.message ? error.message : String(error)); }} }})()"
+    );
+    ctx.eval::<(), _>(wrapped).map_err(|error| error.to_string())
+}
+
+fn http_request_json(
+    url: &str,
+    method: &str,
+    headers_json: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let headers: BTreeMap<String, String> = serde_json::from_str(headers_json)
+        .map_err(|error| format!("请求头格式无效：{error}"))?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(15))
+        .build();
+    let mut request = agent.request(method, url);
+    for (name, value) in headers {
+        request = request.set(&name, &value);
+    }
+    let response = match method {
+        "POST" | "PUT" | "PATCH" => request
+            .send_string(body.unwrap_or(""))
+            .map_err(|error| format!("网络请求失败：{error}"))?,
+        _ => request
+            .call()
+            .map_err(|error| format!("网络请求失败：{error}"))?,
+    };
+    let status_code = response.status();
+    let content_type = response
+        .header("content-type")
+        .unwrap_or_default()
+        .to_lowercase();
+    let response_headers: BTreeMap<String, String> = response
+        .headers_names()
+        .iter()
+        .filter_map(|name| {
+            response
+                .header(name)
+                .map(|value| (name.to_lowercase(), value.to_string()))
+        })
+        .collect();
+    let text = response
+        .into_string()
+        .map_err(|error| format!("读取响应失败：{error}"))?;
+    let body_value = if content_type.contains("json") {
+        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text))
+    } else {
+        serde_json::Value::String(text)
+    };
+    Ok(
+        serde_json::json!({
+            "ok": true,
+            "statusCode": status_code,
+            "headers": response_headers,
+            "body": body_value,
+        })
+        .to_string(),
+    )
+}
+
+fn drain_jobs(runtime: &Runtime, context: &Context) -> Result<(), CoreError> {
+    let mut failure: Option<String> = None;
     for _ in 0..MAX_INITIALIZATION_JOBS {
         match runtime.execute_pending_job() {
             Ok(true) => {}
             Ok(false) => break,
             Err(error) => {
-                return Err(CoreError::SourceInitialization(error.to_string()));
+                failure = Some(error.to_string());
+                break;
             }
         }
     }
-    if runtime.is_job_pending() {
-        return Err(CoreError::SourceInitialization("脚本异步任务过多".into()));
+    if failure.is_none() && runtime.is_job_pending() {
+        failure = Some("脚本异步任务过多".into());
     }
-    Ok(())
+    let Some(error) = failure else {
+        return Ok(());
+    };
+    let detail = context.with(|ctx| {
+        if ctx.has_exception() {
+            ctx.catch()
+                .get::<String>()
+                .unwrap_or_else(|_| error.clone())
+        } else {
+            error
+        }
+    });
+    Err(CoreError::SourceInitialization(format!("异步任务失败：{detail}")))
 }
 
 #[derive(Deserialize)]

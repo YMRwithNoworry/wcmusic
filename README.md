@@ -22,7 +22,7 @@ WCMusic 是面向 Windows 与 Android 的 Flutter + Rust 音乐播放器。界�
 - 深浅主题、有机封面、共享元素转场与 reduced-motion 设置入口
 - Windows Rust DLL 与 Android arm64 Rust `.so` 自动构建接线
 
-音源脚本是第三方代码。WCMusic 的 Rust 运行时限制为 32 MB 内存，并在导入时只开放初始化所需的 `globalThis.lx` 宿主接口。校验阶段不开放网络请求，当前版本也不会自动下载或更新脚本。导入结果保存在系统应用数据目录的 `sources.json` 中。
+音源脚本是第三方代码。WCMusic 的 Rust 运行时限制为 32 MB 内存，并提供 `globalThis.lx` 宿主接口；脚本初始化与整曲解析阶段的宿主请求由内置网络客户端转发，单次请求 15 秒超时。无法通过 QuickJS 完整执行的脚本仍会导入并补齐平台能力，播放解析失败时会明确回退。当前版本不会自动下载或更新脚本。导入结果保存在系统应用数据目录的 `sources.json` 中。
 
 ## 工具链
 

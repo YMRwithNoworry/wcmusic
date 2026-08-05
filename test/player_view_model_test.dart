@@ -491,6 +491,29 @@ void main() {
     expect(downloader.downloadedTrack?.id, 'download');
     expect(viewModel.message, contains('已下载到'));
   });
+
+  test('imports a folder of sources and reports failures', () async {
+    final repository = _BulkSourceRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: repository,
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    final result = await viewModel.importSources([
+      (name: 'a.js', script: 'ok-1'),
+      (name: 'b.js', script: 'bad'),
+      (name: 'c.js', script: 'ok-2'),
+    ]);
+
+    expect(result.imported, 2);
+    expect(result.failures.single, contains('b.js'));
+    expect(repository.imported, 2);
+    expect(viewModel.isImportingSources, isFalse);
+  });
 }
 
 class _SynchronousTogglePlayerService extends FakePlayerService {
@@ -614,4 +637,38 @@ class _FakeTrackDownloadService extends TrackDownloadService {
     onProgress(1);
     return 'D:/music/${track.title}.mp3';
   }
+}
+
+class _BulkSourceRepository implements SourceRepository {
+  int imported = 0;
+
+  @override
+  Future<List<SourceScript>> loadSources() async => const [];
+
+  @override
+  Future<String?> loadSelectedSourceId() async => null;
+
+  @override
+  Future<void> selectSource(String? id) async {}
+
+  @override
+  Future<SourceScript> importScript(String rawScript) async {
+    if (rawScript == 'bad') throw const FormatException('校验失败');
+    imported++;
+    return SourceScript(
+      id: 'source-$imported',
+      name: '批量源 $imported',
+      version: '1.0.0',
+      author: 'WCMusic',
+      description: '测试',
+      sourceKeys: const [],
+      rawScript: rawScript,
+    );
+  }
+
+  @override
+  Future<void> deleteSource(String id) async {}
+
+  @override
+  Future<String> resolveUrl(Track track, {String quality = '320k'}) async => '';
 }
