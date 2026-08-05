@@ -101,12 +101,33 @@ void main() {
     expect(overlay.lines, containsAll(['第一句', '第二句']));
     expect(overlay.currentIndex, 0);
 
+    player.emitPosition(const Duration(seconds: 2));
+    await Future<void>.delayed(Duration.zero);
+    expect(overlay.lineProgress, closeTo(.4, .01));
+
     player.emitPosition(const Duration(seconds: 6));
     await Future<void>.delayed(Duration.zero);
 
     expect(overlay.currentLine, '第二句');
     expect(overlay.nextLine, isEmpty);
     expect(overlay.currentIndex, 1);
+  });
+
+  test('migrates the legacy desktop lyrics defaults', () {
+    final style = LyricsOverlayStyle.fromJson(const {
+      'fontFamily': 'Microsoft YaHei UI',
+      'fontSize': 30,
+      'alignment': 'center',
+      'textColor': 0xFFF5F3EC,
+      'backgroundColor': 0xFF1C1F1B,
+      'opacity': 0.88,
+      'cornerRadius': 18,
+      'locked': true,
+    });
+
+    expect(style.alignment, 'right');
+    expect(style.fontSize, 24);
+    expect(style.backgroundColor, 0xFF141416);
   });
 
   test('prefers a full track url resolved by an imported source', () async {
@@ -776,6 +797,7 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
   String nextLine = '';
   List<String> lines = const [];
   int currentIndex = -1;
+  double lineProgress = 0;
   LyricsOverlayStyle? style;
   LyricsOverlayStyle? savedStyle;
 
@@ -792,11 +814,13 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
     required String nextLine,
     List<String> lines = const [],
     int currentIndex = -1,
+    double lineProgress = 0,
   }) async {
     this.currentLine = currentLine;
     this.nextLine = nextLine;
     this.lines = lines;
     this.currentIndex = currentIndex;
+    this.lineProgress = lineProgress;
   }
 
   @override

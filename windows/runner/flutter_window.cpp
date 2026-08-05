@@ -127,7 +127,9 @@ bool FlutterWindow::OnCreate() {
           }
           const int current_index = static_cast<int>(DoubleValue(
               FindArgument(arguments, "currentIndex"), 0));
-          lyrics_overlay_->Update(lines, current_index);
+          const float line_progress = static_cast<float>(DoubleValue(
+              FindArgument(arguments, "lineProgress"), 0));
+          lyrics_overlay_->Update(lines, current_index, line_progress);
           result->Success();
           return;
         }
@@ -136,9 +138,9 @@ bool FlutterWindow::OnCreate() {
           const auto* font = FindArgument(arguments, "fontFamily");
           if (font) style.font_family = Utf8ToWide(StringValue(font, "Microsoft YaHei UI"));
           style.font_size = static_cast<int>(DoubleValue(
-              FindArgument(arguments, "fontSize"), 30));
+              FindArgument(arguments, "fontSize"), 24));
           const std::string align = StringValue(
-              FindArgument(arguments, "align"), "center");
+              FindArgument(arguments, "align"), "right");
           if (align == "left") {
             style.align = DT_LEFT;
           } else if (align == "right") {
@@ -147,14 +149,14 @@ bool FlutterWindow::OnCreate() {
             style.align = DT_CENTER;
           }
           style.text_color = ArgbToColorRef(static_cast<int64_t>(
-              DoubleValue(FindArgument(arguments, "textColor"), 0xFFF5F3EC)));
+              DoubleValue(FindArgument(arguments, "textColor"), 0xFFF3F3F3)));
           style.background_color = ArgbToColorRef(static_cast<int64_t>(
               DoubleValue(FindArgument(arguments, "backgroundColor"),
-                          0xFF1C1F1B)));
+                          0xFF141416)));
           style.opacity = static_cast<int>(
-              DoubleValue(FindArgument(arguments, "opacity"), 0.88) * 255);
+              DoubleValue(FindArgument(arguments, "opacity"), 0.96) * 255);
           style.corner_radius = static_cast<int>(DoubleValue(
-              FindArgument(arguments, "cornerRadius"), 18));
+              FindArgument(arguments, "cornerRadius"), 8));
           style.locked = BoolValue(FindArgument(arguments, "locked"), true);
           const auto* x = FindArgument(arguments, "x");
           const auto* y = FindArgument(arguments, "y");

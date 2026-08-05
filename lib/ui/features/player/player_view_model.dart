@@ -872,7 +872,7 @@ class PlayerViewModel extends ChangeNotifier {
           nextLine: '',
         );
       } else {
-        _syncLyrics(position, force: true);
+        _syncLyrics(position);
       }
     } on Object {
       if (generation != _lyricGeneration || current?.id != track.id) return;
@@ -885,14 +885,13 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _syncLyrics(Duration value, {bool force = false}) {
+  void _syncLyrics(Duration value) {
     if (!floatingLyricsEnabled || lyrics.isEmpty) return;
     var nextIndex = -1;
     for (var index = 0; index < lyrics.length; index++) {
       if (lyrics[index].time > value) break;
       nextIndex = index;
     }
-    if (!force && nextIndex == currentLyricIndex) return;
     currentLyricIndex = nextIndex;
     final track = current;
     if (track == null) return;
@@ -908,6 +907,17 @@ class PlayerViewModel extends ChangeNotifier {
       for (var index = windowStart; index < windowEnd; index++)
         lyrics[index].text,
     ];
+    final lineStart = nextIndex >= 0 ? lyrics[nextIndex].time : Duration.zero;
+    final lineEnd = followingIndex < lyrics.length
+        ? lyrics[followingIndex].time
+        : playbackDuration;
+    final lineSpan = lineEnd - lineStart;
+    final lineProgress = lineSpan.inMilliseconds <= 0
+        ? 0.0
+        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds).clamp(
+            0.0,
+            1.0,
+          );
     unawaited(
       floatingLyricsService.update(
         title: '${track.title} · ${track.artist}',
@@ -915,6 +925,7 @@ class PlayerViewModel extends ChangeNotifier {
         nextLine: nextLine,
         lines: windowLines,
         currentIndex: nextIndex - windowStart,
+        lineProgress: lineProgress,
       ),
     );
   }

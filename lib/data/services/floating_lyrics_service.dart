@@ -15,6 +15,7 @@ abstract interface class FloatingLyricsService {
     required String nextLine,
     List<String> lines = const [],
     int currentIndex = -1,
+    double lineProgress = 0,
   });
   Future<void> setStyle(LyricsOverlayStyle style);
   Future<LyricsOverlayStyle> loadStyle();
@@ -63,6 +64,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
     required String nextLine,
     List<String> lines = const [],
     int currentIndex = -1,
+    double lineProgress = 0,
   }) async {
     if (!_enabled) return;
     _ensureHandler();
@@ -72,6 +74,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
       'nextLine': nextLine,
       'lines': lines,
       'currentIndex': currentIndex,
+      'lineProgress': lineProgress.clamp(0.0, 1.0),
     });
   }
 

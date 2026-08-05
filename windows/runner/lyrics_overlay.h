@@ -10,12 +10,12 @@
 
 struct LyricsOverlayStyle {
   std::wstring font_family = L"Microsoft YaHei UI";
-  int font_size = 30;
-  int align = DT_CENTER;
-  COLORREF text_color = RGB(245, 243, 236);
-  COLORREF background_color = RGB(28, 31, 27);
-  int opacity = 224;
-  int corner_radius = 18;
+  int font_size = 24;
+  int align = DT_RIGHT;
+  COLORREF text_color = RGB(243, 243, 243);
+  COLORREF background_color = RGB(20, 20, 22);
+  int opacity = 245;
+  int corner_radius = 8;
   bool locked = true;
   bool has_position = false;
   int x = 0;
@@ -32,7 +32,8 @@ class LyricsOverlay {
   bool Create();
   void Show();
   void Hide();
-  void Update(const std::vector<std::wstring>& lines, int current_index);
+  void Update(const std::vector<std::wstring>& lines, int current_index,
+              float line_progress);
   void ApplyStyle(const LyricsOverlayStyle& style);
   void SetPositionCallback(PositionCallback callback);
   void Destroy();
@@ -50,6 +51,7 @@ class LyricsOverlay {
   int current_index_ = 0;
   int displayed_index_ = 0;
   float animation_t_ = 1.0f;
+  float line_progress_ = 0.0f;
   LyricsOverlayStyle style_;
   PositionCallback position_callback_;
 };

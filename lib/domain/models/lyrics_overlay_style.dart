@@ -1,12 +1,12 @@
 class LyricsOverlayStyle {
   const LyricsOverlayStyle({
     this.fontFamily = 'Microsoft YaHei UI',
-    this.fontSize = 30,
-    this.alignment = 'center',
-    this.textColor = 0xFFF5F3EC,
-    this.backgroundColor = 0xFF1C1F1B,
-    this.opacity = 0.88,
-    this.cornerRadius = 18,
+    this.fontSize = 24,
+    this.alignment = 'right',
+    this.textColor = 0xFFF3F3F3,
+    this.backgroundColor = 0xFF141416,
+    this.opacity = 0.96,
+    this.cornerRadius = 8,
     this.locked = true,
     this.positionX,
     this.positionY,
@@ -60,18 +60,37 @@ class LyricsOverlayStyle {
     'positionY': positionY,
   };
 
-  factory LyricsOverlayStyle.fromJson(Map<String, dynamic> json) =>
-      LyricsOverlayStyle(
-        fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
-        fontSize: (json['fontSize'] as num?)?.toDouble() ?? 30,
-        alignment: json['alignment'] as String? ?? 'center',
-        textColor: (json['textColor'] as num?)?.toInt() ?? 0xFFF5F3EC,
-        backgroundColor:
-            (json['backgroundColor'] as num?)?.toInt() ?? 0xFF1C1F1B,
-        opacity: (json['opacity'] as num?)?.toDouble() ?? 0.88,
-        cornerRadius: (json['cornerRadius'] as num?)?.toDouble() ?? 18,
-        locked: json['locked'] as bool? ?? true,
-        positionX: (json['positionX'] as num?)?.toDouble(),
-        positionY: (json['positionY'] as num?)?.toDouble(),
-      );
+  factory LyricsOverlayStyle.fromJson(Map<String, dynamic> json) {
+    final fontSize = (json['fontSize'] as num?)?.toDouble();
+    final alignment = json['alignment'] as String?;
+    final textColor = (json['textColor'] as num?)?.toInt();
+    final backgroundColor = (json['backgroundColor'] as num?)?.toInt();
+    final opacity = (json['opacity'] as num?)?.toDouble();
+    final cornerRadius = (json['cornerRadius'] as num?)?.toDouble();
+    final usesLegacyDefaults =
+        fontSize == 30 &&
+        alignment == 'center' &&
+        textColor == 0xFFF5F3EC &&
+        backgroundColor == 0xFF1C1F1B &&
+        opacity == 0.88 &&
+        cornerRadius == 18;
+    return LyricsOverlayStyle(
+      fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
+      fontSize: usesLegacyDefaults ? 24 : fontSize ?? 24,
+      alignment: usesLegacyDefaults ? 'right' : alignment ?? 'right',
+      textColor: usesLegacyDefaults ? 0xFFF3F3F3 : textColor ?? 0xFFF3F3F3,
+      backgroundColor: usesLegacyDefaults
+          ? 0xFF141416
+          : backgroundColor ?? 0xFF141416,
+      opacity: usesLegacyDefaults ? 0.96 : opacity ?? 0.96,
+      cornerRadius: usesLegacyDefaults ? 8 : cornerRadius ?? 8,
+      locked: json['locked'] as bool? ?? true,
+      positionX: usesLegacyDefaults
+          ? null
+          : (json['positionX'] as num?)?.toDouble(),
+      positionY: usesLegacyDefaults
+          ? null
+          : (json['positionY'] as num?)?.toDouble(),
+    );
+  }
 }

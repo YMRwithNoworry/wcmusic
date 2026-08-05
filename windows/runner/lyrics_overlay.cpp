@@ -8,7 +8,8 @@
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
-constexpr int kOverlayHeight = 230;
+constexpr int kOverlayWidth = 480;
+constexpr int kOverlayHeight = 680;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
 constexpr float kLyricsAnimationSeconds = 0.38f;
 
@@ -64,18 +65,20 @@ bool LyricsOverlay::Create() {
   RECT work_area{};
   SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
   const int work_width = work_area.right - work_area.left;
-  const int width = std::min(900, std::max(420, work_width - 80));
+  const int work_height = work_area.bottom - work_area.top;
+  const int width = std::min(kOverlayWidth, std::max(360, work_width / 3));
+  const int height = std::min(kOverlayHeight, std::max(420, work_height - 96));
   int x = style_.has_position
       ? style_.x
-      : work_area.left + (work_width - width) / 2;
+      : work_area.right - width - 24;
   int y = style_.has_position
       ? style_.y
-      : work_area.bottom - kOverlayHeight - 72;
+      : work_area.top + (work_height - height) / 2;
   window_ = CreateWindowEx(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE |
           WS_EX_TRANSPARENT,
       kWindowClassName, L"WCMusic Desktop Lyrics", WS_POPUP, x, y, width,
-      kOverlayHeight, nullptr, nullptr, instance, this);
+      height, nullptr, nullptr, instance, this);
   if (!window_) return false;
   ApplyWindowAttributes();
   return true;
@@ -93,24 +96,31 @@ void LyricsOverlay::Hide() {
 }
 
 void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
-                           int current_index) {
+                           int current_index, float line_progress) {
+  const int next_index = lines.empty()
+      ? 0
+      : std::clamp(current_index, 0, static_cast<int>(lines.size()) - 1);
+  const bool index_changed = next_index != current_index_;
   lines_ = lines;
-  current_index_ = current_index < 0 ? 0 : current_index;
+  line_progress_ = std::clamp(line_progress, 0.0f, 1.0f);
   if (lines_.empty()) {
     if (window_) InvalidateRect(window_, nullptr, TRUE);
     return;
   }
-  if (animation_t_ < 1.0f) {
-    displayed_index_ = static_cast<int>(
-        std::round(Lerp(static_cast<float>(displayed_index_),
-                        static_cast<float>(current_index_),
-                        EaseInOutCubic(animation_t_))));
-  } else {
-    displayed_index_ = current_index_;
+  if (index_changed) {
+    if (animation_t_ < 1.0f) {
+      displayed_index_ = static_cast<int>(
+          std::round(Lerp(static_cast<float>(displayed_index_),
+                          static_cast<float>(current_index_),
+                          EaseInOutCubic(animation_t_))));
+    } else {
+      displayed_index_ = current_index_;
+    }
+    current_index_ = next_index;
+    animation_t_ = 0.0f;
   }
-  animation_t_ = 0.0f;
   if (window_) {
-    SetTimer(window_, kLyricsTimerId, 16, nullptr);
+    if (index_changed) SetTimer(window_, kLyricsTimerId, 16, nullptr);
     InvalidateRect(window_, nullptr, TRUE);
   }
 }
@@ -237,7 +247,9 @@ void LyricsOverlay::Paint() {
     DrawLyricsWheel(graphics, width, height);
   }
 
-  POINT destination{0, 0};
+  RECT window_bounds{};
+  GetWindowRect(window_, &window_bounds);
+  POINT destination{window_bounds.left, window_bounds.top};
   POINT source{0, 0};
   SIZE size{width, height};
   BLENDFUNCTION blend{};
@@ -261,11 +273,10 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
              static_cast<float>(current_index_),
              EaseInOutCubic(animation_t_))
       : static_cast<float>(current_index_);
-  const float center_x = width / 2.0f;
-  const float center_y = height * 0.46f;
-  const float spacing = std::max(60.0f, width * 0.075f);
-  const float arc_depth = height * 0.20f;
-  const float max_distance = 4.0f;
+  const float center_y = height * 0.56f;
+  const float spacing = std::max(38.0f, style_.font_size * 1.65f);
+  const float max_distance = std::ceil(height / spacing / 2.0f) + 1.0f;
+  const float horizontal_padding = 28.0f;
 
   Gdiplus::FontFamily font_family(style_.font_family.c_str());
   const Gdiplus::Color text_color(
@@ -276,41 +287,55 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
     const float offset = static_cast<float>(index) - base;
     const float distance = std::abs(offset);
     if (distance > max_distance) continue;
-    const float clamped = std::min(distance, max_distance);
-    const float angle = offset * 0.30f;
-    const float x = center_x + std::sin(angle) * spacing * 3.6f;
-    const float y = center_y - (1.0f - std::cos(angle)) * arc_depth;
-    const float scale = 1.0f - clamped * 0.14f;
-    const float alpha = (1.0f - clamped * 0.22f) * 255.0f;
-    const int font_size = distance < 0.5f
-        ? style_.font_size + 8
-        : style_.font_size - 4;
+    const float y = center_y + offset * spacing;
+    if (y < -spacing || y > height + spacing) continue;
     const bool is_center = distance < 0.5f;
-    const float line_width = is_center ? width - 220.0f : width - 360.0f;
-    const float line_height = is_center ? 52.0f : 36.0f;
+    const bool is_played = index < current_index_;
+    const int font_size = is_center ? style_.font_size + 2 : style_.font_size;
+    const float line_width = width - horizontal_padding * 2.0f;
+    const float line_height = spacing;
+    const float edge_fade = std::clamp(
+        std::min(y / (spacing * 1.5f),
+                 (height - y) / (spacing * 1.5f)),
+        0.18f, 1.0f);
+    const BYTE alpha = static_cast<BYTE>(
+        std::clamp((is_center ? 255.0f : 220.0f) * edge_fade, 0.0f, 255.0f));
 
     Gdiplus::Font font(&font_family, static_cast<float>(font_size),
                        is_center ? Gdiplus::FontStyleBold
                                  : Gdiplus::FontStyleRegular,
                        Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush brush(
-        Gdiplus::Color(static_cast<BYTE>(std::max(0.0f, std::min(alpha, 255.0f))),
-                       text_color.GetRed(), text_color.GetGreen(),
-                       text_color.GetBlue()));
+    const Gdiplus::Color base_color(
+        alpha, text_color.GetRed(), text_color.GetGreen(), text_color.GetBlue());
+    const Gdiplus::Color accent_color(alpha, 0, 198, 91);
+    Gdiplus::SolidBrush base_brush(is_played ? accent_color : base_color);
     Gdiplus::StringFormat format;
     format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
     format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
-    format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetAlignment(
+        style_.align == DT_LEFT
+            ? Gdiplus::StringAlignmentNear
+            : style_.align == DT_RIGHT ? Gdiplus::StringAlignmentFar
+                                       : Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-    Gdiplus::RectF text_rect(-line_width / 2, -line_height / 2, line_width,
-                             line_height);
-    const Gdiplus::GraphicsState state = graphics.Save();
-    graphics.TranslateTransform(x, y);
-    graphics.RotateTransform(offset * 4.0f);
-    graphics.ScaleTransform(scale, scale);
+    Gdiplus::RectF text_rect(horizontal_padding, y - line_height / 2.0f,
+                             line_width, line_height);
     graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
-                        &brush);
-    graphics.Restore(state);
+                        &base_brush);
+
+    if (is_center && line_progress_ > 0.0f) {
+      const Gdiplus::GraphicsState state = graphics.Save();
+      Gdiplus::RectF measured;
+      graphics.MeasureString(lines_[index].c_str(), -1, &font, text_rect,
+                             &format, &measured);
+      Gdiplus::RectF clip_rect(measured.X, y - line_height / 2.0f,
+                              measured.Width * line_progress_, line_height);
+      graphics.SetClip(clip_rect);
+      Gdiplus::SolidBrush accent_brush(accent_color);
+      graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
+                          &accent_brush);
+      graphics.Restore(state);
+    }
   }
 }
