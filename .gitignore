@@ -34,6 +34,7 @@ migrate_working_dir/
 /native/**/target/
 /android/app/src/main/jniLibs/
 /coverage/
+/.wrangler/
 
 # Symbolication related
 app.*.symbols
