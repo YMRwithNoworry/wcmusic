@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
+import 'feedback_dialog.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -55,6 +56,22 @@ class _SettingsViewState extends State<SettingsView> {
                 title: Text('主题'),
                 subtitle: Text('跟随系统'),
                 trailing: Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingSection(
+            title: '帮助与反馈',
+            children: [
+              ListTile(
+                leading: const Icon(Icons.feedback_outlined),
+                title: const Text('问题反馈'),
+                subtitle: const Text('反馈将通过邮件送达开发者'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => const FeedbackDialog(),
+                ),
               ),
             ],
           ),
