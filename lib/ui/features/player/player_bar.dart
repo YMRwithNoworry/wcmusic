@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/breathing_widget.dart';
 import '../../core/organic_artwork.dart';
 import 'playback_mode_button.dart';
 import 'playback_controls.dart';
@@ -32,13 +33,16 @@ class PlayerBar extends StatelessWidget {
                   child: Row(
                     children: [
                       const SizedBox(width: 14),
-                      Hero(
-                        tag: 'art-${track.id}',
-                        child: OrganicArtwork(
-                          seed: track.id,
-                          size: 56,
-                          playing: viewModel.isPlaying,
-                          artworkUri: track.artworkUri,
+                      PulseWidget(
+                        enabled: viewModel.isPlaying,
+                        child: Hero(
+                          tag: 'art-${track.id}',
+                          child: OrganicArtwork(
+                            seed: track.id,
+                            size: 56,
+                            playing: viewModel.isPlaying,
+                            artworkUri: track.artworkUri,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 14),
@@ -71,18 +75,22 @@ class PlayerBar extends StatelessWidget {
                         ),
                         const SizedBox(width: 2),
                       ],
-                      IconButton.filled(
-                        onPressed: viewModel.togglePlayback,
-                        icon: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 180),
-                          child: Icon(
-                            viewModel.isPlaying
-                                ? Icons.pause
-                                : Icons.play_arrow,
-                            key: ValueKey(viewModel.isPlaying),
+                      BreathingWidget(
+                        enabled: viewModel.isPlaying,
+                        scaleAmplitude: 0.05,
+                        child: IconButton.filled(
+                          onPressed: viewModel.togglePlayback,
+                          icon: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: Icon(
+                              viewModel.isPlaying
+                                  ? Icons.pause
+                                  : Icons.play_arrow,
+                              key: ValueKey(viewModel.isPlaying),
+                            ),
                           ),
+                          tooltip: viewModel.isPlaying ? '暂停' : '播放',
                         ),
-                        tooltip: viewModel.isPlaying ? '暂停' : '播放',
                       ),
                       if (!compact) ...[
                         const SizedBox(width: 2),

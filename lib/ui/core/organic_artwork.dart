@@ -24,7 +24,12 @@ class _OrganicArtworkState extends State<OrganicArtwork>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 8),
+    duration: const Duration(seconds: 12),
+  );
+
+  late final Animation<double> _breathAnimation = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOutSine,
   );
 
   @override
@@ -66,9 +71,9 @@ class _OrganicArtworkState extends State<OrganicArtwork>
   @override
   Widget build(BuildContext context) {
     final fallback = AnimatedBuilder(
-      animation: _controller,
+      animation: _breathAnimation,
       builder: (_, _) => CustomPaint(
-        painter: _ArtworkPainter(widget.seed.hashCode, _controller.value),
+        painter: _ArtworkPainter(widget.seed.hashCode, _breathAnimation.value),
       ),
     );
     final uri = widget.artworkUri;
@@ -128,12 +133,22 @@ class _ArtworkPainter extends CustomPainter {
         const Color(0xFFB55D62),
         const Color(0xFFD8C9A7),
       ],
+      [
+        const Color(0xFF5C4E47),
+        const Color(0xFFA88C7D),
+        const Color(0xFFE8DDD3),
+      ],
+      [
+        const Color(0xFF2C4A52),
+        const Color(0xFF8B6F5C),
+        const Color(0xFFD4C4B0),
+      ],
     ];
     final colors = palettes[seed.abs() % palettes.length];
     canvas.drawRect(Offset.zero & size, Paint()..color = colors.first);
-    for (var index = 0; index < 6; index++) {
+    for (var index = 0; index < 7; index++) {
       final radius =
-          size.width * (.16 + random.nextDouble() * .28) * (1 + phase * .025);
+          size.width * (.14 + random.nextDouble() * .32) * (1 + phase * .035);
       final center = Offset(
         size.width * (random.nextDouble() * .9 + .05),
         size.height * (random.nextDouble() * .9 + .05),
@@ -142,17 +157,19 @@ class _ArtworkPainter extends CustomPainter {
         center,
         radius,
         Paint()
-          ..color = colors[1 + index % 2].withValues(alpha: .42 + index * .055),
+          ..color = colors[1 + index % 2]
+              .withValues(alpha: .38 + index * .048 + phase * .08),
       );
     }
-    final grain = Paint()..color = Colors.white.withValues(alpha: .12);
-    for (var index = 0; index < 180; index++) {
+    final grain = Paint()
+      ..color = Colors.white.withValues(alpha: .10 + phase * .04);
+    for (var index = 0; index < 220; index++) {
       canvas.drawCircle(
         Offset(
           random.nextDouble() * size.width,
           random.nextDouble() * size.height,
         ),
-        random.nextDouble() * .7 + .2,
+        random.nextDouble() * .8 + .3,
         grain,
       );
     }

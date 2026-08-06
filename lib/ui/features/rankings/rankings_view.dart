@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../data/services/online_search_service.dart';
 import '../../../domain/models/track.dart';
+import '../../core/animated_list_item.dart';
 import '../../core/organic_artwork.dart';
 import '../../core/page_scaffold.dart';
 import '../../core/remote_artwork.dart';
@@ -123,23 +124,26 @@ class _RankingList extends StatelessWidget {
     return Column(
       children: [
         for (final ranking in viewModel.rankings)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: ListTile(
-              selected: ranking.id == viewModel.selectedRanking?.id,
-              selectedTileColor: Theme.of(
-                context,
-              ).colorScheme.secondaryContainer,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
+          AnimatedListItem(
+            index: viewModel.rankings.indexOf(ranking),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: ListTile(
+                selected: ranking.id == viewModel.selectedRanking?.id,
+                selectedTileColor: Theme.of(
+                  context,
+                ).colorScheme.secondaryContainer,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                leading: _RankingArtwork(ranking: ranking, size: 42),
+                title: Text(
+                  ranking.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => viewModel.selectRanking(ranking),
               ),
-              leading: _RankingArtwork(ranking: ranking, size: 42),
-              title: Text(
-                ranking.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: () => viewModel.selectRanking(ranking),
             ),
           ),
       ],
@@ -194,10 +198,14 @@ class _RankingTracks extends StatelessWidget {
     }
     return Column(
       children: [
-        for (var index = 0; index < viewModel.rankingTracks.length; index++)
-          _RankingTrackRow(
-            rank: index + 1,
-            track: viewModel.rankingTracks[index],
+        for (var i = 0; i < viewModel.rankingTracks.length; i++)
+          AnimatedListItem(
+            index: i,
+            delay: const Duration(milliseconds: 50),
+            child: _RankingTrackRow(
+              rank: i + 1,
+              track: viewModel.rankingTracks[i],
+            ),
           ),
       ],
     );
@@ -214,58 +222,63 @@ class _RankingTrackRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = context.watch<PlayerViewModel>();
     final active = viewModel.current?.id == track.id;
-    return InkWell(
+    return HoverScaleCard(
+      scaleAmount: 0.015,
       onTap: () => viewModel.playTrack(track),
-      onSecondaryTap: () => showTrackFavoriteMenu(context, track),
-      onLongPress: () => showTrackFavoriteMenu(context, track),
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 34,
-              child: Text(
-                '$rank',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: rank <= 3
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
+      child: InkWell(
+        onTap: () => viewModel.playTrack(track),
+        onSecondaryTap: () => showTrackFavoriteMenu(context, track),
+        onLongPress: () => showTrackFavoriteMenu(context, track),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 34,
+                child: Text(
+                  '$rank',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: rank <= 3
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                    fontWeight: rank <= 3 ? FontWeight.w700 : null,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            _TrackArtwork(track: track),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  Text(
-                    '${track.artist} · ${track.album}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+              const SizedBox(width: 8),
+              _TrackArtwork(track: track),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      '${track.artist} · ${track.album}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            IconButton(
-              onPressed: () => showTrackFavoriteMenu(context, track),
-              icon: Icon(
-                active && viewModel.isPlaying
-                    ? Icons.graphic_eq
-                    : Icons.more_horiz,
+              IconButton(
+                onPressed: () => showTrackFavoriteMenu(context, track),
+                icon: Icon(
+                  active && viewModel.isPlaying
+                      ? Icons.graphic_eq
+                      : Icons.more_horiz,
+                ),
+                tooltip: '更多',
               ),
-              tooltip: '更多',
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
