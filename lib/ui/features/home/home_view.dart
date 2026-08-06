@@ -368,12 +368,20 @@ class _PlatformPlaylistTile extends StatelessWidget {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: playlist.artworkUri.isEmpty
-                      ? OrganicArtwork(seed: playlist.id, size: double.infinity)
-                      : RemoteArtwork(
-                          url: playlist.artworkUri,
+                  child: Builder(
+                    builder: (context) {
+                      if (playlist.artworkUri.isEmpty) {
+                        return OrganicArtwork(
                           seed: playlist.id,
-                        ),
+                          size: double.infinity,
+                        );
+                      }
+                      return RemoteArtwork(
+                        url: playlist.artworkUri,
+                        seed: playlist.id,
+                      );
+                    },
+                  ),
                 ),
                 Positioned(
                   top: 8,
