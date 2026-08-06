@@ -64,10 +64,16 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
-           ((uri) => HttpClient.findProxyFromEnvironment(
-             uri,
-             environment: Platform.environment,
-           )),
+           ((uri) {
+             // 国内音乐服务 API 直连，避免代理问题
+             if (_shouldBypassProxy(uri)) {
+               return 'DIRECT';
+             }
+             return HttpClient.findProxyFromEnvironment(
+               uri,
+               environment: Platform.environment,
+             );
+           }),
        _kuwoSearchEndpoint =
            kuwoSearchEndpoint ?? Uri.https('search.kuwo.cn', '/r.s'),
        _kugouSearchEndpoint =
@@ -121,6 +127,24 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   final Uri _kugouRankingsEndpoint;
   final Uri _kugouRankingTracksEndpoint;
   final Uri _kuwoRankingTracksEndpoint;
+
+  // 判断是否应该绕过代理（国内音乐服务）
+  static bool _shouldBypassProxy(Uri uri) {
+    final host = uri.host.toLowerCase();
+    // 网易云音乐
+    if (host.endsWith('.music.126.net')) return true;
+    if (host.endsWith('.music.163.com')) return true;
+    if (host == 'music.163.com') return true;
+    // QQ音乐
+    if (host.endsWith('.y.qq.com')) return true;
+    if (host.endsWith('.qq.com')) return true;
+    if (host == 'c.y.qq.com') return true;
+    // 酷狗音乐
+    if (host.contains('kugou')) return true;
+    // 酷我音乐
+    if (host.contains('kuwo')) return true;
+    return false;
+  }
 
   @override
   Future<List<Track>> search(
@@ -751,7 +775,8 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     try {
       return await _getJsonOnce(uri, proxy, relaxed: relaxed);
     } on Object {
-      if (proxy == 'DIRECT') rethrow;
+      // 如果已经是直连或国内服务，不再重试
+      if (proxy == 'DIRECT' || _shouldBypassProxy(uri)) rethrow;
       return _getJsonOnce(uri, 'DIRECT', relaxed: relaxed);
     }
   }

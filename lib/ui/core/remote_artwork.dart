@@ -15,13 +15,35 @@ class ArtworkLoader {
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
-           ((uri) => HttpClient.findProxyFromEnvironment(
-             uri,
-             environment: Platform.environment,
-           ));
+           ((uri) {
+             // 国内音乐服务的 CDN 直连，避免代理问题
+             if (_shouldBypassProxy(uri)) {
+               return 'DIRECT';
+             }
+             return HttpClient.findProxyFromEnvironment(
+               uri,
+               environment: Platform.environment,
+             );
+           });
 
   final ArtworkHttpClientFactory _clientFactory;
   final ArtworkProxyResolver _proxyResolver;
+
+  // 判断是否应该绕过代理
+  static bool _shouldBypassProxy(Uri uri) {
+    final host = uri.host.toLowerCase();
+    // 网易云音乐 CDN
+    if (host.endsWith('.music.126.net')) return true;
+    if (host.endsWith('.music.163.com')) return true;
+    // QQ音乐 CDN
+    if (host.endsWith('.gtimg.cn')) return true;
+    if (host.endsWith('.qq.com')) return true;
+    // 酷狗音乐 CDN
+    if (host.contains('kugou')) return true;
+    // 酷我音乐 CDN
+    if (host.contains('kuwo')) return true;
+    return false;
+  }
 
   Future<Uint8List> load(String rawUrl) async {
     Object? lastError;
@@ -33,7 +55,8 @@ class ArtworkLoader {
       } on Object catch (error, stackTrace) {
         lastError = error;
         lastStackTrace = stackTrace;
-        if (proxy != 'DIRECT') {
+        // 如果使用了代理失败，尝试直连
+        if (proxy != 'DIRECT' && !_shouldBypassProxy(uri)) {
           try {
             return await _loadOnce(uri, 'DIRECT');
           } on Object catch (directError, directStackTrace) {
