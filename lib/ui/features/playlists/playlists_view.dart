@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/track.dart';
 import '../../core/organic_artwork.dart';
+import '../../core/remote_artwork.dart';
 import '../../core/page_scaffold.dart';
 import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
@@ -66,13 +67,12 @@ class PlaylistsView extends StatelessWidget {
                             playlist.artworkUri == null ||
                                 playlist.artworkUri!.isEmpty
                             ? OrganicArtwork(seed: playlist.id, size: 82)
-                            : Image.network(
-                                playlist.artworkUri!,
-                                width: 82,
-                                height: 82,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) =>
-                                    OrganicArtwork(seed: playlist.id, size: 82),
+                          : SizedBox.square(
+                              dimension: 82,
+                              child: RemoteArtwork(
+                                url: playlist.artworkUri!,
+                                seed: playlist.id,
+                              ),
                               ),
                       ),
                       const SizedBox(width: 16),
@@ -196,13 +196,12 @@ class PlaylistsView extends StatelessWidget {
                             track.artworkUri == null ||
                                 track.artworkUri!.isEmpty
                             ? OrganicArtwork(seed: track.id, size: 48)
-                            : Image.network(
-                                track.artworkUri!,
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) =>
-                                    OrganicArtwork(seed: track.id, size: 48),
+                          : SizedBox.square(
+                              dimension: 48,
+                              child: RemoteArtwork(
+                                url: track.artworkUri!,
+                                seed: track.id,
+                              ),
                               ),
                       ),
                       title: Text(

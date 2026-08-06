@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../domain/models/track.dart';
 import '../../../data/services/online_search_service.dart';
 import '../../core/organic_artwork.dart';
+import '../../core/remote_artwork.dart';
 import '../../core/page_scaffold.dart';
 import '../../core/track_favorite_menu.dart';
 import '../player/player_view_model.dart';
@@ -257,15 +258,14 @@ class _Artwork extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final uri = track.artworkUri;
-    if (uri == null) return OrganicArtwork(seed: track.id, size: 48);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Image.network(
-        uri,
-        width: 48,
-        height: 48,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => OrganicArtwork(seed: track.id, size: 48),
+    if (uri == null || uri.isEmpty) {
+      return OrganicArtwork(seed: track.id, size: 48);
+    }
+    return SizedBox.square(
+      dimension: 48,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: RemoteArtwork(url: uri, seed: track.id),
       ),
     );
   }
