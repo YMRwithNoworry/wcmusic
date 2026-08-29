@@ -3,8 +3,16 @@
 # Build the native GPUI desktop client.
 print "Building WCMusic GPUI desktop client..."
 
+let installed_cargo = ($env.USERPROFILE | path join ".cargo" "bin" "cargo.exe")
+let cargo = (which cargo | get path.0? | default $installed_cargo)
+
+if not ($cargo | path exists) {
+    print "Cargo was not found in PATH or the default user installation directory."
+    exit 1
+}
+
 let result = (do {
-    cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+    run-external $cargo "build" "--release" "--manifest-path" "native/wcmusic_ui/Cargo.toml"
 } | complete)
 
 if $result.exit_code != 0 {
