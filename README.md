@@ -1,6 +1,18 @@
 # WCMusic
 
-WCMusic 是面向 Windows 与 Android 的 Flutter + Rust 音乐播放器。界面采用自然材质与有机动效，Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验。
+WCMusic 是面向 Windows 与 Android 的 GPUI + Rust 音乐播放器。Windows 桌面界面使用 GPUI 原生渲染，Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验；Android 继续使用 Flutter 客户端。
+
+## GPUI 桌面客户端
+
+Windows 桌面客户端位于 `native/wcmusic_ui`，使用 GPUI 0.2.2 构建。启动桌面界面：
+
+```text
+cargo run --manifest-path native/wcmusic_ui/Cargo.toml
+```
+
+生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。
+
+GPUI 客户端包含统一的侧边导航、搜索与曲库筛选、榜单、歌单、音源设置以及底部播放控制栏。它通过 `wcmusic_core::LibraryIndex` 使用同一套 Rust 曲库检索能力。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
 
 ## 当前能力
 
@@ -43,8 +55,7 @@ $env.ANDROID_HOME = "D:/tools/android-sdk"
 flutter analyze
 flutter test
 cargo test --manifest-path native/wcmusic_core/Cargo.toml
-flutter build windows --release
-tar.exe -a -c -f build/wcmusic-windows-x64.zip -C build/windows/x64/runner/Release .
+cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
 
 # Android arm64 首次构建需安装 cargo-ndk 与 Rust target。
 cargo install cargo-ndk --locked
@@ -56,7 +67,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 发布目录为 `build/windows/x64/runner/Release/`，分发时必须保留其中的 EXE、DLL 与 `data` 目录。上面的 `tar.exe` 命令会生成可直接解压运行的 `build/wcmusic-windows-x64.zip`。
+Windows GPUI 发布可执行文件为 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。Android 发布仍使用上面的 Flutter APK 命令。
 
 ## 目录
 
