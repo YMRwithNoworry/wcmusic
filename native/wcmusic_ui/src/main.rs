@@ -283,33 +283,36 @@ impl MusicApp {
     }
 
     fn import_source(&mut self, cx: &mut Context<Self>) {
-        self.notice = "请选择音源脚本文件".into();
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("选择音源脚本")
+            .add_filter("音源脚本", &["js", "mjs", "txt"])
+            .pick_file()
+        else {
+            self.notice = "已取消导入音源".into();
+            cx.notify();
+            return;
+        };
+        self.notice = "正在读取并校验音源...".into();
         cx.notify();
-        let task = cx.background_spawn(async {
-            let path = rfd::FileDialog::new()
-                .add_filter("音源脚本", &["js", "mjs", "txt"])
-                .pick_file();
-            path.map(|path| {
-                std::fs::read_to_string(&path)
-                    .map_err(|error| format!("读取音源失败：{error}"))
-                    .and_then(|script| {
-                        wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
-                            .map(|manifest| (script, manifest.metadata.name))
-                            .map_err(|error| format!("音源校验失败：{error}"))
-                    })
-            })
+        let task = cx.background_spawn(async move {
+            std::fs::read_to_string(&path)
+                .map_err(|error| format!("读取音源失败：{error}"))
+                .and_then(|script| {
+                    wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
+                        .map(|manifest| (script, manifest.metadata.name))
+                        .map_err(|error| format!("音源校验失败：{error}"))
+                })
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
-                    Some(Ok((script, name))) => {
+                    Ok((script, name)) => {
                         this.source_script = Some(script);
                         this.source_name = name.into();
                         this.notice = format!("已导入音源：{}", this.source_name).into();
                     }
-                    Some(Err(error)) => this.notice = error.into(),
-                    None => this.notice = "已取消导入音源".into(),
+                    Err(error) => this.notice = error.into(),
                 }
                 cx.notify();
             })
