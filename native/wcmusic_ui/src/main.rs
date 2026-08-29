@@ -8,10 +8,10 @@ use gpui::{
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
     LibraryIndex, OnlineSearchChannel, SourceEnvironment, Track, TrackSource, resolve_source_url,
-    search_online,
+    search_online_with_proxy,
 };
 
-use crate::audio_player::{AudioPlayer, download_audio};
+use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
 
 const PAPER: u32 = 0xf2efe7;
 const PAPER_LIGHT: u32 = 0xf8f6f2;
@@ -76,10 +76,15 @@ struct TrackRow {
     artist: SharedString,
     album: SharedString,
     duration: SharedString,
+    artwork_path: Option<SharedString>,
 }
 
 impl TrackRow {
     fn from_core(track: Track) -> Self {
+        Self::from_core_with_artwork(track, None)
+    }
+
+    fn from_core_with_artwork(track: Track, artwork_path: Option<String>) -> Self {
         let duration = if track.duration_ms == 0 {
             "--:--".to_owned()
         } else {
@@ -99,6 +104,7 @@ impl TrackRow {
                 track.album.clone().into()
             },
             duration: duration.into(),
+            artwork_path: artwork_path.map(Into::into),
             track,
         }
     }
@@ -124,6 +130,7 @@ struct MusicApp {
     quality_index: usize,
     dark_theme: bool,
     lyrics_enabled: bool,
+    use_network_proxy: bool,
     rows: Vec<TrackRow>,
     library: LibraryIndex,
 }
@@ -168,6 +175,7 @@ impl MusicApp {
             quality_index: 2,
             dark_theme: false,
             lyrics_enabled: false,
+            use_network_proxy: false,
             rows,
             library,
         }
@@ -227,7 +235,23 @@ impl MusicApp {
         self.notice = format!("正在通过{}搜索", channel.label()).into();
         cx.notify();
 
-        let task = cx.background_spawn(async move { search_online(&query, channel, 30) });
+        let use_proxy = self.use_network_proxy;
+        let task = cx.background_spawn(async move {
+            let tracks = search_online_with_proxy(&query, channel, 30, use_proxy)
+                .map_err(|error| error.to_string())?;
+            Ok::<Vec<TrackRow>, String>(
+                tracks
+                    .into_iter()
+                    .map(|track| {
+                        let artwork_path = track
+                            .artwork_uri
+                            .as_deref()
+                            .and_then(|uri| download_artwork(uri, &track.id, use_proxy).ok());
+                        TrackRow::from_core_with_artwork(track, artwork_path)
+                    })
+                    .collect(),
+            )
+        });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -237,7 +261,7 @@ impl MusicApp {
                 this.search_in_progress = false;
                 match result {
                     Ok(tracks) => {
-                        this.search_results = tracks.into_iter().map(TrackRow::from_core).collect();
+                        this.search_results = tracks;
                         this.notice = format!(
                             "{}找到 {} 条结果",
                             this.search_channel.label(),
@@ -350,6 +374,16 @@ impl MusicApp {
         cx.notify();
     }
 
+    fn toggle_network_proxy(&mut self, cx: &mut Context<Self>) {
+        self.use_network_proxy = !self.use_network_proxy;
+        self.notice = if self.use_network_proxy {
+            "已开启系统网络代理（读取 HTTP_PROXY/HTTPS_PROXY）".into()
+        } else {
+            "已关闭网络代理，网络请求将直连".into()
+        };
+        cx.notify();
+    }
+
     fn toggle_track(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.rows[index].track.source != TrackSource::Local {
             self.start_playback(self.rows[index].track.clone(), false, cx);
@@ -420,6 +454,7 @@ impl MusicApp {
             }
         };
         let quality = ["128k", "320k", "flac"][self.quality_index];
+        let use_proxy = self.use_network_proxy;
         let script = self.source_script.clone().unwrap_or_else(|| {
             include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
         });
@@ -432,7 +467,7 @@ impl MusicApp {
                 quality,
             )
             .map_err(|error| error.to_string())?;
-            let bytes = download_audio(&url)?;
+            let bytes = download_audio_with_proxy(&url, use_proxy)?;
             Ok::<_, String>((url, bytes))
         });
         cx.spawn(async move |this, cx| {
@@ -1205,6 +1240,19 @@ impl MusicApp {
                 .id("setting-lyrics")
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics(cx))),
             )
+            .child(
+                setting_row(
+                    "网络代理",
+                    if self.use_network_proxy {
+                        "系统代理"
+                    } else {
+                        "关闭"
+                    },
+                    "默认直连，开启后读取 HTTP_PROXY/HTTPS_PROXY",
+                )
+                .id("setting-proxy")
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_network_proxy(cx))),
+            )
     }
 
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1343,8 +1391,8 @@ fn player_button(glyph: &'static str) -> gpui::Div {
 }
 
 fn track_artwork(row: &TrackRow) -> gpui::AnyElement {
-    match row.track.artwork_uri.as_deref() {
-        Some(uri) => img(uri.to_owned())
+    match row.artwork_path.as_deref() {
+        Some(path) => img(std::path::PathBuf::from(path.as_ref()))
             .size(px(40.0))
             .rounded_md()
             .object_fit(gpui::ObjectFit::Cover)

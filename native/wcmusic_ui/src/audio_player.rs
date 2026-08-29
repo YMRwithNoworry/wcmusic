@@ -52,11 +52,16 @@ impl AudioPlayer {
     }
 }
 
-pub fn download_audio(url: &str) -> Result<Vec<u8>, String> {
-    let response = ureq::AgentBuilder::new()
+fn http_agent(use_proxy: bool) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .try_proxy_from_env(use_proxy)
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(30))
         .build()
+}
+
+pub fn download_audio_with_proxy(url: &str, use_proxy: bool) -> Result<Vec<u8>, String> {
+    let response = http_agent(use_proxy)
         .get(url)
         .set(
             "User-Agent",
@@ -86,4 +91,43 @@ pub fn download_audio(url: &str) -> Result<Vec<u8>, String> {
         return Err("音频文件超过 128 MB 限制".into());
     }
     Ok(bytes)
+}
+
+pub fn download_audio(url: &str) -> Result<Vec<u8>, String> {
+    download_audio_with_proxy(url, false)
+}
+
+pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, String> {
+    let response = http_agent(use_proxy)
+        .get(url)
+        .set(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WCMusic/1.0",
+        )
+        .call()
+        .map_err(|error| format!("下载封面失败: {error}"))?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(8 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("读取封面失败: {error}"))?;
+    if bytes.is_empty() {
+        return Err("封面为空".into());
+    }
+    let dir = std::env::temp_dir().join("wcmusic-artwork");
+    std::fs::create_dir_all(&dir).map_err(|error| format!("创建封面缓存失败: {error}"))?;
+    let safe_id: String = id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("{safe_id}.jpg"));
+    std::fs::write(&path, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }

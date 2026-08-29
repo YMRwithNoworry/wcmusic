@@ -58,6 +58,15 @@ pub fn search_online(
     channel: OnlineSearchChannel,
     limit: usize,
 ) -> Result<Vec<Track>, OnlineSearchError> {
+    search_online_with_proxy(query, channel, limit, false)
+}
+
+pub fn search_online_with_proxy(
+    query: &str,
+    channel: OnlineSearchChannel,
+    limit: usize,
+    use_proxy: bool,
+) -> Result<Vec<Track>, OnlineSearchError> {
     let keyword = query.trim();
     if keyword.is_empty() {
         return Ok(Vec::new());
@@ -100,6 +109,7 @@ pub fn search_online(
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(15))
         .timeout_write(Duration::from_secs(15))
+        .try_proxy_from_env(use_proxy)
         .build();
     let mut request = agent.get(channel.endpoint());
     for (key, value) in &params {
