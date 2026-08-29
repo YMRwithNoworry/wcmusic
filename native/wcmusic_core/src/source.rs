@@ -44,7 +44,7 @@ pub fn validate_source_script(
     runtime.set_max_stack_size(512 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
-    install_http_guest(&context)?;
+    install_http_guest(&context, false)?;
 
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
 
@@ -96,6 +96,17 @@ pub fn resolve_source_url(
     song_id: &str,
     quality: &str,
 ) -> Result<String, CoreError> {
+    resolve_source_url_with_proxy(script, environment, source, song_id, quality, false)
+}
+
+pub fn resolve_source_url_with_proxy(
+    script: &str,
+    environment: SourceEnvironment,
+    source: &str,
+    song_id: &str,
+    quality: &str,
+    use_proxy: bool,
+) -> Result<String, CoreError> {
     let metadata = parse_script_metadata(script)?;
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
@@ -103,7 +114,7 @@ pub fn resolve_source_url(
     runtime.set_max_stack_size(512 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
-    install_http_guest(&context)?;
+    install_http_guest(&context, use_proxy)?;
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
     context.with(|ctx| {
         ctx.eval::<(), _>(bootstrap)
@@ -252,11 +263,11 @@ fn source_bootstrap(
     ))
 }
 
-fn install_http_guest(context: &Context) -> Result<(), CoreError> {
+fn install_http_guest(context: &Context, use_proxy: bool) -> Result<(), CoreError> {
     context.with(|ctx| {
         let fetch = Func::new(
-            |url: String, method: String, headers_json: String, body: Option<String>| -> String {
-                match http_request_json(&url, &method, &headers_json, body.as_deref()) {
+            move |url: String, method: String, headers_json: String, body: Option<String>| -> String {
+                match http_request_json(&url, &method, &headers_json, body.as_deref(), use_proxy) {
                     Ok(value) => value,
                     Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
                 }
@@ -293,11 +304,13 @@ fn http_request_json(
     method: &str,
     headers_json: &str,
     body: Option<&str>,
+    use_proxy: bool,
 ) -> Result<String, String> {
     let headers: BTreeMap<String, String> = serde_json::from_str(headers_json)
         .map_err(|error| format!("请求头格式无效：{error}"))?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
+        .try_proxy_from_env(use_proxy)
         .build();
     let mut request = agent.request(method, url);
     for (name, value) in headers {

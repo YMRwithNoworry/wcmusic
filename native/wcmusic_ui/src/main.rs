@@ -7,8 +7,8 @@ use gpui::{
 };
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
-    LibraryIndex, OnlineSearchChannel, SourceEnvironment, Track, TrackSource, resolve_source_url,
-    search_online_with_proxy,
+    LibraryIndex, OnlineSearchChannel, SourceEnvironment, Track, TrackSource,
+    resolve_source_url_with_proxy, search_online_with_proxy,
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
@@ -459,12 +459,13 @@ impl MusicApp {
             include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
         });
         let task = cx.background_spawn(async move {
-            let url = resolve_source_url(
+            let url = resolve_source_url_with_proxy(
                 &script,
                 SourceEnvironment::Desktop,
                 source_key,
                 &source_id,
                 quality,
+                use_proxy,
             )
             .map_err(|error| error.to_string())?;
             let bytes = download_audio_with_proxy(&url, use_proxy)?;
