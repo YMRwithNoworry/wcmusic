@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 gpui = "0.2.2"
+unicode-segmentation = "1.12.0"
 wcmusic_core = { path = "../wcmusic_core" }
 
 [patch.crates-io]

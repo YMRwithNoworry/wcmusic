@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 encoding_rs = "0.8.35"
+json5 = "0.4.1"
 parking_lot = "0.12.5"
 regex = "1.11.2"
 rquickjs = { version = "0.12.2", features = ["macro"] }

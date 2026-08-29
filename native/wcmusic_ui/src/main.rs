@@ -1,8 +1,11 @@
+mod search_input;
+
 use gpui::{
-    App, Application, Bounds, Context, Render, SharedString, Window, WindowBounds, WindowOptions,
-    div, prelude::*, px, rgb, size,
+    App, Application, Bounds, Context, Entity, Render, SharedString, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
-use wcmusic_core::{LibraryIndex, Track};
+use search_input::{SearchInput, SearchInputEvent};
+use wcmusic_core::{LibraryIndex, OnlineSearchChannel, Track, search_online};
 
 const PAPER: u32 = 0xf2efe7;
 const PAPER_LIGHT: u32 = 0xf8f6f2;
@@ -60,7 +63,7 @@ impl Tab {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct TrackRow {
     title: SharedString,
     artist: SharedString,
@@ -96,8 +99,15 @@ impl TrackRow {
 struct MusicApp {
     active_tab: Tab,
     current_track: Option<usize>,
+    current_online_track: Option<TrackRow>,
     is_playing: bool,
     query: SharedString,
+    search_input: Option<Entity<SearchInput>>,
+    search_channel: OnlineSearchChannel,
+    search_results: Vec<TrackRow>,
+    search_error: Option<SharedString>,
+    search_in_progress: bool,
+    search_generation: u64,
     notice: SharedString,
     quality_index: usize,
     dark_theme: bool,
@@ -129,8 +139,15 @@ impl MusicApp {
         Self {
             active_tab: Tab::Home,
             current_track: None,
+            current_online_track: None,
             is_playing: false,
             query: "".into(),
+            search_input: None,
+            search_channel: OnlineSearchChannel::Kuwo,
+            search_results: Vec::new(),
+            search_error: None,
+            search_in_progress: false,
+            search_generation: 0,
             notice: "准备播放".into(),
             quality_index: 2,
             dark_theme: false,
@@ -146,14 +163,109 @@ impl MusicApp {
         cx.notify();
     }
 
+    fn initialize_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search_input.is_some() {
+            return;
+        }
+        let input = cx.new(SearchInput::new);
+        cx.subscribe_in(&input, window, |this, _, event, _, cx| match event {
+            SearchInputEvent::Submit => this.perform_search(cx),
+        })
+        .detach();
+        self.search_input = Some(input);
+    }
+
     fn announce(&mut self, message: &'static str, cx: &mut Context<Self>) {
         self.notice = message.into();
         cx.notify();
     }
 
-    fn open_search(&mut self, cx: &mut Context<Self>) {
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_tab = Tab::Search;
-        self.notice = "搜索已打开，请按标题、艺人或专辑筛选".into();
+        self.notice = "搜索已打开，请输入歌曲、艺术家或专辑".into();
+        if let Some(input) = &self.search_input {
+            input.read(cx).focus(window);
+        }
+        cx.notify();
+    }
+
+    fn perform_search(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = &self.search_input else {
+            return;
+        };
+        let query = input.read(cx).text().trim().to_owned();
+        self.query = query.clone().into();
+        self.search_error = None;
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        if query.is_empty() {
+            self.search_results.clear();
+            self.search_in_progress = false;
+            self.notice = "请输入搜索关键词".into();
+            cx.notify();
+            return;
+        }
+
+        let channel = self.search_channel;
+        self.search_in_progress = true;
+        self.notice = format!("正在通过{}搜索", channel.label()).into();
+        cx.notify();
+
+        let task = cx.background_spawn(async move { search_online(&query, channel, 30) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.search_generation {
+                    return;
+                }
+                this.search_in_progress = false;
+                match result {
+                    Ok(tracks) => {
+                        this.search_results = tracks.into_iter().map(TrackRow::from_core).collect();
+                        this.notice = format!(
+                            "{}找到 {} 条结果",
+                            this.search_channel.label(),
+                            this.search_results.len()
+                        )
+                        .into();
+                    }
+                    Err(error) => {
+                        this.search_results.clear();
+                        this.search_error = Some(error.to_string().into());
+                        this.notice = "在线搜索失败".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn select_search_channel(&mut self, channel: OnlineSearchChannel, cx: &mut Context<Self>) {
+        if channel == self.search_channel {
+            return;
+        }
+        self.search_channel = channel;
+        if self.query.is_empty() {
+            self.notice = format!("搜索渠道：{}", channel.label()).into();
+            cx.notify();
+        } else {
+            self.perform_search(cx);
+        }
+    }
+
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_generation += 1;
+        self.query = "".into();
+        self.search_results.clear();
+        self.search_error = None;
+        self.search_in_progress = false;
+        self.notice = "搜索已清除".into();
+        if let Some(input) = &self.search_input {
+            input.update(cx, |input, cx| input.clear(cx));
+            input.read(cx).focus(window);
+        }
         cx.notify();
     }
 
@@ -187,10 +299,11 @@ impl MusicApp {
     }
 
     fn toggle_track(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.current_track == Some(index) {
+        if self.current_track == Some(index) && self.current_online_track.is_none() {
             self.is_playing = !self.is_playing;
         } else {
             self.current_track = Some(index);
+            self.current_online_track = None;
             self.is_playing = true;
         }
         self.notice = if self.is_playing {
@@ -202,18 +315,40 @@ impl MusicApp {
         cx.notify();
     }
 
+    fn toggle_online_track(&mut self, index: usize, cx: &mut Context<Self>) {
+        let row = self.search_results[index].clone();
+        if self.current_online_track.as_ref() == Some(&row) {
+            self.is_playing = !self.is_playing;
+        } else {
+            self.current_online_track = Some(row.clone());
+            self.current_track = None;
+            self.is_playing = true;
+        }
+        self.notice = if self.is_playing {
+            format!("正在播放 {}", row.title)
+        } else {
+            "播放已暂停".to_owned()
+        }
+        .into();
+        cx.notify();
+    }
+
     fn toggle_playback(&mut self, cx: &mut Context<Self>) {
-        if self.current_track.is_none() && !self.rows.is_empty() {
+        if self.current_track.is_none()
+            && self.current_online_track.is_none()
+            && !self.rows.is_empty()
+        {
             self.current_track = Some(0);
         }
-        let Some(index) = self.current_track else {
+        let Some(row) = self.current_row() else {
             self.notice = "曲库中没有可播放的歌曲".into();
             cx.notify();
             return;
         };
+        let title = row.title.clone();
         self.is_playing = !self.is_playing;
         self.notice = if self.is_playing {
-            format!("正在播放 {}", self.rows[index].title)
+            format!("正在播放 {title}")
         } else {
             "播放已暂停".to_owned()
         }
@@ -222,6 +357,22 @@ impl MusicApp {
     }
 
     fn play_offset(&mut self, offset: isize, cx: &mut Context<Self>) {
+        if let Some(current) = &self.current_online_track
+            && !self.search_results.is_empty()
+        {
+            let len = self.search_results.len() as isize;
+            let current_index = self
+                .search_results
+                .iter()
+                .position(|row| row == current)
+                .unwrap_or(0) as isize;
+            let index = (current_index + offset).rem_euclid(len) as usize;
+            self.current_online_track = Some(self.search_results[index].clone());
+            self.is_playing = true;
+            self.notice = format!("正在播放 {}", self.search_results[index].title).into();
+            cx.notify();
+            return;
+        }
         if self.rows.is_empty() {
             self.notice = "曲库中没有可播放的歌曲".into();
             cx.notify();
@@ -234,6 +385,12 @@ impl MusicApp {
         self.is_playing = true;
         self.notice = format!("正在播放 {}", self.rows[index].title).into();
         cx.notify();
+    }
+
+    fn current_row(&self) -> Option<&TrackRow> {
+        self.current_online_track
+            .as_ref()
+            .or_else(|| self.current_track.and_then(|index| self.rows.get(index)))
     }
 
     fn filtered_rows(&self) -> Vec<(usize, TrackRow)> {
@@ -296,7 +453,9 @@ impl MusicApp {
                             .text_sm()
                             .text_color(rgb(MUTED))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.open_search(cx)))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_search(window, cx)),
+                            )
                             .child(if self.query.is_empty() {
                                 "⌕  搜索曲库".to_owned()
                             } else {
@@ -340,7 +499,13 @@ impl MusicApp {
                     .bg(rgb(background))
                     .text_color(rgb(color))
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if tab == Tab::Search {
+                            this.open_search(window, cx);
+                        } else {
+                            this.select_tab(tab, cx);
+                        }
+                    }))
                     .child(div().w(px(22.0)).text_xl().child(tab.glyph()))
                     .child(div().text_sm().child(tab.label())),
             );
@@ -395,7 +560,8 @@ impl MusicApp {
     fn content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         match self.active_tab {
             Tab::Home => self.home_content(cx).into_any_element(),
-            Tab::Search | Tab::Library => self.library_content(cx).into_any_element(),
+            Tab::Search => self.search_content(cx).into_any_element(),
+            Tab::Library => self.library_content(cx).into_any_element(),
             Tab::Rankings => self.rankings_content(cx).into_any_element(),
             Tab::Playlists => self.playlists_content(cx).into_any_element(),
             Tab::Sources => self.sources_content(cx).into_any_element(),
@@ -405,8 +571,7 @@ impl MusicApp {
 
     fn home_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let now_playing = self
-            .current_track
-            .and_then(|index| self.rows.get(index))
+            .current_row()
             .map(|row| row.title.clone())
             .unwrap_or_else(|| "还没有正在播放的歌曲".into());
         div()
@@ -440,6 +605,176 @@ impl MusicApp {
             )
             .child(self.section_title("最近添加", "查看全部", cx))
             .child(self.track_list(cx, self.rows.iter().cloned().enumerate().take(4)))
+    }
+
+    fn search_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let input = self
+            .search_input
+            .as_ref()
+            .expect("search input is initialized before rendering")
+            .clone();
+        let mut channels = div().flex().items_center().gap_1();
+        for (channel_index, channel) in OnlineSearchChannel::ALL.into_iter().enumerate() {
+            let selected = channel == self.search_channel;
+            channels = channels.child(
+                div()
+                    .id(("search-channel", channel_index))
+                    .px(px(14.0))
+                    .py(px(8.0))
+                    .rounded_md()
+                    .bg(rgb(if selected { MOSS } else { PAPER_LIGHT }))
+                    .border_1()
+                    .border_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
+                    .text_sm()
+                    .text_color(rgb(if selected { PAPER_LIGHT } else { MUTED }))
+                    .cursor_pointer()
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.select_search_channel(channel, cx)),
+                    )
+                    .child(channel.label()),
+            );
+        }
+
+        let mut results = div().flex().flex_col().gap_1();
+        if self.search_in_progress {
+            results = results.child(search_status(
+                "正在寻找声音",
+                format!("正在连接 {}", self.search_channel.label()),
+            ));
+        } else if let Some(error) = &self.search_error {
+            results = results.child(search_status("暂时无法搜索", error.clone()));
+        } else if self.query.is_empty() {
+            results = results.child(search_status(
+                "从一次搜索开始",
+                "输入关键词并选择音乐渠道".to_owned(),
+            ));
+        } else if self.search_results.is_empty() {
+            results = results.child(search_status(
+                "没有找到匹配歌曲",
+                format!("{} · {}", self.search_channel.label(), self.query),
+            ));
+        } else {
+            for (index, row) in self.search_results.iter().cloned().enumerate() {
+                let selected = self.current_online_track.as_ref() == Some(&row);
+                let playing = selected && self.is_playing;
+                results = results.child(
+                    div()
+                        .id(("online-track", index))
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .px(px(12.0))
+                        .py(px(11.0))
+                        .rounded_md()
+                        .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
+                        .cursor_pointer()
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.toggle_online_track(index, cx)),
+                        )
+                        .child(
+                            div()
+                                .size(px(34.0))
+                                .rounded_md()
+                                .bg(rgb(if playing { CLAY } else { PAPER_DEEP }))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_color(rgb(if playing { PAPER_LIGHT } else { MOSS }))
+                                .child(if playing { "Ⅱ" } else { "▶" }),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(MUTED))
+                                        .child(format!("{} · {}", row.artist, row.album)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_end()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(MOSS))
+                                        .child(self.search_channel.label()),
+                                )
+                                .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+                        ),
+                );
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("online-search-input")
+                            .flex_1()
+                            .px(px(14.0))
+                            .py(px(10.0))
+                            .rounded_md()
+                            .bg(rgb(PAPER_LIGHT))
+                            .border_1()
+                            .border_color(rgb(PAPER_DEEP))
+                            .overflow_hidden()
+                            .child(input),
+                    )
+                    .child(
+                        action_button("清除", PAPER_DEEP, MOSS)
+                            .id("clear-search")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.clear_search(window, cx)),
+                            ),
+                    )
+                    .child(
+                        action_button("搜索", MOSS, PAPER_LIGHT)
+                            .id("submit-search")
+                            .on_click(cx.listener(|this, _, _, cx| this.perform_search(cx))),
+                    ),
+            )
+            .child(channels)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .pt(px(6.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("在线搜索"),
+                    )
+                    .child(div().text_xs().text_color(rgb(MUTED)).child(
+                        if self.query.is_empty() {
+                            "选择渠道后开始搜索".to_owned()
+                        } else {
+                            format!(
+                                "{} 条结果 · {}",
+                                self.search_results.len(),
+                                self.search_channel.label()
+                            )
+                        },
+                    )),
+            )
+            .child(results)
     }
 
     fn library_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -705,12 +1040,8 @@ impl MusicApp {
 
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (title, artist) = self
-            .current_track
-            .and_then(|index| {
-                self.rows
-                    .get(index)
-                    .map(|row| (row.title.clone(), row.artist.clone()))
-            })
+            .current_row()
+            .map(|row| (row.title.clone(), row.artist.clone()))
             .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into()));
         let playing = self.is_playing;
         div()
@@ -731,8 +1062,8 @@ impl MusicApp {
                     .flex_1()
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(index) = this.current_track {
-                            this.notice = format!("正在查看 {}", this.rows[index].title).into();
+                        if let Some(row) = this.current_row() {
+                            this.notice = format!("正在查看 {}", row.title).into();
                         } else {
                             this.notice = "请先选择一首歌曲".into();
                         }
@@ -799,7 +1130,8 @@ impl MusicApp {
 }
 
 impl Render for MusicApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.initialize_search_input(window, cx);
         div()
             .size_full()
             .flex()
@@ -952,8 +1284,27 @@ fn empty_state(title: &'static str, description: &'static str) -> gpui::Div {
         .child(div().text_sm().text_color(rgb(MUTED)).child(description))
 }
 
+fn search_status(title: &'static str, detail: impl Into<SharedString>) -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_2()
+        .py(px(48.0))
+        .child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(INK))
+                .child(title),
+        )
+        .child(div().text_sm().text_color(rgb(MUTED)).child(detail.into()))
+}
+
 fn main() {
     Application::new().run(|cx: &mut App| {
+        SearchInput::init(cx);
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
