@@ -3,7 +3,7 @@ mod search_input;
 
 use gpui::{
     App, Application, Bounds, Context, Entity, Render, SharedString, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, rgb, size,
+    WindowOptions, div, img, prelude::*, px, rgb, size,
 };
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
@@ -116,6 +116,8 @@ struct MusicApp {
     search_error: Option<SharedString>,
     search_in_progress: bool,
     search_generation: u64,
+    source_script: Option<String>,
+    source_name: SharedString,
     play_generation: u64,
     audio_player: Option<AudioPlayer>,
     notice: SharedString,
@@ -158,6 +160,8 @@ impl MusicApp {
             search_error: None,
             search_in_progress: false,
             search_generation: 0,
+            source_script: None,
+            source_name: "内置音源".into(),
             play_generation: 0,
             audio_player: None,
             notice: "准备播放".into(),
@@ -246,6 +250,42 @@ impl MusicApp {
                         this.search_error = Some(error.to_string().into());
                         this.notice = "在线搜索失败".into();
                     }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn import_source(&mut self, cx: &mut Context<Self>) {
+        self.notice = "请选择音源脚本文件".into();
+        cx.notify();
+        let task = cx.background_spawn(async {
+            let path = rfd::FileDialog::new()
+                .add_filter("音源脚本", &["js", "mjs", "txt"])
+                .pick_file();
+            path.map(|path| {
+                std::fs::read_to_string(&path)
+                    .map_err(|error| format!("读取音源失败：{error}"))
+                    .and_then(|script| {
+                        wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
+                            .map(|manifest| (script, manifest.metadata.name))
+                            .map_err(|error| format!("音源校验失败：{error}"))
+                    })
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok((script, name))) => {
+                        this.source_script = Some(script);
+                        this.source_name = name.into();
+                        this.notice = format!("已导入音源：{}", this.source_name).into();
+                    }
+                    Some(Err(error)) => this.notice = error.into(),
+                    None => this.notice = "已取消导入音源".into(),
                 }
                 cx.notify();
             })
@@ -380,10 +420,12 @@ impl MusicApp {
             }
         };
         let quality = ["128k", "320k", "flac"][self.quality_index];
+        let script = self.source_script.clone().unwrap_or_else(|| {
+            include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
+        });
         let task = cx.background_spawn(async move {
-            let script = include_str!("../../../assets/sources/paojiao_internal_source.js");
             let url = resolve_source_url(
-                script,
+                &script,
                 SourceEnvironment::Desktop,
                 source_key,
                 &source_id,
@@ -801,6 +843,7 @@ impl MusicApp {
                                 .text_color(rgb(if playing { PAPER_LIGHT } else { MOSS }))
                                 .child(if playing { "Ⅱ" } else { "▶" }),
                         )
+                        .child(track_artwork(&row))
                         .child(
                             div()
                                 .flex_1()
@@ -959,6 +1002,7 @@ impl MusicApp {
                             .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
                             .child(if playing { "Ⅱ" } else { "▶" }),
                     )
+                    .child(track_artwork(&row))
                     .child(
                         div()
                             .flex_1()
@@ -1008,7 +1052,13 @@ impl MusicApp {
                     .text_xs()
                     .text_color(rgb(MOSS))
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.announce(action, cx)))
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        if action == "导入脚本" {
+                            this.import_source(cx);
+                        } else {
+                            this.announce(action, cx);
+                        }
+                    }))
                     .child(action),
             )
     }
@@ -1101,7 +1151,7 @@ impl MusicApp {
                         div()
                             .text_lg()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("泡椒内部测试音源"),
+                            .child(self.source_name.clone()),
                     )
                     .child(
                         div()
@@ -1290,6 +1340,26 @@ fn player_button(glyph: &'static str) -> gpui::Div {
         .text_color(rgb(MOSS))
         .cursor_pointer()
         .child(glyph)
+}
+
+fn track_artwork(row: &TrackRow) -> gpui::AnyElement {
+    match row.track.artwork_uri.as_deref() {
+        Some(uri) => img(uri.to_owned())
+            .size(px(40.0))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element(),
+        None => div()
+            .size(px(40.0))
+            .rounded_md()
+            .bg(rgb(PAPER_DEEP))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(MOSS))
+            .child("♫")
+            .into_any_element(),
+    }
 }
 
 fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui::Div {
