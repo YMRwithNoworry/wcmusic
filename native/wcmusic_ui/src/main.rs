@@ -293,32 +293,22 @@ impl MusicApp {
             return;
         };
         self.notice = "正在读取并校验音源...".into();
+        let result = std::fs::read_to_string(&path)
+            .map_err(|error| format!("读取音源失败：{error}"))
+            .and_then(|script| {
+                wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
+                    .map(|manifest| (script, manifest.metadata.name))
+                    .map_err(|error| format!("音源校验失败：{error}"))
+            });
+        match result {
+            Ok((script, name)) => {
+                self.source_script = Some(script);
+                self.source_name = name.into();
+                self.notice = format!("已导入音源：{}", self.source_name).into();
+            }
+            Err(error) => self.notice = error.into(),
+        }
         cx.notify();
-        let task = cx.background_spawn(async move {
-            std::fs::read_to_string(&path)
-                .map_err(|error| format!("读取音源失败：{error}"))
-                .and_then(|script| {
-                    wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
-                        .map(|manifest| (script, manifest.metadata.name))
-                        .map_err(|error| format!("音源校验失败：{error}"))
-                })
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok((script, name)) => {
-                        this.source_script = Some(script);
-                        this.source_name = name.into();
-                        this.notice = format!("已导入音源：{}", this.source_name).into();
-                    }
-                    Err(error) => this.notice = error.into(),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     fn select_search_channel(&mut self, channel: OnlineSearchChannel, cx: &mut Context<Self>) {
