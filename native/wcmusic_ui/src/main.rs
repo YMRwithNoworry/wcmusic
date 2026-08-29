@@ -1,3 +1,4 @@
+mod audio_player;
 mod search_input;
 
 use gpui::{
@@ -5,7 +6,12 @@ use gpui::{
     WindowOptions, div, prelude::*, px, rgb, size,
 };
 use search_input::{SearchInput, SearchInputEvent};
-use wcmusic_core::{LibraryIndex, OnlineSearchChannel, Track, search_online};
+use wcmusic_core::{
+    LibraryIndex, OnlineSearchChannel, SourceEnvironment, Track, TrackSource, resolve_source_url,
+    search_online,
+};
+
+use crate::audio_player::{AudioPlayer, download_audio};
 
 const PAPER: u32 = 0xf2efe7;
 const PAPER_LIGHT: u32 = 0xf8f6f2;
@@ -65,6 +71,7 @@ impl Tab {
 
 #[derive(Clone, PartialEq, Eq)]
 struct TrackRow {
+    track: Track,
     title: SharedString,
     artist: SharedString,
     album: SharedString,
@@ -80,18 +87,19 @@ impl TrackRow {
             format!("{:02}:{:02}", seconds / 60, seconds % 60)
         };
         Self {
-            title: track.title.into(),
+            title: track.title.clone().into(),
             artist: if track.artist.is_empty() {
                 "本地音乐".into()
             } else {
-                track.artist.into()
+                track.artist.clone().into()
             },
             album: if track.album.is_empty() {
                 "最近添加".into()
             } else {
-                track.album.into()
+                track.album.clone().into()
             },
             duration: duration.into(),
+            track,
         }
     }
 }
@@ -108,6 +116,8 @@ struct MusicApp {
     search_error: Option<SharedString>,
     search_in_progress: bool,
     search_generation: u64,
+    play_generation: u64,
+    audio_player: Option<AudioPlayer>,
     notice: SharedString,
     quality_index: usize,
     dark_theme: bool,
@@ -148,6 +158,8 @@ impl MusicApp {
             search_error: None,
             search_in_progress: false,
             search_generation: 0,
+            play_generation: 0,
+            audio_player: None,
             notice: "准备播放".into(),
             quality_index: 2,
             dark_theme: false,
@@ -299,6 +311,10 @@ impl MusicApp {
     }
 
     fn toggle_track(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.rows[index].track.source != TrackSource::Local {
+            self.start_playback(self.rows[index].track.clone(), false, cx);
+            return;
+        }
         if self.current_track == Some(index) && self.current_online_track.is_none() {
             self.is_playing = !self.is_playing;
         } else {
@@ -318,19 +334,111 @@ impl MusicApp {
     fn toggle_online_track(&mut self, index: usize, cx: &mut Context<Self>) {
         let row = self.search_results[index].clone();
         if self.current_online_track.as_ref() == Some(&row) {
-            self.is_playing = !self.is_playing;
+            self.toggle_playback(cx);
+            return;
         } else {
             self.current_online_track = Some(row.clone());
             self.current_track = None;
-            self.is_playing = true;
         }
-        self.notice = if self.is_playing {
-            format!("正在播放 {}", row.title)
+        self.start_playback(row.track, true, cx);
+    }
+
+    fn start_playback(&mut self, track: Track, online: bool, cx: &mut Context<Self>) {
+        self.play_generation += 1;
+        let generation = self.play_generation;
+        if let Some(player) = self.audio_player.as_mut() {
+            player.stop();
+        }
+        self.is_playing = false;
+        self.notice = if online {
+            format!("正在通过{}解析整曲...", self.search_channel.label())
         } else {
-            "播放已暂停".to_owned()
+            format!("正在准备 {}", track.title)
         }
         .into();
         cx.notify();
+
+        if track.source == TrackSource::Local {
+            self.notice = "本地歌曲文件不可用".into();
+            cx.notify();
+            return;
+        }
+        let Some(source_id) = track.source_id.clone() else {
+            self.notice = "搜索结果缺少平台歌曲 ID".into();
+            cx.notify();
+            return;
+        };
+        let source_key = match track.source {
+            TrackSource::Kw => "kw",
+            TrackSource::Kg => "kg",
+            TrackSource::Tx => "tx",
+            TrackSource::Wy => "wy",
+            _ => {
+                self.notice = "该歌曲暂不支持整曲解析".into();
+                cx.notify();
+                return;
+            }
+        };
+        let quality = ["128k", "320k", "flac"][self.quality_index];
+        let task = cx.background_spawn(async move {
+            let script = include_str!("../../../assets/sources/paojiao_internal_source.js");
+            let url = resolve_source_url(
+                script,
+                SourceEnvironment::Desktop,
+                source_key,
+                &source_id,
+                quality,
+            )
+            .map_err(|error| error.to_string())?;
+            let bytes = download_audio(&url)?;
+            Ok::<_, String>((url, bytes))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.play_generation {
+                    return;
+                }
+                match result {
+                    Ok((_url, bytes)) => {
+                        let player = match this.audio_player.as_mut() {
+                            Some(player) => player,
+                            None => match AudioPlayer::new() {
+                                Ok(player) => {
+                                    this.audio_player = Some(player);
+                                    this.audio_player
+                                        .as_mut()
+                                        .expect("audio player initialized")
+                                }
+                                Err(error) => {
+                                    this.notice = error.into();
+                                    this.is_playing = false;
+                                    cx.notify();
+                                    return;
+                                }
+                            },
+                        };
+                        match player.play(bytes) {
+                            Ok(()) => {
+                                this.is_playing = true;
+                                this.notice = format!("正在播放 {}", track.title).into();
+                            }
+                            Err(error) => {
+                                this.is_playing = false;
+                                this.notice = format!("播放失败：{error}").into();
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        this.is_playing = false;
+                        this.notice = format!("整曲解析失败：{error}").into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn toggle_playback(&mut self, cx: &mut Context<Self>) {
@@ -346,7 +454,20 @@ impl MusicApp {
             return;
         };
         let title = row.title.clone();
-        self.is_playing = !self.is_playing;
+        let Some(player) = self.audio_player.as_ref() else {
+            self.notice = "音频还未准备好，请稍候".into();
+            cx.notify();
+            return;
+        };
+        let playing = match player.toggle() {
+            Ok(playing) => playing,
+            Err(error) => {
+                self.notice = format!("播放控制失败：{error}").into();
+                cx.notify();
+                return;
+            }
+        };
+        self.is_playing = playing;
         self.notice = if self.is_playing {
             format!("正在播放 {title}")
         } else {
@@ -367,10 +488,9 @@ impl MusicApp {
                 .position(|row| row == current)
                 .unwrap_or(0) as isize;
             let index = (current_index + offset).rem_euclid(len) as usize;
-            self.current_online_track = Some(self.search_results[index].clone());
-            self.is_playing = true;
-            self.notice = format!("正在播放 {}", self.search_results[index].title).into();
-            cx.notify();
+            let row = self.search_results[index].clone();
+            self.current_online_track = Some(row.clone());
+            self.start_playback(row.track, true, cx);
             return;
         }
         if self.rows.is_empty() {
@@ -382,9 +502,8 @@ impl MusicApp {
         let current = self.current_track.unwrap_or(0) as isize;
         let index = (current + offset).rem_euclid(len) as usize;
         self.current_track = Some(index);
-        self.is_playing = true;
-        self.notice = format!("正在播放 {}", self.rows[index].title).into();
-        cx.notify();
+        self.current_online_track = None;
+        self.start_playback(self.rows[index].track.clone(), false, cx);
     }
 
     fn current_row(&self) -> Option<&TrackRow> {
