@@ -285,7 +285,8 @@ impl MusicApp {
     fn import_source(&mut self, cx: &mut Context<Self>) {
         let Some(path) = rfd::FileDialog::new()
             .set_title("选择音源脚本")
-            .add_filter("音源脚本", &["js", "mjs", "txt"])
+            .add_filter("音源脚本", &["js", "mjs", "txt", "json"])
+            .add_filter("所有文件", &["*"])
             .pick_file()
         else {
             self.notice = "已取消导入音源".into();
@@ -1174,7 +1175,8 @@ impl MusicApp {
                     .gap_2()
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.announce("音源已选择：泡椒内部测试音源", cx)
+                        this.notice = format!("音源已选择：{}", this.source_name).into();
+                        cx.notify();
                     }))
                     .child(
                         div()
@@ -1182,12 +1184,13 @@ impl MusicApp {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(self.source_name.clone()),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(MUTED))
-                            .child("已启用 · 支持酷我、酷狗、QQ、网易云"),
-                    )
+                    .child(div().text_sm().text_color(rgb(MUTED)).child(
+                        if self.source_script.is_some() {
+                            "已导入并启用 · 支持酷我、酷狗、QQ、网易云"
+                        } else {
+                            "内置音源 · 支持酷我、酷狗、QQ、网易云"
+                        },
+                    ))
                     .child(
                         div()
                             .text_xs()
