@@ -1473,7 +1473,7 @@ impl MusicApp {
     }
 
     fn rankings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut content =
+        let content =
             div()
                 .flex()
                 .flex_col()
@@ -1481,63 +1481,145 @@ impl MusicApp {
                 .child(self.section_title("热门榜单", "刷新榜单", cx));
 
         if self.rankings_loading {
-            content = content.child(search_status(
+            return content.child(search_status(
                 "正在更新平台榜单",
                 "正在连接酷狗、QQ、酷我和网易云音乐…",
             ));
-        } else if let Some(error) = &self.rankings_error {
-            content = content.child(search_status("榜单暂时不可用", error.clone()));
-        } else if self.rankings.is_empty() {
-            content = content.child(search_status(
+        }
+        if let Some(error) = &self.rankings_error {
+            return content.child(search_status("榜单暂时不可用", error.clone()));
+        }
+        if self.rankings.is_empty() {
+            return content.child(search_status(
                 "还没有榜单",
                 "点击右上角刷新，从各大音乐平台获取实时榜单。",
             ));
-        } else {
-            for (index, ranking) in self.rankings.iter().enumerate() {
-                let selected = self.selected_ranking == Some(index);
-                let count = if selected && !self.ranking_tracks.is_empty() {
-                    format!("{} 首歌曲", self.ranking_tracks.len())
-                } else {
-                    "点击加载歌曲".to_owned()
-                };
-                content = content.child(
-                    ranking_card(
-                        ranking.name.clone().into(),
-                        ranking.channel.label().into(),
-                        count.into(),
-                        selected,
-                    )
+        }
+
+        let mut ranking_nav = div()
+            .w(px(224.0))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .pr(px(14.0))
+            .border_r_1()
+            .border_color(rgb(PAPER_DEEP))
+            .child(
+                div()
+                    .px(px(10.0))
+                    .pb(px(6.0))
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child("平台榜单"),
+            );
+        for (index, ranking) in self.rankings.iter().enumerate() {
+            let selected = self.selected_ranking == Some(index);
+            let count = if selected && !self.ranking_tracks.is_empty() {
+                format!("{} 首歌曲", self.ranking_tracks.len())
+            } else {
+                "点击查看实时歌曲".to_owned()
+            };
+            ranking_nav = ranking_nav.child(
+                div()
                     .id(("ranking", index))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_ranking(index, cx))),
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px(px(10.0))
+                    .py(px(9.0))
+                    .rounded_md()
+                    .bg(if selected {
+                        rgb(MOSS_TINT)
+                    } else {
+                        rgb(PAPER_LIGHT)
+                    })
+                    .text_color(rgb(if selected { MOSS } else { INK }))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_ranking(index, cx)))
+                    .child(
+                        div()
+                            .w(px(4.0))
+                            .h(px(30.0))
+                            .rounded_full()
+                            .bg(rgb(if selected { MOSS } else { PAPER_DEEP })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(ranking.name.clone()),
+                            )
+                            .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                                "{} · {}",
+                                ranking.channel.label(),
+                                count
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
+                            .child("›"),
+                    ),
+            );
+        }
+
+        let mut tracks_panel = div().flex_1().flex().flex_col().gap_2();
+        if let Some(selected) = self.selected_ranking {
+            if let Some(ranking) = self.rankings.get(selected) {
+                tracks_panel = tracks_panel.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .pb(px(6.0))
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(ranking.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(MUTED))
+                                .child(ranking.channel.label()),
+                        ),
                 );
             }
-
-            if let Some(selected) = self.selected_ranking {
-                if let Some(ranking) = self.rankings.get(selected) {
-                    content = content.child(
-                        div()
-                            .pt(px(8.0))
-                            .text_sm()
-                            .text_color(rgb(MUTED))
-                            .child(format!("{} · {}", ranking.channel.label(), ranking.name)),
-                    );
-                }
-                if self.ranking_tracks_loading {
-                    content =
-                        content.child(search_status("正在加载榜单歌曲", "正在读取平台最新排名…"));
-                } else if let Some(error) = &self.ranking_tracks_error {
-                    content = content.child(search_status("歌曲列表加载失败", error.clone()));
-                } else if self.ranking_tracks.is_empty() {
-                    content = content.child(search_status(
-                        "选择一个榜单",
-                        "点击上方榜单卡片查看实时歌曲。",
-                    ));
-                } else {
-                    content = content.child(self.ranking_track_list(cx));
-                }
+            if self.ranking_tracks_loading {
+                tracks_panel =
+                    tracks_panel.child(search_status("正在加载榜单歌曲", "正在读取平台最新排名…"));
+            } else if let Some(error) = &self.ranking_tracks_error {
+                tracks_panel = tracks_panel.child(search_status("歌曲列表加载失败", error.clone()));
+            } else if self.ranking_tracks.is_empty() {
+                tracks_panel =
+                    tracks_panel.child(search_status("选择一个榜单", "点击左侧榜单查看实时歌曲。"));
+            } else {
+                tracks_panel = tracks_panel.child(self.ranking_track_list(cx));
             }
+        } else {
+            tracks_panel =
+                tracks_panel.child(search_status("选择一个榜单", "点击左侧榜单查看实时歌曲。"));
         }
-        content
+
+        content.child(
+            div()
+                .w_full()
+                .flex()
+                .gap_4()
+                .items_start()
+                .child(ranking_nav)
+                .child(tracks_panel),
+        )
     }
 
     fn ranking_track_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1562,6 +1644,13 @@ impl MusicApp {
                     .cursor_pointer()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.toggle_ranking_track(index, cx)),
+                    )
+                    .child(
+                        div()
+                            .w(px(28.0))
+                            .text_xs()
+                            .text_color(rgb(if selected { MOSS } else { MUTED }))
+                            .child(format!("{:02}", index + 1)),
                     )
                     .child(
                         div()
@@ -1982,43 +2071,6 @@ fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui:
         .text_color(rgb(foreground))
         .cursor_pointer()
         .child(label)
-}
-
-fn ranking_card(
-    title: SharedString,
-    description: SharedString,
-    count: SharedString,
-    selected: bool,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .p(px(18.0))
-        .rounded_md()
-        .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
-        .border_1()
-        .border_color(rgb(PAPER_DEEP))
-        .cursor_pointer()
-        .child(
-            div()
-                .size(px(38.0))
-                .rounded_md()
-                .bg(rgb(if selected { MOSS } else { MOSS_TINT }))
-                .text_color(rgb(if selected { PAPER_LIGHT } else { MOSS }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child("♫"),
-        )
-        .child(
-            div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(title),
-        )
-        .child(div().text_sm().text_color(rgb(MUTED)).child(description))
-        .child(div().text_xs().text_color(rgb(MOSS)).child(count))
 }
 
 fn playlist_card(title: &'static str, description: &'static str) -> gpui::Div {
