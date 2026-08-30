@@ -281,7 +281,20 @@ impl MusicApp {
             Ok::<Vec<TrackRow>, String>(
                 tracks
                     .into_iter()
-                    .map(TrackRow::from_core)
+                    .enumerate()
+                    .map(|(index, track)| {
+                        // Keep the first visible page responsive while still
+                        // showing real platform artwork in the ranking list.
+                        let artwork_path = if index < 24 {
+                            track
+                                .artwork_uri
+                                .as_deref()
+                                .and_then(|uri| download_artwork(uri, &track.id, use_proxy).ok())
+                        } else {
+                            None
+                        };
+                        TrackRow::from_core_with_artwork(track, artwork_path)
+                    })
                     .collect(),
             )
         });
