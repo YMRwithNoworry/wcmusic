@@ -6697,11 +6697,13 @@ name = "wcmusic_ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "raw-window-handle",
  "rfd",
  "rodio",
  "unicode-segmentation",
  "ureq",
  "wcmusic_core",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

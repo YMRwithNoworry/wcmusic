@@ -2,12 +2,14 @@
 
 mod audio_player;
 mod search_input;
+mod tray;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, Application, Bounds, Context, Entity, Render, SharedString, Window, WindowBounds,
-    WindowOptions, div, img, prelude::*, px, rgb, size,
+    AnyWindowHandle, App, Application, Bounds, Context, Entity, Render, SharedString, Timer,
+    Window, WindowBounds, WindowOptions, div, img, prelude::*, px, rgb, size,
 };
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
@@ -1869,15 +1871,67 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>) -> gpui::
 fn main() {
     Application::new().run(|cx: &mut App| {
         SearchInput::init(cx);
+        let tray = tray::TrayController::new().map(Arc::new);
+        let keep_in_tray = tray.is_some();
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| MusicApp::new()),
-        )
-        .expect("failed to open WCMusic GPUI window");
+        let window_handle = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                move |window, cx| {
+                    if keep_in_tray {
+                        window.on_window_should_close(cx, |window, _cx| {
+                            if let Some(hwnd) = tray::native_window_handle(window) {
+                                tray::hide_window(hwnd);
+                            }
+                            // Closing the window means hiding it to the tray. The
+                            // tray's explicit Exit command is the only operation
+                            // that quits the process.
+                            false
+                        });
+                    }
+                    cx.new(|_| MusicApp::new())
+                },
+            )
+            .expect("failed to open WCMusic GPUI window");
+
+        if let Some(tray) = tray {
+            let events = tray.events();
+            let tray_for_quit = tray.clone();
+            cx.on_app_quit(move |_| {
+                tray_for_quit.shutdown();
+                async {}
+            })
+            .detach();
+
+            let window_handle: AnyWindowHandle = window_handle.into();
+            let tray_for_events = tray.clone();
+            cx.spawn(async move |cx| {
+                loop {
+                    Timer::after(Duration::from_millis(100)).await;
+                    match events.try_recv() {
+                        Some(tray::TrayEvent::Show) => {
+                            let _ = window_handle.update(cx, |_, window, _| {
+                                if let Some(hwnd) = tray::native_window_handle(window) {
+                                    tray::show_window(hwnd);
+                                }
+                                window.activate_window();
+                            });
+                        }
+                        Some(tray::TrayEvent::Exit) => {
+                            tray_for_events.shutdown();
+                            let _ = cx.update(|cx| cx.quit());
+                            break;
+                        }
+                        None => {}
+                    }
+                }
+            })
+            .detach();
+        }
+
         cx.activate(true);
     });
 }
