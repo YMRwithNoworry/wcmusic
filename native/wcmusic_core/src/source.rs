@@ -42,7 +42,7 @@ pub fn validate_source_script(
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(512 * 1024);
+    runtime.set_max_stack_size(8 * 1024 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, false)?;
@@ -113,7 +113,7 @@ pub fn resolve_source_url_with_proxy(
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(512 * 1024);
+    runtime.set_max_stack_size(8 * 1024 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, use_proxy)?;
