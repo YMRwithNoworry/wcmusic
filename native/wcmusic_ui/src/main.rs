@@ -123,6 +123,7 @@ struct MusicApp {
     current_track: Option<usize>,
     current_online_track: Option<TrackRow>,
     is_playing: bool,
+    show_now_playing: bool,
     volume: f32,
     elapsed_ms: u64,
     query: SharedString,
@@ -171,6 +172,7 @@ impl MusicApp {
             current_track: None,
             current_online_track: None,
             is_playing: false,
+            show_now_playing: false,
             volume: 0.8,
             elapsed_ms: 0,
             query: "".into(),
@@ -197,6 +199,7 @@ impl MusicApp {
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.active_tab = tab;
+        self.show_now_playing = false;
         self.notice = format!("已打开 {}", tab.label()).into();
         cx.notify();
     }
@@ -592,6 +595,20 @@ impl MusicApp {
         cx.notify();
     }
 
+    fn open_now_playing(&mut self, cx: &mut Context<Self>) {
+        if self.current_row().is_none() {
+            self.notice = "请先选择一首歌曲".into();
+        } else {
+            self.show_now_playing = true;
+        }
+        cx.notify();
+    }
+
+    fn close_now_playing(&mut self, cx: &mut Context<Self>) {
+        self.show_now_playing = false;
+        cx.notify();
+    }
+
     fn adjust_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
         self.volume = (self.volume + delta).clamp(0.0, 1.0);
         if let Some(player) = &self.audio_player {
@@ -863,6 +880,9 @@ impl MusicApp {
     }
 
     fn content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.show_now_playing {
+            return self.now_playing_content(cx);
+        }
         match self.active_tab {
             Tab::Home => self.home_content(cx).into_any_element(),
             Tab::Search => self.search_content(cx).into_any_element(),
@@ -872,6 +892,101 @@ impl MusicApp {
             Tab::Sources => self.sources_content(cx).into_any_element(),
             Tab::Settings => self.settings_content(cx).into_any_element(),
         }
+    }
+
+    fn now_playing_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(row) = self.current_row() else {
+            return div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(MUTED))
+                .child("请先选择一首歌曲")
+                .into_any_element();
+        };
+        let title = row.title.clone();
+        let artist = row.artist.clone();
+        let album = row.album.clone();
+        let artwork = track_artwork_sized(row, 320.0);
+        let lyrics = [
+            "How many winters in a gaze",
+            "Lost inside a maze?",
+            "And how many feelings unspoken",
+            "Held in this hand?",
+            "The weight of the old skies on my shoulders",
+            "Sunlight in disguise",
+            "Who would have known",
+        ];
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("正在播放"),
+                    )
+                    .child(
+                        div()
+                            .id("close-now-playing")
+                            .px(px(12.0))
+                            .py(px(7.0))
+                            .rounded_md()
+                            .bg(rgb(PAPER_DEEP))
+                            .text_sm()
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
+                            .child("返回"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_8()
+                    .items_center()
+                    .child(
+                        div()
+                            .w(px(360.0))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_3()
+                            .child(artwork)
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(title),
+                            )
+                            .child(div().text_sm().text_color(rgb(MUTED)).child(artist))
+                            .child(div().text_xs().text_color(rgb(MUTED)).child(album)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_5()
+                            .children(lyrics.into_iter().enumerate().map(|(index, line)| {
+                                div()
+                                    .text_lg()
+                                    .text_color(rgb(if index == 0 { INK } else { MUTED }))
+                                    .child(line)
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn home_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1425,15 +1540,26 @@ impl MusicApp {
             .flex_col()
             .gap_2()
             .child(
-                div().flex().items_center().gap_3().child(artwork).child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(div().text_sm().text_color(rgb(INK)).child(title))
-                        .child(div().text_xs().text_color(rgb(MUTED)).child(artist)),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .id("now-playing-artwork")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.open_now_playing(cx)))
+                            .child(artwork),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_sm().text_color(rgb(INK)).child(title))
+                            .child(div().text_xs().text_color(rgb(MUTED)).child(artist)),
+                    ),
             )
             .child(
                 div()
@@ -1568,14 +1694,18 @@ fn player_button(glyph: &'static str) -> gpui::Div {
 }
 
 fn track_artwork(row: &TrackRow) -> gpui::AnyElement {
+    track_artwork_sized(row, 40.0)
+}
+
+fn track_artwork_sized(row: &TrackRow, size: f32) -> gpui::AnyElement {
     match row.artwork_path.as_deref() {
         Some(path) => img(std::path::PathBuf::from(path.as_ref()))
-            .size(px(40.0))
+            .size(px(size))
             .rounded_md()
             .object_fit(gpui::ObjectFit::Cover)
             .into_any_element(),
         None => div()
-            .size(px(40.0))
+            .size(px(size))
             .rounded_md()
             .bg(rgb(PAPER_DEEP))
             .flex()
