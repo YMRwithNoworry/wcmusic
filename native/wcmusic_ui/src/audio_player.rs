@@ -45,6 +45,22 @@ impl AudioPlayer {
         }
     }
 
+    pub fn position(&self) -> Option<Duration> {
+        self.sink.as_ref().map(Sink::get_pos)
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        if let Some(sink) = &self.sink {
+            sink.set_volume(volume.clamp(0.0, 1.0));
+        }
+    }
+
+    pub fn seek(&self, position: Duration) -> Result<(), String> {
+        let sink = self.sink.as_ref().ok_or("当前没有已加载的音频")?;
+        sink.try_seek(position)
+            .map_err(|error| format!("调整播放进度失败: {error}"))
+    }
+
     pub fn stop(&mut self) {
         if let Some(sink) = self.sink.take() {
             sink.stop();

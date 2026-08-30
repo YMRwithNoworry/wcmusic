@@ -1,6 +1,8 @@
 mod audio_player;
 mod search_input;
 
+use std::time::Duration;
+
 use gpui::{
     App, Application, Bounds, Context, Entity, Render, SharedString, Window, WindowBounds,
     WindowOptions, div, img, prelude::*, px, rgb, size,
@@ -121,6 +123,8 @@ struct MusicApp {
     current_track: Option<usize>,
     current_online_track: Option<TrackRow>,
     is_playing: bool,
+    volume: f32,
+    elapsed_ms: u64,
     query: SharedString,
     search_input: Option<Entity<SearchInput>>,
     search_channel: OnlineSearchChannel,
@@ -167,6 +171,8 @@ impl MusicApp {
             current_track: None,
             current_online_track: None,
             is_playing: false,
+            volume: 0.8,
+            elapsed_ms: 0,
             query: "".into(),
             search_input: None,
             search_channel: OnlineSearchChannel::Kuwo,
@@ -449,6 +455,7 @@ impl MusicApp {
             player.stop();
         }
         self.is_playing = false;
+        self.elapsed_ms = 0;
         self.notice = if online {
             format!("正在通过{}解析整曲...", self.search_channel.label())
         } else {
@@ -521,9 +528,11 @@ impl MusicApp {
                                 }
                             },
                         };
+                        player.set_volume(this.volume);
                         match player.play(bytes) {
                             Ok(()) => {
                                 this.is_playing = true;
+                                this.schedule_progress_timer(cx);
                                 this.notice = format!("正在播放 {}", track.title).into();
                             }
                             Err(error) => {
@@ -571,6 +580,9 @@ impl MusicApp {
             }
         };
         self.is_playing = playing;
+        if playing {
+            self.schedule_progress_timer(cx);
+        }
         self.notice = if self.is_playing {
             format!("正在播放 {title}")
         } else {
@@ -578,6 +590,77 @@ impl MusicApp {
         }
         .into();
         cx.notify();
+    }
+
+    fn adjust_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.volume = (self.volume + delta).clamp(0.0, 1.0);
+        if let Some(player) = &self.audio_player {
+            player.set_volume(self.volume);
+        }
+        self.notice = format!("音量 {}%", (self.volume * 100.0).round() as u32).into();
+        cx.notify();
+    }
+
+    fn seek_by(&mut self, seconds: i64, cx: &mut Context<Self>) {
+        let Some(row) = self.current_row() else {
+            self.notice = "请先选择一首歌曲".into();
+            cx.notify();
+            return;
+        };
+        let current = self
+            .audio_player
+            .as_ref()
+            .and_then(AudioPlayer::position)
+            .unwrap_or_else(|| Duration::from_millis(self.elapsed_ms));
+        let duration = Duration::from_millis(row.track.duration_ms);
+        let target = if seconds.is_negative() {
+            current.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
+        } else {
+            current.saturating_add(Duration::from_secs(seconds as u64))
+        }
+        .min(duration);
+        if let Some(player) = &self.audio_player {
+            if let Err(error) = player.seek(target) {
+                self.notice = error.into();
+                cx.notify();
+                return;
+            }
+        }
+        self.elapsed_ms = target.as_millis() as u64;
+        self.notice = format!("已调整到 {}", format_duration(target)).into();
+        cx.notify();
+    }
+
+    fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                std::thread::sleep(Duration::from_millis(250));
+                let Ok(keep_running) = this.update(cx, |this, cx| {
+                    if !this.is_playing {
+                        return false;
+                    }
+                    if let Some(position) =
+                        this.audio_player.as_ref().and_then(AudioPlayer::position)
+                    {
+                        this.elapsed_ms = position.as_millis() as u64;
+                        if let Some(row) = this.current_row()
+                            && row.track.duration_ms > 0
+                            && this.elapsed_ms >= row.track.duration_ms
+                        {
+                            this.is_playing = false;
+                        }
+                    }
+                    cx.notify();
+                    this.is_playing
+                }) else {
+                    break;
+                };
+                if !keep_running {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn play_offset(&mut self, offset: isize, cx: &mut Context<Self>) {
@@ -1314,10 +1397,23 @@ impl MusicApp {
     }
 
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (title, artist) = self
-            .current_row()
-            .map(|row| (row.title.clone(), row.artist.clone()))
-            .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into()));
+        let row = self.current_row();
+        let (title, artist, duration_ms) = row
+            .map(|row| (row.title.clone(), row.artist.clone(), row.track.duration_ms))
+            .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into(), 0));
+        let artwork = row.map(track_artwork).unwrap_or_else(empty_artwork);
+        let elapsed = self
+            .audio_player
+            .as_ref()
+            .and_then(AudioPlayer::position)
+            .unwrap_or_else(|| Duration::from_millis(self.elapsed_ms));
+        let elapsed_ms = elapsed.as_millis() as u64;
+        let progress = if duration_ms == 0 {
+            0.0
+        } else {
+            (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0)
+        };
+        let progress_fill = px(360.0 * progress);
         let playing = self.is_playing;
         div()
             .w_full()
@@ -1326,55 +1422,39 @@ impl MusicApp {
             .border_t_1()
             .border_color(rgb(PAPER_DEEP))
             .flex()
-            .items_center()
-            .gap_3()
+            .flex_col()
+            .gap_2()
             .child(
-                div()
-                    .id("now-playing-info")
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .flex_1()
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(row) = this.current_row() {
-                            this.notice = format!("正在查看 {}", row.title).into();
-                        } else {
-                            this.notice = "请先选择一首歌曲".into();
-                        }
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .size(px(40.0))
-                            .rounded_md()
-                            .bg(rgb(if playing { CLAY } else { PAPER_DEEP }))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(rgb(PAPER_LIGHT))
-                            .child(if playing { "♫" } else { "·" }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_sm().text_color(rgb(INK)).child(title))
-                            .child(div().text_xs().text_color(rgb(MUTED)).child(artist)),
-                    ),
+                div().flex().items_center().gap_3().child(artwork).child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().text_sm().text_color(rgb(INK)).child(title))
+                        .child(div().text_xs().text_color(rgb(MUTED)).child(artist)),
+                ),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap_2()
                     .child(
                         div()
                             .text_xs()
                             .text_color(rgb(MUTED))
-                            .child(self.notice.clone()),
+                            .child(format!("音量 {}%", (self.volume * 100.0).round() as u32)),
+                    )
+                    .child(
+                        player_button("−")
+                            .id("player-volume-down")
+                            .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(-0.1, cx))),
+                    )
+                    .child(
+                        player_button("+")
+                            .id("player-volume-up")
+                            .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(0.1, cx))),
                     )
                     .child(
                         player_button("◀")
@@ -1399,6 +1479,45 @@ impl MusicApp {
                         player_button("▶")
                             .id("player-next")
                             .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(format_duration(Duration::from_millis(elapsed_ms))),
+                    )
+                    .child(
+                        player_button("−15")
+                            .id("player-seek-back")
+                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(-15, cx))),
+                    )
+                    .child(
+                        div()
+                            .id("player-progress")
+                            .h(px(5.0))
+                            .flex_1()
+                            .rounded_full()
+                            .bg(rgb(PAPER_DEEP))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(15, cx)))
+                            .child(div().h_full().w(progress_fill).rounded_full().bg(rgb(MOSS))),
+                    )
+                    .child(
+                        player_button("+15")
+                            .id("player-seek-forward")
+                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(15, cx))),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(format_duration(Duration::from_millis(duration_ms))),
                     ),
             )
     }
@@ -1466,6 +1585,24 @@ fn track_artwork(row: &TrackRow) -> gpui::AnyElement {
             .child("♫")
             .into_any_element(),
     }
+}
+
+fn empty_artwork() -> gpui::AnyElement {
+    div()
+        .size(px(40.0))
+        .rounded_md()
+        .bg(rgb(PAPER_DEEP))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(MOSS))
+        .child("♫")
+        .into_any_element()
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui::Div {
