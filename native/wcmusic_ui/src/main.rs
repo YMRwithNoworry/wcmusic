@@ -1414,12 +1414,12 @@ impl MusicApp {
     }
 
     fn rankings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content =
-            div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .child(self.section_title("热门榜单", "刷新榜单", cx));
+        let content = div()
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(self.section_title("热门榜单", "刷新榜单", cx));
 
         if self.rankings_loading {
             return content.child(search_status(
@@ -1438,7 +1438,10 @@ impl MusicApp {
         }
 
         let mut ranking_nav = div()
+            .id("ranking-navigation-scroll")
             .w(px(224.0))
+            .h_full()
+            .min_h_0()
             .flex_shrink_0()
             .flex()
             .flex_col()
@@ -1446,6 +1449,7 @@ impl MusicApp {
             .pr(px(14.0))
             .border_r_1()
             .border_color(rgb(PAPER_DEEP))
+            .overflow_y_scroll()
             .child(
                 div()
                     .px(px(10.0))
@@ -1513,7 +1517,14 @@ impl MusicApp {
             );
         }
 
-        let mut tracks_panel = div().flex_1().flex().flex_col().gap_2();
+        let mut tracks_panel = div()
+            .id("ranking-tracks-panel")
+            .h_full()
+            .min_h_0()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2();
         if let Some(selected) = self.selected_ranking {
             if let Some(ranking) = self.rankings.get(selected) {
                 tracks_panel = tracks_panel.child(
@@ -1545,7 +1556,14 @@ impl MusicApp {
                 tracks_panel =
                     tracks_panel.child(search_status("选择一个榜单", "点击左侧榜单查看实时歌曲。"));
             } else {
-                tracks_panel = tracks_panel.child(self.ranking_track_list(cx));
+                tracks_panel = tracks_panel.child(
+                    div()
+                        .id("ranking-track-list-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(self.ranking_track_list(cx)),
+                );
             }
         } else {
             tracks_panel =
@@ -1556,8 +1574,9 @@ impl MusicApp {
             div()
                 .w_full()
                 .flex()
+                .flex_1()
+                .min_h_0()
                 .gap_4()
-                .items_start()
                 .child(ranking_nav)
                 .child(tracks_panel),
         )
@@ -1919,6 +1938,13 @@ impl MusicApp {
 impl Render for MusicApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.initialize_search_input(window, cx);
+        let page_content = self.content(cx);
+        let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
+        let library_scroll = if self.active_tab == Tab::Rankings {
+            library_scroll.overflow_hidden().child(page_content)
+        } else {
+            library_scroll.overflow_y_scroll().child(page_content)
+        };
         div()
             .size_full()
             .flex()
@@ -1932,14 +1958,7 @@ impl Render for MusicApp {
                     .flex()
                     .flex_col()
                     .p(px(30.0))
-                    .child(
-                        div()
-                            .id("library-scroll")
-                            .flex_1()
-                            .w_full()
-                            .overflow_y_scroll()
-                            .child(self.content(cx)),
-                    )
+                    .child(library_scroll)
                     .child(self.player_bar(cx)),
             )
     }
