@@ -13,7 +13,7 @@ use gpui::{
 };
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
-    LibraryIndex, OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
+    OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
     load_ranking_tracks_with_proxy, load_rankings_with_proxy, resolve_source_url_with_proxy,
     search_online_with_proxy,
 };
@@ -41,18 +41,16 @@ enum Tab {
     Home,
     Search,
     Rankings,
-    Library,
     Playlists,
     Sources,
     Settings,
 }
 
 impl Tab {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 6] = [
         Self::Home,
         Self::Search,
         Self::Rankings,
-        Self::Library,
         Self::Playlists,
         Self::Sources,
         Self::Settings,
@@ -63,7 +61,6 @@ impl Tab {
             Self::Home => "此刻",
             Self::Search => "搜索",
             Self::Rankings => "榜单",
-            Self::Library => "曲库",
             Self::Playlists => "歌单",
             Self::Sources => "音源",
             Self::Settings => "设置",
@@ -75,7 +72,6 @@ impl Tab {
             Self::Home => "◉",
             Self::Search => "⌕",
             Self::Rankings => "▥",
-            Self::Library => "♫",
             Self::Playlists => "☷",
             Self::Sources => "◇",
             Self::Settings => "⚙",
@@ -156,7 +152,6 @@ struct MusicApp {
     lyrics_enabled: bool,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
-    library: LibraryIndex,
     rankings: Vec<PlatformRanking>,
     ranking_tracks: Vec<TrackRow>,
     selected_ranking: Option<usize>,
@@ -170,7 +165,6 @@ struct MusicApp {
 
 impl MusicApp {
     fn new() -> Self {
-        let library = LibraryIndex::default();
         Self {
             active_tab: Tab::Home,
             current_track: None,
@@ -197,7 +191,6 @@ impl MusicApp {
             lyrics_enabled: false,
             use_network_proxy: false,
             rows: Vec::new(),
-            library,
             rankings: Vec::new(),
             ranking_tracks: Vec::new(),
             selected_ranking: None,
@@ -541,27 +534,6 @@ impl MusicApp {
         cx.notify();
     }
 
-    fn toggle_track(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.rows[index].track.source != TrackSource::Local {
-            self.start_playback(self.rows[index].track.clone(), false, cx);
-            return;
-        }
-        if self.current_track == Some(index) && self.current_online_track.is_none() {
-            self.is_playing = !self.is_playing;
-        } else {
-            self.current_track = Some(index);
-            self.current_online_track = None;
-            self.is_playing = true;
-        }
-        self.notice = if self.is_playing {
-            format!("正在播放 {}", self.rows[index].title)
-        } else {
-            "播放已暂停".to_owned()
-        }
-        .into();
-        cx.notify();
-    }
-
     fn toggle_online_track(&mut self, index: usize, cx: &mut Context<Self>) {
         let row = self.search_results[index].clone();
         if self.current_online_track.as_ref() == Some(&row) {
@@ -708,7 +680,7 @@ impl MusicApp {
             self.current_track = Some(0);
         }
         let Some(row) = self.current_row() else {
-            self.notice = "曲库中没有可播放的歌曲".into();
+            self.notice = "没有可播放的歌曲".into();
             cx.notify();
             return;
         };
@@ -858,7 +830,7 @@ impl MusicApp {
             return;
         }
         if self.rows.is_empty() {
-            self.notice = "曲库中没有可播放的歌曲".into();
+            self.notice = "没有可播放的歌曲".into();
             cx.notify();
             return;
         }
@@ -874,21 +846,6 @@ impl MusicApp {
         self.current_online_track
             .as_ref()
             .or_else(|| self.current_track.and_then(|index| self.rows.get(index)))
-    }
-
-    fn filtered_rows(&self) -> Vec<(usize, TrackRow)> {
-        let query = self.query.to_lowercase();
-        self.rows
-            .iter()
-            .cloned()
-            .enumerate()
-            .filter(|(_, row)| {
-                query.is_empty()
-                    || row.title.to_lowercase().contains(&query)
-                    || row.artist.to_lowercase().contains(&query)
-                    || row.album.to_lowercase().contains(&query)
-            })
-            .collect()
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -975,7 +932,6 @@ impl MusicApp {
         match self.active_tab {
             Tab::Home => self.home_content(cx).into_any_element(),
             Tab::Search => self.search_content(cx).into_any_element(),
-            Tab::Library => self.library_content(cx).into_any_element(),
             Tab::Rankings => self.rankings_content(cx).into_any_element(),
             Tab::Playlists => self.playlists_content(cx).into_any_element(),
             Tab::Sources => self.sources_content(cx).into_any_element(),
@@ -1083,37 +1039,29 @@ impl MusicApp {
             .current_row()
             .map(|row| row.title.clone())
             .unwrap_or_else(|| "还没有正在播放的歌曲".into());
-        div()
-            .flex()
-            .flex_col()
-            .gap_5()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p(px(26.0))
-                    .rounded_md()
-                    .bg(rgb(MOSS))
-                    .text_color(rgb(PAPER_LIGHT))
-                    .child(div().text_sm().text_color(rgb(0xc2d1b8)).child("今日推荐"))
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("让音乐回到此刻"),
-                    )
-                    .child(div().text_sm().text_color(rgb(0xd6dfd1)).child(now_playing))
-                    .child(
-                        action_button("浏览曲库", CLAY, PAPER_LIGHT)
-                            .id("browse-library")
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.select_tab(Tab::Library, cx)),
-                            ),
-                    ),
-            )
-            .child(self.section_title("最近添加", "查看全部", cx))
-            .child(self.track_list(cx, self.rows.iter().cloned().enumerate().take(4)))
+        div().flex().flex_col().gap_5().child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p(px(26.0))
+                .rounded_md()
+                .bg(rgb(MOSS))
+                .text_color(rgb(PAPER_LIGHT))
+                .child(div().text_sm().text_color(rgb(0xc2d1b8)).child("今日推荐"))
+                .child(
+                    div()
+                        .text_2xl()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("让音乐回到此刻"),
+                )
+                .child(div().text_sm().text_color(rgb(0xd6dfd1)).child(now_playing))
+                .child(
+                    action_button("浏览榜单", CLAY, PAPER_LIGHT)
+                        .id("browse-rankings")
+                        .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Rankings, cx))),
+                ),
+        )
     }
 
     fn search_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1285,96 +1233,6 @@ impl MusicApp {
                     )),
             )
             .child(results)
-    }
-
-    fn library_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = self.filtered_rows();
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(MUTED))
-                            .child("按标题、艺人或专辑筛选"),
-                    )
-                    .child(
-                        action_button("导入音乐", MOSS, PAPER_LIGHT)
-                            .id("import-music")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.announce("导入入口已打开，请选择音频文件", cx)
-                            })),
-                    ),
-            )
-            .child(self.track_list(cx, rows.into_iter()))
-    }
-
-    fn track_list<I>(&self, cx: &mut Context<Self>, rows: I) -> impl IntoElement
-    where
-        I: IntoIterator<Item = (usize, TrackRow)>,
-    {
-        let mut list = div().flex().flex_col().gap_1();
-        for (index, row) in rows {
-            let selected = self.current_track == Some(index);
-            let playing = selected && self.is_playing;
-            list = list.child(
-                div()
-                    .id(("track", index))
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .px(px(12.0))
-                    .py(px(11.0))
-                    .rounded_md()
-                    .bg(if selected {
-                        rgb(MOSS_TINT)
-                    } else {
-                        rgb(PAPER_LIGHT)
-                    })
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_track(index, cx)))
-                    .child(
-                        div()
-                            .size(px(34.0))
-                            .rounded_md()
-                            .bg(if playing { rgb(CLAY) } else { rgb(PAPER_DEEP) })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
-                            .child(if playing { "Ⅱ" } else { "▶" }),
-                    )
-                    .child(track_artwork(&row))
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_sm().text_color(rgb(INK)).child(row.title))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(MUTED))
-                                    .child(format!("{} · {}", row.artist, row.album)),
-                            ),
-                    )
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
-            );
-        }
-        if self.rows.is_empty() {
-            list = list.child(empty_state(
-                "曲库还是空的",
-                "导入音频文件后，它们会出现在这里。",
-            ));
-        }
-        list
     }
 
     fn section_title(
@@ -2086,22 +1944,6 @@ fn setting_row(title: &'static str, value: &'static str, description: &'static s
         .child(div().text_sm().text_color(rgb(MOSS)).child(value))
 }
 
-fn empty_state(title: &'static str, description: &'static str) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_2()
-        .p(px(42.0))
-        .child(
-            div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(title),
-        )
-        .child(div().text_sm().text_color(rgb(MUTED)).child(description))
-}
-
 fn search_status(title: &'static str, detail: impl Into<SharedString>) -> gpui::Div {
     div()
         .w_full()
@@ -2193,22 +2035,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uses_the_core_library_for_initial_rows() {
+    fn starts_with_no_local_rows() {
         let app = MusicApp::new();
-        assert_eq!(app.library.len(), 0);
         assert_eq!(app.rows.len(), 0);
     }
 
     #[test]
-    fn filters_tracks_by_artist_and_album() {
-        let mut app = MusicApp::new();
+    fn builds_track_rows_from_core_tracks() {
         let mut track = Track::local("test", "Slow Light", "file:///slow-light.mp3");
         track.artist = "Mizu".into();
         track.album = "Still Water".into();
-        app.rows.push(TrackRow::from_core(track));
-        app.query = "still water".into();
-        let rows = app.filtered_rows();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.title, "Slow Light");
+        let row = TrackRow::from_core(track);
+        assert_eq!(row.title, "Slow Light");
+        assert_eq!(row.artist, "Mizu");
+        assert_eq!(row.album, "Still Water");
     }
 }
