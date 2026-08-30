@@ -891,78 +891,6 @@ impl MusicApp {
             .collect()
     }
 
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .w_full()
-            .pb(px(18.0))
-            .border_b_1()
-            .border_color(rgb(PAPER_DEEP))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(MUTED))
-                            .child("WCMUSIC / DESKTOP"),
-                    )
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(INK))
-                            .child(self.active_tab.label()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("header-search")
-                            .px(px(14.0))
-                            .py(px(9.0))
-                            .rounded_md()
-                            .bg(rgb(PAPER_LIGHT))
-                            .border_1()
-                            .border_color(rgb(PAPER_DEEP))
-                            .text_sm()
-                            .text_color(rgb(MUTED))
-                            .cursor_pointer()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_search(window, cx)),
-                            )
-                            .child(if self.query.is_empty() {
-                                "⌕  搜索曲库".to_owned()
-                            } else {
-                                self.query.to_string()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .id("track-count")
-                            .px(px(12.0))
-                            .py(px(9.0))
-                            .rounded_md()
-                            .bg(rgb(MOSS_TINT))
-                            .text_sm()
-                            .text_color(rgb(MOSS))
-                            .cursor_pointer()
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.select_tab(Tab::Library, cx)),
-                            )
-                            .child(format!("{} 首歌曲", self.library.len())),
-                    ),
-            )
-    }
-
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut nav = div().flex().flex_col().gap_1().mt(px(30.0));
         for tab in Tab::ALL {
@@ -2004,13 +1932,11 @@ impl Render for MusicApp {
                     .flex()
                     .flex_col()
                     .p(px(30.0))
-                    .child(self.header(cx))
                     .child(
                         div()
                             .id("library-scroll")
                             .flex_1()
                             .w_full()
-                            .pt(px(24.0))
                             .overflow_y_scroll()
                             .child(self.content(cx)),
                     )
