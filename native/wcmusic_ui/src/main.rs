@@ -13,8 +13,9 @@ use gpui::{
 };
 use search_input::{SearchInput, SearchInputEvent};
 use wcmusic_core::{
-    LibraryIndex, OnlineSearchChannel, SourceEnvironment, Track, TrackSource,
-    resolve_source_url_with_proxy, search_online_with_proxy,
+    LibraryIndex, OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
+    load_ranking_tracks_with_proxy, load_rankings_with_proxy, resolve_source_url_with_proxy,
+    search_online_with_proxy,
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
@@ -27,6 +28,13 @@ const MUTED: u32 = 0x687067;
 const MOSS: u32 = 0x3e4c36;
 const MOSS_TINT: u32 = 0xe0e8da;
 const CLAY: u32 = 0xc7654f;
+const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
+
+fn built_in_source_script() -> String {
+    std::fs::read_to_string(BUILT_IN_SOURCE_PATH).unwrap_or_else(|_| {
+        include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
+    })
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -149,28 +157,20 @@ struct MusicApp {
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     library: LibraryIndex,
+    rankings: Vec<PlatformRanking>,
+    ranking_tracks: Vec<TrackRow>,
+    selected_ranking: Option<usize>,
+    rankings_loading: bool,
+    ranking_tracks_loading: bool,
+    rankings_error: Option<SharedString>,
+    ranking_tracks_error: Option<SharedString>,
+    rankings_generation: u64,
+    ranking_tracks_generation: u64,
 }
 
 impl MusicApp {
     fn new() -> Self {
         let library = LibraryIndex::default();
-        let seed_tracks = [
-            ("morning-tide", "Morning Tide", "Greenhouse", "Field Notes"),
-            ("slow-light", "Slow Light", "Mizu", "Still Water"),
-            ("paper-sky", "Paper Sky", "Lumen", "Soft Edges"),
-            ("night-drive", "Night Drive", "Kite Club", "After Hours"),
-        ];
-        for (id, title, artist, album) in seed_tracks {
-            let mut track = Track::local(id, title, format!("wcmusic://{id}"));
-            track.artist = artist.into();
-            track.album = album.into();
-            library.upsert(track);
-        }
-        let rows = library
-            .search("", 100)
-            .into_iter()
-            .map(TrackRow::from_core)
-            .collect();
         Self {
             active_tab: Tab::Home,
             current_track: None,
@@ -196,8 +196,17 @@ impl MusicApp {
             dark_theme: false,
             lyrics_enabled: false,
             use_network_proxy: false,
-            rows,
+            rows: Vec::new(),
             library,
+            rankings: Vec::new(),
+            ranking_tracks: Vec::new(),
+            selected_ranking: None,
+            rankings_loading: false,
+            ranking_tracks_loading: false,
+            rankings_error: None,
+            ranking_tracks_error: None,
+            rankings_generation: 0,
+            ranking_tracks_generation: 0,
         }
     }
 
@@ -205,7 +214,104 @@ impl MusicApp {
         self.active_tab = tab;
         self.show_now_playing = false;
         self.notice = format!("已打开 {}", tab.label()).into();
+        if tab == Tab::Rankings && self.rankings.is_empty() && !self.rankings_loading {
+            self.load_rankings(cx);
+            return;
+        }
         cx.notify();
+    }
+
+    fn load_rankings(&mut self, cx: &mut Context<Self>) {
+        self.rankings_generation += 1;
+        let generation = self.rankings_generation;
+        let use_proxy = self.use_network_proxy;
+        self.rankings_loading = true;
+        self.rankings_error = None;
+        self.ranking_tracks.clear();
+        self.selected_ranking = None;
+        self.ranking_tracks_error = None;
+        self.notice = "正在加载酷狗、QQ、酷我和网易云榜单…".into();
+        cx.notify();
+
+        let task = cx.background_spawn(async move {
+            load_rankings_with_proxy(use_proxy).map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.rankings_generation {
+                    return;
+                }
+                this.rankings_loading = false;
+                match result {
+                    Ok(rankings) => {
+                        this.notice = format!("已更新 {} 个平台榜单", rankings.len()).into();
+                        this.rankings = rankings;
+                    }
+                    Err(error) => {
+                        this.rankings.clear();
+                        this.rankings_error = Some(error.into());
+                        this.notice = "榜单加载失败".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn select_ranking(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(ranking) = self.rankings.get(index).cloned() else {
+            return;
+        };
+        self.selected_ranking = Some(index);
+        self.ranking_tracks_generation += 1;
+        let generation = self.ranking_tracks_generation;
+        let use_proxy = self.use_network_proxy;
+        self.ranking_tracks_loading = true;
+        self.ranking_tracks_error = None;
+        self.ranking_tracks.clear();
+        self.notice = format!("正在加载{} · {}", ranking.channel.label(), ranking.name).into();
+        cx.notify();
+
+        let task = cx.background_spawn(async move {
+            let tracks = load_ranking_tracks_with_proxy(&ranking, use_proxy)
+                .map_err(|error| error.to_string())?;
+            Ok::<Vec<TrackRow>, String>(
+                tracks
+                    .into_iter()
+                    .map(TrackRow::from_core)
+                    .collect(),
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.ranking_tracks_generation {
+                    return;
+                }
+                this.ranking_tracks_loading = false;
+                match result {
+                    Ok(tracks) => {
+                        this.notice = format!("榜单已载入 {} 首歌曲", tracks.len()).into();
+                        this.ranking_tracks = tracks;
+                    }
+                    Err(error) => {
+                        this.ranking_tracks.clear();
+                        this.ranking_tracks_error = Some(error.into());
+                        this.notice = "榜单歌曲加载失败".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn refresh_rankings(&mut self, cx: &mut Context<Self>) {
+        self.load_rankings(cx);
     }
 
     fn initialize_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -455,6 +561,19 @@ impl MusicApp {
         self.start_playback(row.track, true, cx);
     }
 
+    fn toggle_ranking_track(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.ranking_tracks.get(index).cloned() else {
+            return;
+        };
+        if self.current_online_track.as_ref() == Some(&row) {
+            self.toggle_playback(cx);
+            return;
+        }
+        self.current_online_track = Some(row.clone());
+        self.current_track = None;
+        self.start_playback(row.track, true, cx);
+    }
+
     fn start_playback(&mut self, track: Track, online: bool, cx: &mut Context<Self>) {
         self.play_generation += 1;
         let generation = self.play_generation;
@@ -463,8 +582,15 @@ impl MusicApp {
         }
         self.is_playing = false;
         self.elapsed_ms = 0;
+        let source_label = match track.source {
+            TrackSource::Kw => OnlineSearchChannel::Kuwo.label(),
+            TrackSource::Kg => OnlineSearchChannel::Kugou.label(),
+            TrackSource::Tx => OnlineSearchChannel::QqMusic.label(),
+            TrackSource::Wy => OnlineSearchChannel::Netease.label(),
+            _ => self.search_channel.label(),
+        };
         self.notice = if online {
-            format!("正在通过{}解析整曲...", self.search_channel.label())
+            format!("正在通过{}解析整曲...", source_label)
         } else {
             format!("正在准备 {}", track.title)
         }
@@ -494,9 +620,10 @@ impl MusicApp {
         };
         let quality = ["128k", "320k", "flac"][self.quality_index];
         let use_proxy = self.use_network_proxy;
-        let script = self.source_script.clone().unwrap_or_else(|| {
-            include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
-        });
+        let script = self
+            .source_script
+            .clone()
+            .unwrap_or_else(built_in_source_script);
         let task = cx.background_spawn(async move {
             let url = resolve_source_url_with_proxy(
                 &script,
@@ -685,6 +812,23 @@ impl MusicApp {
     }
 
     fn play_offset(&mut self, offset: isize, cx: &mut Context<Self>) {
+        if self.active_tab == Tab::Rankings
+            && self.selected_ranking.is_some()
+            && !self.ranking_tracks.is_empty()
+        {
+            let len = self.ranking_tracks.len() as isize;
+            let current_index = self
+                .current_online_track
+                .as_ref()
+                .and_then(|current| self.ranking_tracks.iter().position(|row| row == current))
+                .unwrap_or(0) as isize;
+            let index = (current_index + offset).rem_euclid(len) as usize;
+            let row = self.ranking_tracks[index].clone();
+            self.current_online_track = Some(row.clone());
+            self.current_track = None;
+            self.start_playback(row.track, true, cx);
+            return;
+        }
         if let Some(current) = &self.current_online_track
             && !self.search_results.is_empty()
         {
@@ -1318,6 +1462,8 @@ impl MusicApp {
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         if action == "导入脚本" {
                             this.import_source(cx);
+                        } else if action == "刷新榜单" {
+                            this.refresh_rankings(cx);
                         } else {
                             this.announce(action, cx);
                         }
@@ -1327,39 +1473,126 @@ impl MusicApp {
     }
 
     fn rankings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(self.section_title("热门榜单", "本周更新", cx))
-            .child(
-                ranking_card("晨间漫游", "轻盈、明亮、适合开始一天", "12 首")
-                    .id("ranking-morning")
+        let mut content =
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.section_title("热门榜单", "刷新榜单", cx));
+
+        if self.rankings_loading {
+            content = content.child(search_status(
+                "正在更新平台榜单",
+                "正在连接酷狗、QQ、酷我和网易云音乐…",
+            ));
+        } else if let Some(error) = &self.rankings_error {
+            content = content.child(search_status("榜单暂时不可用", error.clone()));
+        } else if self.rankings.is_empty() {
+            content = content.child(search_status(
+                "还没有榜单",
+                "点击右上角刷新，从各大音乐平台获取实时榜单。",
+            ));
+        } else {
+            for (index, ranking) in self.rankings.iter().enumerate() {
+                let selected = self.selected_ranking == Some(index);
+                let count = if selected && !self.ranking_tracks.is_empty() {
+                    format!("{} 首歌曲", self.ranking_tracks.len())
+                } else {
+                    "点击加载歌曲".to_owned()
+                };
+                content = content.child(
+                    ranking_card(
+                        ranking.name.clone().into(),
+                        ranking.channel.label().into(),
+                        count.into(),
+                        selected,
+                    )
+                    .id(("ranking", index))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_ranking(index, cx))),
+                );
+            }
+
+            if let Some(selected) = self.selected_ranking {
+                if let Some(ranking) = self.rankings.get(selected) {
+                    content = content.child(
+                        div()
+                            .pt(px(8.0))
+                            .text_sm()
+                            .text_color(rgb(MUTED))
+                            .child(format!("{} · {}", ranking.channel.label(), ranking.name)),
+                    );
+                }
+                if self.ranking_tracks_loading {
+                    content =
+                        content.child(search_status("正在加载榜单歌曲", "正在读取平台最新排名…"));
+                } else if let Some(error) = &self.ranking_tracks_error {
+                    content = content.child(search_status("歌曲列表加载失败", error.clone()));
+                } else if self.ranking_tracks.is_empty() {
+                    content = content.child(search_status(
+                        "选择一个榜单",
+                        "点击上方榜单卡片查看实时歌曲。",
+                    ));
+                } else {
+                    content = content.child(self.ranking_track_list(cx));
+                }
+            }
+        }
+        content
+    }
+
+    fn ranking_track_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut list = div().flex().flex_col().gap_1();
+        for (index, row) in self.ranking_tracks.iter().cloned().enumerate() {
+            let selected = self.current_online_track.as_ref() == Some(&row);
+            let playing = selected && self.is_playing;
+            list = list.child(
+                div()
+                    .id(("ranking-track", index))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .px(px(12.0))
+                    .py(px(11.0))
+                    .rounded_md()
+                    .bg(if selected {
+                        rgb(MOSS_TINT)
+                    } else {
+                        rgb(PAPER_LIGHT)
+                    })
+                    .cursor_pointer()
                     .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已选择榜单：晨间漫游", cx)),
-                    ),
-            )
-            .child(
-                ranking_card("夜色留声", "适合专注和慢下来的时刻", "24 首")
-                    .id("ranking-night")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已选择榜单：夜色留声", cx)),
-                    ),
-            )
-            .child(
-                ranking_card("独立新声", "来自本周收藏的新发现", "36 首")
-                    .id("ranking-indie")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已选择榜单：独立新声", cx)),
-                    ),
-            )
-            .child(
-                ranking_card("无损精选", "高品质本地播放列表", "18 首")
-                    .id("ranking-lossless")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已选择榜单：无损精选", cx)),
-                    ),
-            )
+                        cx.listener(move |this, _, _, cx| this.toggle_ranking_track(index, cx)),
+                    )
+                    .child(
+                        div()
+                            .size(px(34.0))
+                            .rounded_md()
+                            .bg(if playing { rgb(CLAY) } else { rgb(PAPER_DEEP) })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
+                            .child(if playing { "Ⅱ" } else { "▶" }),
+                    )
+                    .child(track_artwork(&row))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(MUTED))
+                                    .child(format!("{} · {}", row.artist, row.album)),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+            );
+        }
+        list
     }
 
     fn playlists_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1751,14 +1984,19 @@ fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui:
         .child(label)
 }
 
-fn ranking_card(title: &'static str, description: &'static str, count: &'static str) -> gpui::Div {
+fn ranking_card(
+    title: SharedString,
+    description: SharedString,
+    count: SharedString,
+    selected: bool,
+) -> gpui::Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
         .p(px(18.0))
         .rounded_md()
-        .bg(rgb(PAPER_LIGHT))
+        .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
         .border_1()
         .border_color(rgb(PAPER_DEEP))
         .cursor_pointer()
@@ -1766,7 +2004,11 @@ fn ranking_card(title: &'static str, description: &'static str, count: &'static 
             div()
                 .size(px(38.0))
                 .rounded_md()
-                .bg(rgb(MOSS_TINT))
+                .bg(rgb(if selected { MOSS } else { MOSS_TINT }))
+                .text_color(rgb(if selected { PAPER_LIGHT } else { MOSS }))
+                .flex()
+                .items_center()
+                .justify_center()
                 .child("♫"),
         )
         .child(
@@ -1943,13 +2185,17 @@ mod tests {
     #[test]
     fn uses_the_core_library_for_initial_rows() {
         let app = MusicApp::new();
-        assert_eq!(app.library.len(), 4);
-        assert_eq!(app.rows.len(), 4);
+        assert_eq!(app.library.len(), 0);
+        assert_eq!(app.rows.len(), 0);
     }
 
     #[test]
     fn filters_tracks_by_artist_and_album() {
         let mut app = MusicApp::new();
+        let mut track = Track::local("test", "Slow Light", "file:///slow-light.mp3");
+        track.artist = "Mizu".into();
+        track.album = "Still Water".into();
+        app.rows.push(TrackRow::from_core(track));
         app.query = "still water".into();
         let rows = app.filtered_rows();
         assert_eq!(rows.len(), 1);

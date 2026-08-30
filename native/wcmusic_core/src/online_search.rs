@@ -45,6 +45,15 @@ impl OnlineSearchChannel {
     }
 }
 
+/// A chart exposed by one of the supported music platforms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformRanking {
+    pub id: String,
+    pub name: String,
+    pub channel: OnlineSearchChannel,
+    pub artwork_uri: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum OnlineSearchError {
     #[error("在线服务请求失败: {0}")]
@@ -134,6 +143,254 @@ pub fn search_online_with_proxy(
     parse_response(channel, &value)
 }
 
+/// Load the current chart directory from Kuwo, Kugou, QQ Music and NetEase.
+///
+/// Kuwo does not expose a stable public chart-directory endpoint, so its
+/// well-known chart IDs are used while the song lists themselves are fetched
+/// live. Other platforms are read from their current chart-directory APIs.
+pub fn load_rankings_with_proxy(
+    use_proxy: bool,
+) -> Result<Vec<PlatformRanking>, OnlineSearchError> {
+    let mut rankings = Vec::new();
+    let mut failures = Vec::new();
+    for channel in OnlineSearchChannel::ALL {
+        match load_channel_rankings(channel, use_proxy) {
+            Ok(mut values) => rankings.append(&mut values),
+            Err(error) => failures.push(format!("{}: {error}", channel.label())),
+        }
+    }
+    if rankings.is_empty() {
+        let detail = if failures.is_empty() {
+            "没有可用榜单".to_owned()
+        } else {
+            failures.join("；")
+        };
+        Err(OnlineSearchError::Network(detail))
+    } else {
+        Ok(rankings)
+    }
+}
+
+/// Load up to 100 songs from a chart.
+pub fn load_ranking_tracks_with_proxy(
+    ranking: &PlatformRanking,
+    use_proxy: bool,
+) -> Result<Vec<Track>, OnlineSearchError> {
+    let (endpoint, params, referer, json5_response) = match ranking.channel {
+        OnlineSearchChannel::Netease => (
+            "https://music.163.com/api/playlist/detail",
+            vec![("id", ranking.id.clone())],
+            OnlineSearchChannel::Netease.referer(),
+            false,
+        ),
+        OnlineSearchChannel::QqMusic => (
+            "https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg",
+            vec![
+                ("format", "json".to_owned()),
+                ("topid", ranking.id.clone()),
+                ("page", "detail".to_owned()),
+                ("type", "top".to_owned()),
+                ("song_begin", "0".to_owned()),
+                ("song_num", "100".to_owned()),
+            ],
+            OnlineSearchChannel::QqMusic.referer(),
+            false,
+        ),
+        OnlineSearchChannel::Kugou => (
+            "http://mobilecdnbj.kugou.com/api/v3/rank/song",
+            vec![
+                ("rankid", ranking.id.clone()),
+                ("page", "1".to_owned()),
+                ("pagesize", "100".to_owned()),
+                ("version", "9108".to_owned()),
+                ("plat", "0".to_owned()),
+            ],
+            OnlineSearchChannel::Kugou.referer(),
+            false,
+        ),
+        OnlineSearchChannel::Kuwo => (
+            "http://kbangserver.kuwo.cn/ksong.s",
+            vec![
+                ("from", "pc".to_owned()),
+                ("fmt", "json".to_owned()),
+                ("type", "bang".to_owned()),
+                ("data", "content".to_owned()),
+                ("id", ranking.id.clone()),
+                ("pn", "0".to_owned()),
+                ("rn", "100".to_owned()),
+            ],
+            OnlineSearchChannel::Kuwo.referer(),
+            false,
+        ),
+    };
+    let value = request_json(endpoint, &params, referer, use_proxy, json5_response)?;
+    parse_ranking_tracks(ranking.channel, &value)
+}
+
+fn load_channel_rankings(
+    channel: OnlineSearchChannel,
+    use_proxy: bool,
+) -> Result<Vec<PlatformRanking>, OnlineSearchError> {
+    if channel == OnlineSearchChannel::Kuwo {
+        return Ok([
+            ("93", "酷我飙升榜"),
+            ("17", "酷我新歌榜"),
+            ("16", "酷我热歌榜"),
+            ("158", "抖音热歌榜"),
+        ]
+        .into_iter()
+        .map(|(id, name)| PlatformRanking {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            channel,
+            artwork_uri: None,
+        })
+        .collect());
+    }
+
+    let (endpoint, params, json5_response) = match channel {
+        OnlineSearchChannel::Netease => (
+            "https://music.163.com/api/toplist/detail",
+            Vec::new(),
+            false,
+        ),
+        OnlineSearchChannel::QqMusic => (
+            "https://c.y.qq.com/v8/fcg-bin/fcg_myqq_toplist.fcg",
+            vec![
+                ("format", "json".to_owned()),
+                ("inCharset", "utf8".to_owned()),
+                ("outCharset", "utf-8".to_owned()),
+            ],
+            false,
+        ),
+        OnlineSearchChannel::Kugou => (
+            "http://mobilecdnbj.kugou.com/api/v3/rank/list",
+            vec![
+                ("version", "9108".to_owned()),
+                ("plat", "0".to_owned()),
+                ("showtype", "2".to_owned()),
+                ("parentid", "0".to_owned()),
+                ("apiver", "6".to_owned()),
+                ("area_code", "1".to_owned()),
+            ],
+            false,
+        ),
+        OnlineSearchChannel::Kuwo => unreachable!(),
+    };
+    let value = request_json(
+        endpoint,
+        &params,
+        channel.referer(),
+        use_proxy,
+        json5_response,
+    )?;
+    parse_rankings(channel, &value)
+}
+
+fn request_json(
+    endpoint: &str,
+    params: &[(impl AsRef<str>, String)],
+    referer: &str,
+    use_proxy: bool,
+    json5_response: bool,
+) -> Result<Value, OnlineSearchError> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(15))
+        .timeout_write(Duration::from_secs(15))
+        .try_proxy_from_env(use_proxy)
+        .build();
+    let mut request = agent.get(endpoint);
+    for (key, value) in params {
+        request = request.query(key.as_ref(), value);
+    }
+    let body = request
+        .set("Accept", "application/json")
+        .set("User-Agent", "WCMusic/1.0")
+        .set("Referer", referer)
+        .call()
+        .map_err(|error| OnlineSearchError::Network(error.to_string()))?
+        .into_string()
+        .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    let body = body.trim_start_matches('\u{feff}');
+    if json5_response {
+        json5::from_str(body).map_err(|_| {
+            OnlineSearchError::Network(format!("榜单接口返回无法识别的数据: {referer}"))
+        })
+    } else {
+        serde_json::from_str(body).map_err(|_| {
+            OnlineSearchError::Network(format!("榜单接口返回无法识别的数据: {referer}"))
+        })
+    }
+}
+
+fn parse_rankings(
+    channel: OnlineSearchChannel,
+    value: &Value,
+) -> Result<Vec<PlatformRanking>, OnlineSearchError> {
+    let values = match channel {
+        OnlineSearchChannel::Netease => value.get("list").and_then(Value::as_array),
+        OnlineSearchChannel::QqMusic => value.pointer("/data/topList").and_then(Value::as_array),
+        OnlineSearchChannel::Kugou => value.pointer("/data/info").and_then(Value::as_array),
+        OnlineSearchChannel::Kuwo => None,
+    }
+    .ok_or(OnlineSearchError::InvalidResponse(channel.label()))?;
+
+    Ok(values
+        .iter()
+        .filter_map(|item| {
+            let (id, name, artwork) = match channel {
+                OnlineSearchChannel::Netease => (
+                    text(item.get("id"))?,
+                    text(item.get("name"))?,
+                    text(item.get("coverImgUrl")),
+                ),
+                OnlineSearchChannel::QqMusic => (
+                    text(item.get("id"))?,
+                    text(item.get("topTitle").or_else(|| item.get("title")))?,
+                    text(item.get("picUrl")),
+                ),
+                OnlineSearchChannel::Kugou => (
+                    text(item.get("rankid").or_else(|| item.get("rankId")))?,
+                    text(item.get("rankname").or_else(|| item.get("rankName")))?,
+                    text(item.get("imgurl").or_else(|| item.get("banner7url"))),
+                ),
+                OnlineSearchChannel::Kuwo => return None,
+            };
+            Some(PlatformRanking {
+                id,
+                name,
+                channel,
+                artwork_uri: secure_url(artwork),
+            })
+        })
+        .collect())
+}
+
+fn parse_ranking_tracks(
+    channel: OnlineSearchChannel,
+    value: &Value,
+) -> Result<Vec<Track>, OnlineSearchError> {
+    let values = match channel {
+        OnlineSearchChannel::Netease => value.pointer("/result/tracks").and_then(Value::as_array),
+        OnlineSearchChannel::QqMusic => value.get("songlist").and_then(Value::as_array),
+        OnlineSearchChannel::Kugou => value.pointer("/data/info").and_then(Value::as_array),
+        OnlineSearchChannel::Kuwo => value.get("musiclist").and_then(Value::as_array),
+    }
+    .ok_or(OnlineSearchError::InvalidResponse(channel.label()))?;
+
+    Ok(values
+        .iter()
+        .filter_map(|item| match channel {
+            OnlineSearchChannel::Netease => parse_netease(item),
+            OnlineSearchChannel::QqMusic => parse_qq(item.get("data").unwrap_or(item)),
+            OnlineSearchChannel::Kugou => parse_kugou_ranking(item),
+            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item),
+        })
+        .take(100)
+        .collect())
+}
+
 fn parse_response(
     channel: OnlineSearchChannel,
     value: &Value,
@@ -199,6 +456,57 @@ fn parse_kugou(value: &Value) -> Option<Track> {
     )
 }
 
+fn parse_kugou_ranking(value: &Value) -> Option<Track> {
+    let source_id = text(
+        value
+            .get("hash")
+            .or_else(|| value.get("FileHash"))
+            .or_else(|| value.get("mixsongid"))
+            .or_else(|| value.get("MixSongID"))
+            .or_else(|| value.get("filename")),
+    )?;
+    let artist = value
+        .get("authors")
+        .and_then(Value::as_array)
+        .map(|authors| {
+            authors
+                .iter()
+                .filter_map(|author| text(author.get("author_name").or_else(|| author.get("name"))))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        })
+        .filter(|artist| !artist.is_empty())
+        .or_else(|| text(value.get("singername").or_else(|| value.get("SingerName"))))?;
+    let artwork = text(
+        value
+            .get("album_sizable_cover")
+            .or_else(|| value.get("album_img"))
+            .or_else(|| value.get("Image")),
+    )
+    .map(|value| value.replace("{size}", "400"));
+    track(
+        format!("kg-{source_id}"),
+        clean_html(text(
+            value.get("songname").or_else(|| value.get("SongName")),
+        ))?,
+        clean_html(Some(artist))?,
+        clean_html(text(value.get("remark").or_else(|| value.get("AlbumName"))))
+            .unwrap_or_else(|| "单曲".to_owned()),
+        integer(
+            value
+                .get("duration")
+                .or_else(|| value.get("Duration"))
+                .or_else(|| value.get("timelength")),
+        )
+        .unwrap_or_default()
+            * 1_000,
+        secure_url(artwork),
+        TrackSource::Kg,
+        source_id,
+        "酷狗音乐 · 整曲",
+    )
+}
+
 fn parse_qq(value: &Value) -> Option<Track> {
     let source_id = text(value.get("songmid").or_else(|| value.get("mid")))?;
     let title = text(
@@ -237,6 +545,35 @@ fn parse_qq(value: &Value) -> Option<Track> {
         TrackSource::Tx,
         source_id,
         "QQ 音乐 · 整曲",
+    )
+}
+
+fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
+    let music_rid = text(
+        value
+            .get("musicrid")
+            .or_else(|| value.get("MUSICRID"))
+            .or_else(|| value.get("id")),
+    )?;
+    let source_id = music_rid.trim_start_matches("MUSIC_").to_owned();
+    let artwork = text(value.get("pic").or_else(|| value.get("web_albumpic_short")));
+    track(
+        format!("kw-{source_id}"),
+        clean_html(text(
+            value
+                .get("name")
+                .or_else(|| value.get("songname"))
+                .or_else(|| value.get("SONGNAME")),
+        ))?,
+        clean_html(text(value.get("artist").or_else(|| value.get("ARTIST"))))?,
+        clean_html(text(value.get("album").or_else(|| value.get("ALBUM"))))
+            .unwrap_or_else(|| "单曲".to_owned()),
+        integer(value.get("duration").or_else(|| value.get("DURATION"))).unwrap_or_default()
+            * 1_000,
+        secure_url(artwork),
+        TrackSource::Kw,
+        source_id,
+        "酷我音乐 · 整曲",
     )
 }
 
@@ -376,5 +713,35 @@ mod tests {
     fn exposes_the_original_channel_order() {
         let labels = OnlineSearchChannel::ALL.map(OnlineSearchChannel::label);
         assert_eq!(labels, ["酷我音乐", "酷狗音乐", "QQ 音乐", "网易云音乐"]);
+    }
+
+    #[test]
+    fn parses_live_ranking_shapes() {
+        let rankings = parse_rankings(
+            OnlineSearchChannel::Netease,
+            &serde_json::json!({
+                "list": [{"id": 19723756, "name": "飙升榜", "coverImgUrl": "http://cover"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(rankings[0].id, "19723756");
+        assert_eq!(rankings[0].artwork_uri.as_deref(), Some("https://cover"));
+
+        let tracks = parse_ranking_tracks(
+            OnlineSearchChannel::Kugou,
+            &serde_json::json!({
+                "data": {"info": [{
+                    "hash": "abc",
+                    "songname": "榜单歌曲",
+                    "authors": [{"author_name": "歌手"}],
+                    "duration": 180,
+                    "album_img": "http://img"
+                }]}
+            }),
+        )
+        .unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id, "kg-abc");
+        assert_eq!(tracks[0].duration_ms, 180_000);
     }
 }
