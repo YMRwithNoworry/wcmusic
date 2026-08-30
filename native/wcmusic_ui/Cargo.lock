@@ -6680,6 +6680,7 @@ version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "json5",
+ "md-5",
  "parking_lot",
  "regex",
  "rquickjs",

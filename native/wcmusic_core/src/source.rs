@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use md5::{Digest, Md5};
 use regex::Regex;
 use rquickjs::{Context, Runtime, function::Func};
 use serde::Deserialize;
@@ -45,6 +46,7 @@ pub fn validate_source_script(
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, false)?;
+    install_crypto_guest(&context)?;
 
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
 
@@ -115,6 +117,7 @@ pub fn resolve_source_url_with_proxy(
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, use_proxy)?;
+    install_crypto_guest(&context)?;
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
     context.with(|ctx| {
         ctx.eval::<(), _>(bootstrap)
@@ -246,7 +249,7 @@ fn source_bootstrap(
             buffer: Object.freeze({{ from(value) {{ return value; }}, bufToString(value) {{ return String(value); }} }}),
             crypto: Object.freeze({{
               aesEncrypt() {{ throw new Error('aesEncrypt is unavailable during validation'); }},
-              md5() {{ throw new Error('md5 is unavailable during validation'); }},
+              md5(value) {{ return globalThis.__wcmusicMd5(String(value)); }},
               randomBytes() {{ throw new Error('randomBytes is unavailable during validation'); }},
               rsaEncrypt() {{ throw new Error('rsaEncrypt is unavailable during validation'); }}
             }}),
@@ -275,6 +278,19 @@ fn install_http_guest(context: &Context, use_proxy: bool) -> Result<(), CoreErro
         );
         ctx.globals()
             .set("__wcmusicFetch", fetch)
+            .map_err(|error| CoreError::SourceInitialization(error.to_string()))
+    })
+}
+
+fn install_crypto_guest(context: &Context) -> Result<(), CoreError> {
+    context.with(|ctx| {
+        let md5 = Func::new(|value: String| -> String {
+            let mut hasher = Md5::new();
+            hasher.update(value.as_bytes());
+            format!("{:x}", hasher.finalize())
+        });
+        ctx.globals()
+            .set("__wcmusicMd5", md5)
             .map_err(|error| CoreError::SourceInitialization(error.to_string()))
     })
 }

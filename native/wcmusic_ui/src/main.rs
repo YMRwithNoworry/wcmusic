@@ -79,6 +79,12 @@ struct TrackRow {
     artwork_path: Option<SharedString>,
 }
 
+#[derive(Clone)]
+struct ImportedSource {
+    name: SharedString,
+    script: String,
+}
+
 impl TrackRow {
     fn from_core(track: Track) -> Self {
         Self::from_core_with_artwork(track, None)
@@ -124,6 +130,7 @@ struct MusicApp {
     search_generation: u64,
     source_script: Option<String>,
     source_name: SharedString,
+    imported_sources: Vec<ImportedSource>,
     play_generation: u64,
     audio_player: Option<AudioPlayer>,
     notice: SharedString,
@@ -169,6 +176,7 @@ impl MusicApp {
             search_generation: 0,
             source_script: None,
             source_name: "内置音源".into(),
+            imported_sources: Vec::new(),
             play_generation: 0,
             audio_player: None,
             notice: "准备播放".into(),
@@ -303,12 +311,35 @@ impl MusicApp {
             });
         match result {
             Ok((script, name)) => {
+                let name: SharedString = name.into();
+                self.imported_sources.push(ImportedSource {
+                    name: name.clone(),
+                    script: script.clone(),
+                });
                 self.source_script = Some(script);
-                self.source_name = name.into();
+                self.source_name = name;
                 self.notice = format!("已导入音源：{}", self.source_name).into();
             }
             Err(error) => self.notice = error.into(),
         }
+        cx.notify();
+    }
+
+    fn select_source(&mut self, source_index: Option<usize>, cx: &mut Context<Self>) {
+        match source_index {
+            None => {
+                self.source_script = None;
+                self.source_name = "内置音源".into();
+            }
+            Some(index) => {
+                let Some(source) = self.imported_sources.get(index) else {
+                    return;
+                };
+                self.source_script = Some(source.script.clone());
+                self.source_name = source.name.clone();
+            }
+        }
+        self.notice = format!("已选择音源：{}", self.source_name).into();
         cx.notify();
     }
 
@@ -1157,46 +1188,76 @@ impl MusicApp {
     }
 
     fn sources_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content =
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.section_title("音源管理", "导入脚本", cx));
+
+        let built_in_selected = self.source_script.is_none();
+        content = content.child(self.source_card(
+            "source-card-built-in".into(),
+            "内置音源".into(),
+            "内置音源 · 支持酷我、酷狗、QQ、网易云",
+            built_in_selected,
+            None,
+            cx,
+        ));
+        for (index, source) in self.imported_sources.iter().enumerate() {
+            let selected = self.source_script.as_ref() == Some(&source.script);
+            let source_name = source.name.clone();
+            content = content.child(self.source_card(
+                SharedString::from(format!("source-card-imported-{index}")),
+                source_name,
+                "已导入 · 点击切换为当前音源",
+                selected,
+                Some(index),
+                cx,
+            ));
+        }
+        content
+    }
+
+    fn source_card(
+        &self,
+        id: SharedString,
+        name: SharedString,
+        description: &'static str,
+        selected: bool,
+        source_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
+            .id(id)
+            .p(px(18.0))
+            .rounded_md()
+            .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
+            .border_1()
+            .border_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
             .flex()
             .flex_col()
-            .gap_4()
-            .child(self.section_title("音源管理", "导入脚本", cx))
+            .gap_2()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_source(source_index, cx);
+            }))
             .child(
                 div()
-                    .id("source-card")
-                    .p(px(18.0))
-                    .rounded_md()
-                    .bg(rgb(PAPER_LIGHT))
-                    .border_1()
-                    .border_color(rgb(PAPER_DEEP))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.notice = format!("音源已选择：{}", this.source_name).into();
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(self.source_name.clone()),
-                    )
-                    .child(div().text_sm().text_color(rgb(MUTED)).child(
-                        if self.source_script.is_some() {
-                            "已导入并启用 · 支持酷我、酷狗、QQ、网易云"
-                        } else {
-                            "内置音源 · 支持酷我、酷狗、QQ、网易云"
-                        },
-                    ))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(MOSS))
-                            .child("解析请求由 Rust 核心执行"),
-                    ),
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(name),
+            )
+            .child(div().text_sm().text_color(rgb(MUTED)).child(description))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(if selected { MOSS } else { MUTED }))
+                    .child(if selected {
+                        "当前使用"
+                    } else {
+                        "点击选择"
+                    }),
             )
     }
 
