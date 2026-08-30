@@ -29,6 +29,7 @@ const MOSS: u32 = 0x3e4c36;
 const MOSS_TINT: u32 = 0xe0e8da;
 const CLAY: u32 = 0xc7654f;
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
+const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 
 fn built_in_source_script() -> String {
     std::fs::read_to_string(BUILT_IN_SOURCE_PATH).unwrap_or_else(|_| {
@@ -61,7 +62,7 @@ impl Tab {
             Self::Home => "此刻",
             Self::Search => "搜索",
             Self::Rankings => "榜单",
-            Self::Playlists => "歌单",
+            Self::Playlists => "爱听的",
             Self::Sources => "音源",
             Self::Settings => "设置",
         }
@@ -161,6 +162,7 @@ struct MusicApp {
     ranking_tracks_error: Option<SharedString>,
     rankings_generation: u64,
     ranking_tracks_generation: u64,
+    selected_playlist: usize,
 }
 
 impl MusicApp {
@@ -200,6 +202,7 @@ impl MusicApp {
             ranking_tracks_error: None,
             rankings_generation: 0,
             ranking_tracks_generation: 0,
+            selected_playlist: 1,
         }
     }
 
@@ -318,6 +321,34 @@ impl MusicApp {
 
     fn refresh_rankings(&mut self, cx: &mut Context<Self>) {
         self.load_rankings(cx);
+    }
+
+    fn select_playlist(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= PLAYLIST_FOLDERS.len() {
+            return;
+        }
+        self.selected_playlist = index;
+        self.notice = format!("已打开 {}", PLAYLIST_FOLDERS[index]).into();
+        cx.notify();
+    }
+
+    fn selected_playlist_tracks(&self) -> Vec<TrackRow> {
+        match self.selected_playlist {
+            0 => self.rows.clone(),
+            2 => self.current_row().cloned().into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn toggle_playlist_track(&mut self, row: TrackRow, cx: &mut Context<Self>) {
+        if self.current_online_track.as_ref() == Some(&row) {
+            self.toggle_playback(cx);
+            return;
+        }
+        self.current_online_track = Some(row.clone());
+        self.current_track = None;
+        let online = row.track.source != TrackSource::Local;
+        self.start_playback(row.track, online, cx);
     }
 
     fn initialize_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1503,30 +1534,180 @@ impl MusicApp {
     }
 
     fn playlists_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let mut folder_nav = div()
+            .id("playlist-folder-scroll")
+            .w(px(224.0))
+            .h_full()
+            .min_h_0()
+            .flex_shrink_0()
             .flex()
             .flex_col()
+            .gap_1()
+            .pr(px(14.0))
+            .border_r_1()
+            .border_color(rgb(PAPER_DEEP))
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .px(px(10.0))
+                    .pb(px(6.0))
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child("我的列表"),
+            );
+        for (index, folder) in PLAYLIST_FOLDERS.iter().enumerate() {
+            let selected = self.selected_playlist == index;
+            folder_nav = folder_nav.child(
+                div()
+                    .id(("playlist-folder", index))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px(px(10.0))
+                    .py(px(10.0))
+                    .rounded_md()
+                    .bg(if selected {
+                        rgb(MOSS_TINT)
+                    } else {
+                        rgb(PAPER_LIGHT)
+                    })
+                    .text_color(rgb(if selected { MOSS } else { INK }))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_playlist(index, cx)))
+                    .child(
+                        div()
+                            .w(px(4.0))
+                            .h(px(24.0))
+                            .rounded_full()
+                            .bg(rgb(if selected { MOSS } else { PAPER_DEEP })),
+                    )
+                    .child(div().flex_1().text_sm().child(*folder)),
+            );
+        }
+
+        let folder_name = PLAYLIST_FOLDERS[self.selected_playlist.min(PLAYLIST_FOLDERS.len() - 1)];
+        let playlist_tracks = self.selected_playlist_tracks();
+        let playlist_count = playlist_tracks.len();
+        let mut songs_panel = div()
+            .id("playlist-songs-panel")
+            .h_full()
+            .min_h_0()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2();
+        songs_panel = songs_panel.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .pb(px(6.0))
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(folder_name),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(format!("{} 首歌曲", playlist_count)),
+                ),
+        );
+        if playlist_tracks.is_empty() {
+            songs_panel = songs_panel.child(search_status(
+                "这里还没有歌曲",
+                "从榜单或搜索中选择歌曲后，可将它们加入此文件夹。",
+            ));
+        } else {
+            songs_panel = songs_panel.child(
+                div()
+                    .id("playlist-track-list-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(self.playlist_track_list(cx, playlist_tracks)),
+            );
+        }
+
+        div()
+            .h_full()
+            .w_full()
+            .flex()
+            .flex_1()
+            .min_h_0()
             .gap_4()
-            .child(self.section_title("我的歌单", "新建歌单", cx))
-            .child(
-                playlist_card("最近播放", "根据播放记录整理")
-                    .id("playlist-recent")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已打开歌单：最近播放", cx)),
-                    ),
-            )
-            .child(
-                playlist_card("喜欢的音乐", "收藏的 0 首歌曲")
-                    .id("playlist-favorites")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.announce("已打开歌单：喜欢的音乐", cx)),
-                    ),
-            )
-            .child(
-                playlist_card("通勤", "还没有添加歌曲")
-                    .id("playlist-commute")
-                    .on_click(cx.listener(|this, _, _, cx| this.announce("已打开歌单：通勤", cx))),
-            )
+            .child(folder_nav)
+            .child(songs_panel)
+    }
+
+    fn playlist_track_list(
+        &self,
+        cx: &mut Context<Self>,
+        tracks: Vec<TrackRow>,
+    ) -> impl IntoElement {
+        let mut list = div().flex().flex_col().gap_1();
+        for (index, row) in tracks.into_iter().enumerate() {
+            let selected = self.current_online_track.as_ref() == Some(&row);
+            let playing = selected && self.is_playing;
+            let row_for_click = row.clone();
+            list = list.child(
+                div()
+                    .id(("playlist-track", index))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .px(px(12.0))
+                    .py(px(11.0))
+                    .rounded_md()
+                    .bg(if selected {
+                        rgb(MOSS_TINT)
+                    } else {
+                        rgb(PAPER_LIGHT)
+                    })
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_playlist_track(row_for_click.clone(), cx)
+                    }))
+                    .child(
+                        div()
+                            .w(px(28.0))
+                            .text_xs()
+                            .text_color(rgb(if selected { MOSS } else { MUTED }))
+                            .child(format!("{:02}", index + 1)),
+                    )
+                    .child(
+                        div()
+                            .size(px(34.0))
+                            .rounded_md()
+                            .bg(if playing { rgb(CLAY) } else { rgb(PAPER_DEEP) })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
+                            .child(if playing { "Ⅱ" } else { "▶" }),
+                    )
+                    .child(track_artwork(&row))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(MUTED))
+                                    .child(format!("{} · {}", row.artist, row.album)),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+            );
+        }
+        list
     }
 
     fn sources_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1798,7 +1979,7 @@ impl Render for MusicApp {
         self.initialize_search_input(window, cx);
         let page_content = self.content(cx);
         let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
-        let library_scroll = if self.active_tab == Tab::Rankings {
+        let library_scroll = if matches!(self.active_tab, Tab::Rankings | Tab::Playlists) {
             library_scroll.overflow_hidden().child(page_content)
         } else {
             library_scroll.overflow_y_scroll().child(page_content)
@@ -1887,34 +2068,6 @@ fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui:
         .text_color(rgb(foreground))
         .cursor_pointer()
         .child(label)
-}
-
-fn playlist_card(title: &'static str, description: &'static str) -> gpui::Div {
-    div()
-        .w(px(180.0))
-        .flex()
-        .flex_col()
-        .gap_2()
-        .p(px(16.0))
-        .rounded_md()
-        .bg(rgb(PAPER_LIGHT))
-        .border_1()
-        .border_color(rgb(PAPER_DEEP))
-        .cursor_pointer()
-        .child(
-            div()
-                .h(px(100.0))
-                .rounded_md()
-                .bg(rgb(PAPER_DEEP))
-                .child("♫"),
-        )
-        .child(
-            div()
-                .text_sm()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(title),
-        )
-        .child(div().text_xs().text_color(rgb(MUTED)).child(description))
 }
 
 fn setting_row(title: &'static str, value: &'static str, description: &'static str) -> gpui::Div {
