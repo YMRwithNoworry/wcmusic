@@ -34,15 +34,16 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub fn toggle(&self) -> Result<bool, String> {
+    pub fn pause(&self) -> Result<(), String> {
         let sink = self.sink.as_ref().ok_or("当前没有已加载的音频")?;
-        if sink.is_paused() {
-            sink.play();
-            Ok(true)
-        } else {
-            sink.pause();
-            Ok(false)
-        }
+        sink.pause();
+        Ok(())
+    }
+
+    pub fn resume(&self) -> Result<(), String> {
+        let sink = self.sink.as_ref().ok_or("当前没有已加载的音频")?;
+        sink.play();
+        Ok(())
     }
 
     pub fn position(&self) -> Option<Duration> {

@@ -11,8 +11,14 @@ if not ($cargo | path exists) {
     exit 1
 }
 
+let jobs = (if "WCMUSIC_BUILD_JOBS" in $env {
+    $env.WCMUSIC_BUILD_JOBS
+} else {
+    "2"
+})
+
 let result = (do {
-    run-external $cargo "build" "--release" "--manifest-path" "native/wcmusic_ui/Cargo.toml"
+    run-external $cargo "build" "--release" "--jobs" $jobs "--manifest-path" "native/wcmusic_ui/Cargo.toml"
 } | complete)
 
 if $result.exit_code != 0 {

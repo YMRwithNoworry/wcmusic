@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
+use gpui_kit as gpui;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayEvent {
     Show,

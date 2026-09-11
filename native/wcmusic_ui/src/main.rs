@@ -1,17 +1,21 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio_player;
-mod search_input;
 mod tray;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{
-    AnyWindowHandle, App, Application, Bounds, Context, Entity, Render, SharedString, Timer,
-    Window, WindowBounds, WindowOptions, div, img, prelude::*, px, rgb, size,
+use gpui_kit as gpui;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{
+    ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
-use search_input::{SearchInput, SearchInputEvent};
+use gpui_kit::{
+    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Render, SharedString, Window,
+    WindowBounds, WindowOptions, div, img, prelude::*, px, size,
+};
 use wcmusic_core::{
     OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
     load_ranking_tracks_with_proxy, load_rankings_with_proxy, resolve_source_url_with_proxy,
@@ -20,16 +24,56 @@ use wcmusic_core::{
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
 
-const PAPER: u32 = 0xf2efe7;
-const PAPER_LIGHT: u32 = 0xf8f6f2;
-const PAPER_DEEP: u32 = 0xe6e0d4;
-const INK: u32 = 0x20231f;
-const MUTED: u32 = 0x687067;
-const MOSS: u32 = 0x3e4c36;
-const MOSS_TINT: u32 = 0xe0e8da;
-const CLAY: u32 = 0xc7654f;
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
+
+/// A small, copyable projection of the active GPUI Kit theme.
+///
+/// Keeping these values in one place lets every screen use semantic colors
+/// (and therefore follow light/dark mode) without borrowing the app context
+/// while building element trees.
+#[derive(Clone, Copy)]
+struct Palette {
+    background: Hsla,
+    surface: Hsla,
+    surface_hover: Hsla,
+    border: Hsla,
+    foreground: Hsla,
+    muted: Hsla,
+    primary: Hsla,
+    primary_foreground: Hsla,
+    accent: Hsla,
+    sidebar: Hsla,
+    sidebar_foreground: Hsla,
+    sidebar_accent: Hsla,
+    sidebar_accent_foreground: Hsla,
+    sidebar_border: Hsla,
+    track: Hsla,
+}
+
+impl Palette {
+    fn new(cx: &App) -> Self {
+        let theme = cx.theme();
+        let c = &theme.colors;
+        Self {
+            background: c.background,
+            surface: c.list,
+            surface_hover: c.list_hover,
+            border: c.border,
+            foreground: c.foreground,
+            muted: c.muted_foreground,
+            primary: c.primary,
+            primary_foreground: c.primary_foreground,
+            accent: c.accent,
+            sidebar: c.sidebar,
+            sidebar_foreground: c.sidebar_foreground,
+            sidebar_accent: c.sidebar_accent,
+            sidebar_accent_foreground: c.sidebar_accent_foreground,
+            sidebar_border: c.sidebar_border,
+            track: c.muted,
+        }
+    }
+}
 
 fn built_in_source_script() -> String {
     std::fs::read_to_string(BUILT_IN_SOURCE_PATH).unwrap_or_else(|_| {
@@ -68,14 +112,14 @@ impl Tab {
         }
     }
 
-    fn glyph(self) -> &'static str {
+    fn icon(self) -> IconName {
         match self {
-            Self::Home => "◉",
-            Self::Search => "⌕",
-            Self::Rankings => "▥",
-            Self::Playlists => "☷",
-            Self::Sources => "◇",
-            Self::Settings => "⚙",
+            Self::Home => IconName::LayoutDashboard,
+            Self::Search => IconName::Search,
+            Self::Rankings => IconName::ChartPie,
+            Self::Playlists => IconName::FolderClosed,
+            Self::Sources => IconName::HardDrive,
+            Self::Settings => IconName::Settings,
         }
     }
 }
@@ -136,7 +180,7 @@ struct MusicApp {
     volume: f32,
     elapsed_ms: u64,
     query: SharedString,
-    search_input: Option<Entity<SearchInput>>,
+    search_input: Option<Entity<InputState>>,
     search_channel: OnlineSearchChannel,
     search_results: Vec<TrackRow>,
     search_error: Option<SharedString>,
@@ -355,9 +399,14 @@ impl MusicApp {
         if self.search_input.is_some() {
             return;
         }
-        let input = cx.new(SearchInput::new);
-        cx.subscribe_in(&input, window, |this, _, event, _, cx| match event {
-            SearchInputEvent::Submit => this.perform_search(cx),
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("输入歌曲、艺术家或专辑"));
+        cx.subscribe_in(&input, window, |this, input, event, _, cx| match event {
+            InputEvent::Change => {
+                this.query = input.read(cx).value().trim().into();
+                cx.notify();
+            }
+            InputEvent::PressEnter { .. } => this.perform_search(cx),
+            InputEvent::Focus | InputEvent::Blur => {}
         })
         .detach();
         self.search_input = Some(input);
@@ -372,7 +421,7 @@ impl MusicApp {
         self.active_tab = Tab::Search;
         self.notice = "搜索已打开，请输入歌曲、艺术家或专辑".into();
         if let Some(input) = &self.search_input {
-            input.read(cx).focus(window);
+            input.update(cx, |input, cx| input.focus(window, cx));
         }
         cx.notify();
     }
@@ -381,7 +430,7 @@ impl MusicApp {
         let Some(input) = &self.search_input else {
             return;
         };
-        let query = input.read(cx).text().trim().to_owned();
+        let query = input.read(cx).value().trim().to_owned();
         self.query = query.clone().into();
         self.search_error = None;
         self.search_generation += 1;
@@ -520,8 +569,10 @@ impl MusicApp {
         self.search_in_progress = false;
         self.notice = "搜索已清除".into();
         if let Some(input) = &self.search_input {
-            input.update(cx, |input, cx| input.clear(cx));
-            input.read(cx).focus(window);
+            input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                input.focus(window, cx);
+            });
         }
         cx.notify();
     }
@@ -533,8 +584,17 @@ impl MusicApp {
         cx.notify();
     }
 
-    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+    fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dark_theme = !self.dark_theme;
+        Theme::change(
+            if self.dark_theme {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            },
+            Some(window),
+            cx,
+        );
         self.notice = if self.dark_theme {
             "主题偏好：深色"
         } else {
@@ -721,7 +781,11 @@ impl MusicApp {
             cx.notify();
             return;
         };
-        let playing = match player.toggle() {
+        let playing = match if self.is_playing {
+            player.pause().map(|_| false)
+        } else {
+            player.resume().map(|_| true)
+        } {
             Ok(playing) => playing,
             Err(error) => {
                 self.notice = format!("播放控制失败：{error}").into();
@@ -765,24 +829,12 @@ impl MusicApp {
         cx.notify();
     }
 
-    fn seek_by(&mut self, seconds: i64, cx: &mut Context<Self>) {
+    fn seek_to_progress(&mut self, progress: f32, cx: &mut Context<Self>) {
         let Some(row) = self.current_row() else {
-            self.notice = "请先选择一首歌曲".into();
-            cx.notify();
             return;
         };
-        let current = self
-            .audio_player
-            .as_ref()
-            .and_then(AudioPlayer::position)
-            .unwrap_or_else(|| Duration::from_millis(self.elapsed_ms));
-        let duration = Duration::from_millis(row.track.duration_ms);
-        let target = if seconds.is_negative() {
-            current.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
-        } else {
-            current.saturating_add(Duration::from_secs(seconds as u64))
-        }
-        .min(duration);
+        let target =
+            Duration::from_millis((row.track.duration_ms as f32 * progress.clamp(0.0, 1.0)) as u64);
         if let Some(player) = &self.audio_player {
             if let Err(error) = player.seek(target) {
                 self.notice = error.into();
@@ -791,14 +843,15 @@ impl MusicApp {
             }
         }
         self.elapsed_ms = target.as_millis() as u64;
-        self.notice = format!("已调整到 {}", format_duration(target)).into();
         cx.notify();
     }
 
     fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
-                std::thread::sleep(Duration::from_millis(250));
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
                 let Ok(keep_running) = this.update(cx, |this, cx| {
                     if !this.is_playing {
                         return false;
@@ -880,11 +933,15 @@ impl MusicApp {
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut nav = div().flex().flex_col().gap_1().mt(px(30.0));
+        let p = Palette::new(cx);
+        let mut nav = v_flex().gap_1().mt(px(28.0));
         for tab in Tab::ALL {
             let selected = self.active_tab == tab;
-            let background = if selected { MOSS_TINT } else { PAPER };
-            let color = if selected { MOSS } else { MUTED };
+            let color = if selected {
+                p.sidebar_accent_foreground
+            } else {
+                p.sidebar_foreground
+            };
             nav = nav.child(
                 div()
                     .id(tab.label())
@@ -894,10 +951,15 @@ impl MusicApp {
                     .w_full()
                     .px(px(12.0))
                     .py(px(10.0))
-                    .rounded_md()
-                    .bg(rgb(background))
-                    .text_color(rgb(color))
+                    .rounded_lg()
+                    .bg(if selected {
+                        p.sidebar_accent
+                    } else {
+                        p.sidebar
+                    })
+                    .text_color(color)
                     .cursor_pointer()
+                    .hover(|style| style.bg(p.sidebar_accent))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if tab == Tab::Search {
                             this.open_search(window, cx);
@@ -905,22 +967,29 @@ impl MusicApp {
                             this.select_tab(tab, cx);
                         }
                     }))
-                    .child(div().w(px(22.0)).text_xl().child(tab.glyph()))
-                    .child(div().text_sm().child(tab.label())),
+                    .child(Icon::new(tab.icon()).size(px(18.0)).text_color(color))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(if selected {
+                                gpui::FontWeight::SEMIBOLD
+                            } else {
+                                gpui::FontWeight::NORMAL
+                            })
+                            .child(tab.label()),
+                    ),
             );
         }
-        div()
-            .w(px(214.0))
+        v_flex()
+            .w(px(232.0))
             .h_full()
-            .flex()
-            .flex_col()
-            .p(px(22.0))
+            .p(px(18.0))
+            .bg(p.sidebar)
             .border_r_1()
-            .border_color(rgb(PAPER_DEEP))
+            .border_color(p.sidebar_border)
             .child(
-                div()
+                h_flex()
                     .id("brand-home")
-                    .flex()
                     .items_center()
                     .gap_3()
                     .cursor_pointer()
@@ -928,20 +997,22 @@ impl MusicApp {
                     .child(
                         div()
                             .size(px(42.0))
-                            .rounded_md()
-                            .bg(rgb(MOSS))
+                            .rounded_lg()
+                            .bg(p.primary)
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_xl()
-                            .text_color(rgb(PAPER_LIGHT))
-                            .child("♫"),
+                            .child(
+                                Icon::new(IconName::GalleryVerticalEnd)
+                                    .size(px(22.0))
+                                    .text_color(p.primary_foreground),
+                            ),
                     )
                     .child(
                         div()
                             .text_lg()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(INK))
+                            .text_color(p.sidebar_foreground)
                             .child("WCMusic"),
                     ),
             )
@@ -950,8 +1021,8 @@ impl MusicApp {
                 div().flex_1().flex().items_end().child(
                     div()
                         .text_xs()
-                        .text_color(rgb(MUTED))
-                        .child("GPUI DESKTOP 0.1"),
+                        .text_color(p.muted)
+                        .child("GPUI KIT · DESKTOP"),
                 ),
             )
     }
@@ -971,19 +1042,20 @@ impl MusicApp {
     }
 
     fn now_playing_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let p = Palette::new(cx);
         let Some(row) = self.current_row() else {
             return div()
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(rgb(MUTED))
+                .text_color(p.muted)
                 .child("请先选择一首歌曲")
                 .into_any_element();
         };
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        let artwork = track_artwork_sized(row, 320.0);
+        let artwork = track_artwork_sized(row, 320.0, p);
         let lyrics = [
             "How many winters in a gaze",
             "Lost inside a maze?",
@@ -1010,16 +1082,10 @@ impl MusicApp {
                             .child("正在播放"),
                     )
                     .child(
-                        div()
-                            .id("close-now-playing")
-                            .px(px(12.0))
-                            .py(px(7.0))
-                            .rounded_md()
-                            .bg(rgb(PAPER_DEEP))
-                            .text_sm()
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
-                            .child("返回"),
+                        Button::new("close-now-playing")
+                            .secondary()
+                            .label("返回")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
                     ),
             )
             .child(
@@ -1042,8 +1108,8 @@ impl MusicApp {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child(title),
                             )
-                            .child(div().text_sm().text_color(rgb(MUTED)).child(artist))
-                            .child(div().text_xs().text_color(rgb(MUTED)).child(album)),
+                            .child(div().text_sm().text_color(p.muted).child(artist))
+                            .child(div().text_xs().text_color(p.muted).child(album)),
                     )
                     .child(
                         div()
@@ -1057,7 +1123,7 @@ impl MusicApp {
                             .children(lyrics.into_iter().enumerate().map(|(index, line)| {
                                 div()
                                     .text_lg()
-                                    .text_color(rgb(if index == 0 { INK } else { MUTED }))
+                                    .text_color(if index == 0 { p.foreground } else { p.muted })
                                     .child(line)
                             })),
                     ),
@@ -1066,6 +1132,7 @@ impl MusicApp {
     }
 
     fn home_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let now_playing = self
             .current_row()
             .map(|row| row.title.clone())
@@ -1076,51 +1143,57 @@ impl MusicApp {
                 .flex_col()
                 .gap_2()
                 .p(px(26.0))
-                .rounded_md()
-                .bg(rgb(MOSS))
-                .text_color(rgb(PAPER_LIGHT))
-                .child(div().text_sm().text_color(rgb(0xc2d1b8)).child("今日推荐"))
+                .rounded_lg()
+                .bg(p.primary)
+                .text_color(p.primary_foreground)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.primary_foreground)
+                        .child("今日推荐"),
+                )
                 .child(
                     div()
                         .text_2xl()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("让音乐回到此刻"),
                 )
-                .child(div().text_sm().text_color(rgb(0xd6dfd1)).child(now_playing))
                 .child(
-                    action_button("浏览榜单", CLAY, PAPER_LIGHT)
-                        .id("browse-rankings")
+                    div()
+                        .text_sm()
+                        .text_color(p.primary_foreground)
+                        .child(now_playing),
+                )
+                .child(
+                    Button::new("browse-rankings")
+                        .secondary()
+                        .label("浏览榜单")
                         .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Rankings, cx))),
                 ),
         )
     }
 
     fn search_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let input = self
             .search_input
             .as_ref()
             .expect("search input is initialized before rendering")
             .clone();
-        let mut channels = div().flex().items_center().gap_1();
+        let mut channels = h_flex().items_center().gap_1();
         for (channel_index, channel) in OnlineSearchChannel::ALL.into_iter().enumerate() {
             let selected = channel == self.search_channel;
-            channels = channels.child(
-                div()
-                    .id(("search-channel", channel_index))
-                    .px(px(14.0))
-                    .py(px(8.0))
-                    .rounded_md()
-                    .bg(rgb(if selected { MOSS } else { PAPER_LIGHT }))
-                    .border_1()
-                    .border_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
-                    .text_sm()
-                    .text_color(rgb(if selected { PAPER_LIGHT } else { MUTED }))
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.select_search_channel(channel, cx)),
-                    )
-                    .child(channel.label()),
-            );
+            let button = Button::new(("search-channel", channel_index))
+                .label(channel.label())
+                .small();
+            let button = if selected {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            channels = channels.child(button.on_click(
+                cx.listener(move |this, _, _, cx| this.select_search_channel(channel, cx)),
+            ));
         }
 
         let mut results = div().flex().flex_col().gap_1();
@@ -1128,18 +1201,21 @@ impl MusicApp {
             results = results.child(search_status(
                 "正在寻找声音",
                 format!("正在连接 {}", self.search_channel.label()),
+                p,
             ));
         } else if let Some(error) = &self.search_error {
-            results = results.child(search_status("暂时无法搜索", error.clone()));
+            results = results.child(search_status("暂时无法搜索", error.clone(), p));
         } else if self.query.is_empty() {
             results = results.child(search_status(
                 "从一次搜索开始",
                 "输入关键词并选择音乐渠道".to_owned(),
+                p,
             ));
         } else if self.search_results.is_empty() {
             results = results.child(search_status(
                 "没有找到匹配歌曲",
                 format!("{} · {}", self.search_channel.label(), self.query),
+                p,
             ));
         } else {
             for (index, row) in self.search_results.iter().cloned().enumerate() {
@@ -1154,7 +1230,7 @@ impl MusicApp {
                         .px(px(12.0))
                         .py(px(11.0))
                         .rounded_md()
-                        .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
+                        .bg(if selected { p.accent } else { p.surface })
                         .cursor_pointer()
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.toggle_online_track(index, cx)),
@@ -1163,25 +1239,41 @@ impl MusicApp {
                             div()
                                 .size(px(34.0))
                                 .rounded_md()
-                                .bg(rgb(if playing { CLAY } else { PAPER_DEEP }))
+                                .bg(if playing { p.primary } else { p.track })
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_color(rgb(if playing { PAPER_LIGHT } else { MOSS }))
-                                .child(if playing { "Ⅱ" } else { "▶" }),
+                                .text_color(if playing {
+                                    p.primary_foreground
+                                } else {
+                                    p.primary
+                                })
+                                .child(
+                                    Icon::new(if playing {
+                                        IconName::Pause
+                                    } else {
+                                        IconName::Play
+                                    })
+                                    .size(px(16.0))
+                                    .text_color(if playing {
+                                        p.primary_foreground
+                                    } else {
+                                        p.primary
+                                    }),
+                                ),
                         )
-                        .child(track_artwork(&row))
+                        .child(track_artwork(&row, p))
                         .child(
                             div()
                                 .flex_1()
                                 .flex()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                                .child(div().text_sm().text_color(p.foreground).child(row.title))
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(MUTED))
+                                        .text_color(p.muted)
                                         .child(format!("{} · {}", row.artist, row.album)),
                                 ),
                         )
@@ -1194,10 +1286,10 @@ impl MusicApp {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(MOSS))
+                                        .text_color(p.primary)
                                         .child(self.search_channel.label()),
                                 )
-                                .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+                                .child(div().text_xs().text_color(p.muted).child(row.duration)),
                         ),
                 );
             }
@@ -1213,28 +1305,26 @@ impl MusicApp {
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .id("online-search-input")
-                            .flex_1()
-                            .px(px(14.0))
-                            .py(px(10.0))
-                            .rounded_md()
-                            .bg(rgb(PAPER_LIGHT))
-                            .border_1()
-                            .border_color(rgb(PAPER_DEEP))
-                            .overflow_hidden()
-                            .child(input),
+                        div().flex_1().child(
+                            Input::new(&input)
+                                .id("online-search-input")
+                                .w_full()
+                                .cleanable(true)
+                                .prefix(
+                                    Icon::new(IconName::Search)
+                                        .text_color(cx.theme().muted_foreground),
+                                ),
+                        ),
                     )
                     .child(
-                        action_button("清除", PAPER_DEEP, MOSS)
-                            .id("clear-search")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.clear_search(window, cx)),
-                            ),
+                        Button::new("clear-search").label("清除").on_click(
+                            cx.listener(|this, _, window, cx| this.clear_search(window, cx)),
+                        ),
                     )
                     .child(
-                        action_button("搜索", MOSS, PAPER_LIGHT)
-                            .id("submit-search")
+                        Button::new("submit-search")
+                            .primary()
+                            .label("搜索")
                             .on_click(cx.listener(|this, _, _, cx| this.perform_search(cx))),
                     ),
             )
@@ -1251,17 +1341,20 @@ impl MusicApp {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("在线搜索"),
                     )
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(
-                        if self.query.is_empty() {
-                            "选择渠道后开始搜索".to_owned()
-                        } else {
-                            format!(
-                                "{} 条结果 · {}",
-                                self.search_results.len(),
-                                self.search_channel.label()
-                            )
-                        },
-                    )),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(if self.query.is_empty() {
+                                "选择渠道后开始搜索".to_owned()
+                            } else {
+                                format!(
+                                    "{} 条结果 · {}",
+                                    self.search_results.len(),
+                                    self.search_channel.label()
+                                )
+                            }),
+                    ),
             )
             .child(results)
     }
@@ -1272,6 +1365,7 @@ impl MusicApp {
         action: &'static str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = Palette::new(cx);
         div()
             .flex()
             .items_center()
@@ -1280,14 +1374,14 @@ impl MusicApp {
                 div()
                     .text_lg()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(INK))
+                    .text_color(p.foreground)
                     .child(title),
             )
             .child(
                 div()
                     .id(action)
                     .text_xs()
-                    .text_color(rgb(MOSS))
+                    .text_color(p.primary)
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         if action == "导入脚本" {
@@ -1303,6 +1397,7 @@ impl MusicApp {
     }
 
     fn rankings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let content = div()
             .h_full()
             .flex()
@@ -1314,15 +1409,17 @@ impl MusicApp {
             return content.child(search_status(
                 "正在更新平台榜单",
                 "正在连接酷狗、QQ、酷我和网易云音乐…",
+                p,
             ));
         }
         if let Some(error) = &self.rankings_error {
-            return content.child(search_status("榜单暂时不可用", error.clone()));
+            return content.child(search_status("榜单暂时不可用", error.clone(), p));
         }
         if self.rankings.is_empty() {
             return content.child(search_status(
                 "还没有榜单",
                 "点击右上角刷新，从各大音乐平台获取实时榜单。",
+                p,
             ));
         }
 
@@ -1337,14 +1434,14 @@ impl MusicApp {
             .gap_1()
             .pr(px(14.0))
             .border_r_1()
-            .border_color(rgb(PAPER_DEEP))
+            .border_color(p.border)
             .overflow_y_scroll()
             .child(
                 div()
                     .px(px(10.0))
                     .pb(px(6.0))
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(p.muted)
                     .child("平台榜单"),
             );
         for (index, ranking) in self.rankings.iter().enumerate() {
@@ -1364,21 +1461,15 @@ impl MusicApp {
                     .px(px(10.0))
                     .py(px(9.0))
                     .rounded_md()
-                    .bg(if selected {
-                        rgb(MOSS_TINT)
-                    } else {
-                        rgb(PAPER_LIGHT)
-                    })
-                    .text_color(rgb(if selected { MOSS } else { INK }))
+                    .bg(if selected { p.accent } else { p.surface })
+                    .text_color(if selected { p.primary } else { p.foreground })
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.select_ranking(index, cx)))
-                    .child(
-                        div()
-                            .w(px(4.0))
-                            .h(px(30.0))
-                            .rounded_full()
-                            .bg(rgb(if selected { MOSS } else { PAPER_DEEP })),
-                    )
+                    .child(div().w(px(4.0)).h(px(30.0)).rounded_full().bg(if selected {
+                        p.primary
+                    } else {
+                        p.track
+                    }))
                     .child(
                         div()
                             .flex_1()
@@ -1391,7 +1482,7 @@ impl MusicApp {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child(ranking.name.clone()),
                             )
-                            .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                            .child(div().text_xs().text_color(p.muted).child(format!(
                                 "{} · {}",
                                 ranking.channel.label(),
                                 count
@@ -1400,7 +1491,7 @@ impl MusicApp {
                     .child(
                         div()
                             .text_lg()
-                            .text_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
+                            .text_color(if selected { p.primary } else { p.muted })
                             .child("›"),
                     ),
             );
@@ -1431,19 +1522,26 @@ impl MusicApp {
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(MUTED))
+                                .text_color(p.muted)
                                 .child(ranking.channel.label()),
                         ),
                 );
             }
             if self.ranking_tracks_loading {
-                tracks_panel =
-                    tracks_panel.child(search_status("正在加载榜单歌曲", "正在读取平台最新排名…"));
+                tracks_panel = tracks_panel.child(search_status(
+                    "正在加载榜单歌曲",
+                    "正在读取平台最新排名…",
+                    p,
+                ));
             } else if let Some(error) = &self.ranking_tracks_error {
-                tracks_panel = tracks_panel.child(search_status("歌曲列表加载失败", error.clone()));
-            } else if self.ranking_tracks.is_empty() {
                 tracks_panel =
-                    tracks_panel.child(search_status("选择一个榜单", "点击左侧榜单查看实时歌曲。"));
+                    tracks_panel.child(search_status("歌曲列表加载失败", error.clone(), p));
+            } else if self.ranking_tracks.is_empty() {
+                tracks_panel = tracks_panel.child(search_status(
+                    "选择一个榜单",
+                    "点击左侧榜单查看实时歌曲。",
+                    p,
+                ));
             } else {
                 tracks_panel = tracks_panel.child(
                     div()
@@ -1455,8 +1553,11 @@ impl MusicApp {
                 );
             }
         } else {
-            tracks_panel =
-                tracks_panel.child(search_status("选择一个榜单", "点击左侧榜单查看实时歌曲。"));
+            tracks_panel = tracks_panel.child(search_status(
+                "选择一个榜单",
+                "点击左侧榜单查看实时歌曲。",
+                p,
+            ));
         }
 
         content.child(
@@ -1472,6 +1573,7 @@ impl MusicApp {
     }
 
     fn ranking_track_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let mut list = div().flex().flex_col().gap_1();
         for (index, row) in self.ranking_tracks.iter().cloned().enumerate() {
             let selected = self.current_online_track.as_ref() == Some(&row);
@@ -1485,11 +1587,7 @@ impl MusicApp {
                     .px(px(12.0))
                     .py(px(11.0))
                     .rounded_md()
-                    .bg(if selected {
-                        rgb(MOSS_TINT)
-                    } else {
-                        rgb(PAPER_LIGHT)
-                    })
+                    .bg(if selected { p.accent } else { p.surface })
                     .cursor_pointer()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.toggle_ranking_track(index, cx)),
@@ -1498,42 +1596,59 @@ impl MusicApp {
                         div()
                             .w(px(28.0))
                             .text_xs()
-                            .text_color(rgb(if selected { MOSS } else { MUTED }))
+                            .text_color(if selected { p.primary } else { p.muted })
                             .child(format!("{:02}", index + 1)),
                     )
                     .child(
                         div()
                             .size(px(34.0))
                             .rounded_md()
-                            .bg(if playing { rgb(CLAY) } else { rgb(PAPER_DEEP) })
+                            .bg(if playing { p.primary } else { p.track })
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
-                            .child(if playing { "Ⅱ" } else { "▶" }),
+                            .text_color(if playing {
+                                p.primary_foreground
+                            } else {
+                                p.primary
+                            })
+                            .child(
+                                Icon::new(if playing {
+                                    IconName::Pause
+                                } else {
+                                    IconName::Play
+                                })
+                                .size(px(16.0))
+                                .text_color(if playing {
+                                    p.primary_foreground
+                                } else {
+                                    p.primary
+                                }),
+                            ),
                     )
-                    .child(track_artwork(&row))
+                    .child(track_artwork(&row, p))
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                            .child(div().text_sm().text_color(p.foreground).child(row.title))
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(MUTED))
+                                    .text_color(p.muted)
                                     .child(format!("{} · {}", row.artist, row.album)),
                             ),
                     )
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+                    .child(div().text_xs().text_color(p.muted).child(row.duration)),
             );
         }
         list
     }
 
     fn playlists_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let mut folder_nav = div()
             .id("playlist-folder-scroll")
             .w(px(224.0))
@@ -1545,14 +1660,14 @@ impl MusicApp {
             .gap_1()
             .pr(px(14.0))
             .border_r_1()
-            .border_color(rgb(PAPER_DEEP))
+            .border_color(p.border)
             .overflow_y_scroll()
             .child(
                 div()
                     .px(px(10.0))
                     .pb(px(6.0))
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(p.muted)
                     .child("我的列表"),
             );
         for (index, folder) in PLAYLIST_FOLDERS.iter().enumerate() {
@@ -1567,21 +1682,15 @@ impl MusicApp {
                     .px(px(10.0))
                     .py(px(10.0))
                     .rounded_md()
-                    .bg(if selected {
-                        rgb(MOSS_TINT)
-                    } else {
-                        rgb(PAPER_LIGHT)
-                    })
-                    .text_color(rgb(if selected { MOSS } else { INK }))
+                    .bg(if selected { p.accent } else { p.surface })
+                    .text_color(if selected { p.primary } else { p.foreground })
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.select_playlist(index, cx)))
-                    .child(
-                        div()
-                            .w(px(4.0))
-                            .h(px(24.0))
-                            .rounded_full()
-                            .bg(rgb(if selected { MOSS } else { PAPER_DEEP })),
-                    )
+                    .child(div().w(px(4.0)).h(px(24.0)).rounded_full().bg(if selected {
+                        p.primary
+                    } else {
+                        p.track
+                    }))
                     .child(div().flex_1().text_sm().child(*folder)),
             );
         }
@@ -1612,7 +1721,7 @@ impl MusicApp {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(MUTED))
+                        .text_color(p.muted)
                         .child(format!("{} 首歌曲", playlist_count)),
                 ),
         );
@@ -1620,6 +1729,7 @@ impl MusicApp {
             songs_panel = songs_panel.child(search_status(
                 "这里还没有歌曲",
                 "从榜单或搜索中选择歌曲后，可将它们加入此文件夹。",
+                p,
             ));
         } else {
             songs_panel = songs_panel.child(
@@ -1648,6 +1758,7 @@ impl MusicApp {
         cx: &mut Context<Self>,
         tracks: Vec<TrackRow>,
     ) -> impl IntoElement {
+        let p = Palette::new(cx);
         let mut list = div().flex().flex_col().gap_1();
         for (index, row) in tracks.into_iter().enumerate() {
             let selected = self.current_online_track.as_ref() == Some(&row);
@@ -1662,11 +1773,7 @@ impl MusicApp {
                     .px(px(12.0))
                     .py(px(11.0))
                     .rounded_md()
-                    .bg(if selected {
-                        rgb(MOSS_TINT)
-                    } else {
-                        rgb(PAPER_LIGHT)
-                    })
+                    .bg(if selected { p.accent } else { p.surface })
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_playlist_track(row_for_click.clone(), cx)
@@ -1675,36 +1782,52 @@ impl MusicApp {
                         div()
                             .w(px(28.0))
                             .text_xs()
-                            .text_color(rgb(if selected { MOSS } else { MUTED }))
+                            .text_color(if selected { p.primary } else { p.muted })
                             .child(format!("{:02}", index + 1)),
                     )
                     .child(
                         div()
                             .size(px(34.0))
                             .rounded_md()
-                            .bg(if playing { rgb(CLAY) } else { rgb(PAPER_DEEP) })
+                            .bg(if playing { p.primary } else { p.track })
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(if playing { rgb(PAPER_LIGHT) } else { rgb(MOSS) })
-                            .child(if playing { "Ⅱ" } else { "▶" }),
+                            .text_color(if playing {
+                                p.primary_foreground
+                            } else {
+                                p.primary
+                            })
+                            .child(
+                                Icon::new(if playing {
+                                    IconName::Pause
+                                } else {
+                                    IconName::Play
+                                })
+                                .size(px(16.0))
+                                .text_color(if playing {
+                                    p.primary_foreground
+                                } else {
+                                    p.primary
+                                }),
+                            ),
                     )
-                    .child(track_artwork(&row))
+                    .child(track_artwork(&row, p))
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(rgb(INK)).child(row.title))
+                            .child(div().text_sm().text_color(p.foreground).child(row.title))
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(MUTED))
+                                    .text_color(p.muted)
                                     .child(format!("{} · {}", row.artist, row.album)),
                             ),
                     )
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(row.duration)),
+                    .child(div().text_xs().text_color(p.muted).child(row.duration)),
             );
         }
         list
@@ -1751,13 +1874,14 @@ impl MusicApp {
         source_index: Option<usize>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = Palette::new(cx);
         div()
             .id(id)
             .p(px(18.0))
             .rounded_md()
-            .bg(rgb(if selected { MOSS_TINT } else { PAPER_LIGHT }))
+            .bg(if selected { p.accent } else { p.surface })
             .border_1()
-            .border_color(rgb(if selected { MOSS } else { PAPER_DEEP }))
+            .border_color(if selected { p.primary } else { p.border })
             .flex()
             .flex_col()
             .gap_2()
@@ -1771,11 +1895,11 @@ impl MusicApp {
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .child(name),
             )
-            .child(div().text_sm().text_color(rgb(MUTED)).child(description))
+            .child(div().text_sm().text_color(p.muted).child(description))
             .child(
                 div()
                     .text_xs()
-                    .text_color(rgb(if selected { MOSS } else { MUTED }))
+                    .text_color(if selected { p.primary } else { p.muted })
                     .child(if selected {
                         "当前使用"
                     } else {
@@ -1785,6 +1909,7 @@ impl MusicApp {
     }
 
     fn settings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         div()
             .flex()
             .flex_col()
@@ -1795,6 +1920,7 @@ impl MusicApp {
                     "播放音质",
                     ["标准 128k", "高品 320k", "无损 FLAC"][self.quality_index],
                     "整曲解析时优先请求高品质音频",
+                    p,
                 )
                 .id("setting-quality")
                 .on_click(cx.listener(|this, _, _, cx| this.cycle_quality(cx))),
@@ -1804,9 +1930,10 @@ impl MusicApp {
                     "主题",
                     if self.dark_theme { "深色" } else { "浅色" },
                     "支持浅色与深色窗口主题",
+                    p,
                 )
                 .id("setting-theme")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
             )
             .child(
                 setting_row(
@@ -1817,6 +1944,7 @@ impl MusicApp {
                         "已关闭"
                     },
                     "播放时显示可拖动的歌词窗口",
+                    p,
                 )
                 .id("setting-lyrics")
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics(cx))),
@@ -1830,6 +1958,7 @@ impl MusicApp {
                         "关闭"
                     },
                     "默认直连，开启后读取 HTTP_PROXY/HTTPS_PROXY",
+                    p,
                 )
                 .id("setting-proxy")
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_network_proxy(cx))),
@@ -1837,11 +1966,14 @@ impl MusicApp {
     }
 
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::new(cx);
         let row = self.current_row();
         let (title, artist, duration_ms) = row
             .map(|row| (row.title.clone(), row.artist.clone(), row.track.duration_ms))
             .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into(), 0));
-        let artwork = row.map(track_artwork).unwrap_or_else(empty_artwork);
+        let artwork = row
+            .map(|row| track_artwork(row, p))
+            .unwrap_or_else(|| empty_artwork(p));
         let elapsed = self
             .audio_player
             .as_ref()
@@ -1853,17 +1985,16 @@ impl MusicApp {
         } else {
             (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0)
         };
-        let progress_fill = px(360.0 * progress);
         let playing = self.is_playing;
         div()
             .w_full()
             .mt(px(18.0))
             .pt(px(14.0))
             .border_t_1()
-            .border_color(rgb(PAPER_DEEP))
+            .border_color(p.border)
             .flex()
-            .flex_col()
-            .gap_2()
+            .items_center()
+            .gap_3()
             .child(
                 div()
                     .flex()
@@ -1882,94 +2013,91 @@ impl MusicApp {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(rgb(INK)).child(title))
-                            .child(div().text_xs().text_color(rgb(MUTED)).child(artist)),
+                            .child(div().text_sm().text_color(p.foreground).child(title))
+                            .child(div().text_xs().text_color(p.muted).child(artist)),
                     ),
             )
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(format!("音量 {}%", (self.volume * 100.0).round() as u32)),
-                    )
-                    .child(
-                        player_button("−")
-                            .id("player-volume-down")
-                            .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(-0.1, cx))),
-                    )
-                    .child(
-                        player_button("+")
-                            .id("player-volume-up")
-                            .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(0.1, cx))),
-                    )
-                    .child(
-                        player_button("◀")
-                            .id("player-previous")
-                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
-                    )
-                    .child(
-                        div()
-                            .id("player-toggle")
-                            .size(px(34.0))
-                            .rounded_full()
-                            .bg(rgb(MOSS))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(rgb(PAPER_LIGHT))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
-                            .child(if playing { "Ⅱ" } else { "▶" }),
-                    )
-                    .child(
-                        player_button("▶")
-                            .id("player-next")
-                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
-                    ),
+                Button::new("player-previous")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ArrowLeft)
+                    .tooltip("上一首")
+                    .accessibility_label("上一首")
+                    .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
+            )
+            .child(
+                Button::new("player-toggle")
+                    .primary()
+                    .rounded(px(999.0))
+                    .icon(if playing {
+                        IconName::Pause
+                    } else {
+                        IconName::Play
+                    })
+                    .tooltip(if playing { "暂停" } else { "播放" })
+                    .accessibility_label(if playing { "暂停" } else { "播放" })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx))),
+            )
+            .child(
+                Button::new("player-next")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ArrowRight)
+                    .tooltip("下一首")
+                    .accessibility_label("下一首")
+                    .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
             )
             .child(
                 div()
+                    .id("player-progress")
+                    .h(px(6.0))
+                    .flex_1()
                     .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
+                    .rounded_full()
+                    .bg(p.track)
+                    .children((0..20).map(|index| {
+                        let fraction = (index + 1) as f32 / 20.0;
                         div()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(format_duration(Duration::from_millis(elapsed_ms))),
-                    )
-                    .child(
-                        player_button("−15")
-                            .id("player-seek-back")
-                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(-15, cx))),
-                    )
-                    .child(
-                        div()
-                            .id("player-progress")
-                            .h(px(5.0))
+                            .id(SharedString::from(format!("player-progress-{index}")))
+                            .h_full()
                             .flex_1()
+                            .mx(px(1.0))
                             .rounded_full()
-                            .bg(rgb(PAPER_DEEP))
+                            .bg(if progress >= fraction {
+                                p.primary
+                            } else {
+                                p.track
+                            })
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(15, cx)))
-                            .child(div().h_full().w(progress_fill).rounded_full().bg(rgb(MOSS))),
-                    )
-                    .child(
-                        player_button("+15")
-                            .id("player-seek-forward")
-                            .on_click(cx.listener(|this, _, _, cx| this.seek_by(15, cx))),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(format_duration(Duration::from_millis(duration_ms))),
-                    ),
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.seek_to_progress(fraction, cx)
+                            }))
+                    })),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(p.muted)
+                    .child(format!("{}%", (self.volume * 100.0).round() as u32)),
+            )
+            .child(
+                Button::new("player-volume-down")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Minus)
+                    .tooltip("减小音量")
+                    .accessibility_label("减小音量")
+                    .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(-0.1, cx))),
+            )
+            .child(
+                Button::new("player-volume-up")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Plus)
+                    .tooltip("增大音量")
+                    .accessibility_label("增大音量")
+                    .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(0.1, cx))),
             )
     }
 }
@@ -1977,6 +2105,7 @@ impl MusicApp {
 impl Render for MusicApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.initialize_search_input(window, cx);
+        let p = Palette::new(cx);
         let page_content = self.content(cx);
         let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
         let library_scroll = if matches!(self.active_tab, Tab::Rankings | Tab::Playlists) {
@@ -1987,8 +2116,8 @@ impl Render for MusicApp {
         div()
             .size_full()
             .flex()
-            .bg(rgb(PAPER))
-            .text_color(rgb(INK))
+            .bg(p.background)
+            .text_color(p.foreground)
             .child(self.sidebar(cx))
             .child(
                 div()
@@ -2003,26 +2132,13 @@ impl Render for MusicApp {
     }
 }
 
-fn player_button(glyph: &'static str) -> gpui::Div {
-    div()
-        .size(px(30.0))
-        .rounded_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_sm()
-        .text_color(rgb(MOSS))
-        .cursor_pointer()
-        .child(glyph)
+fn track_artwork(row: &TrackRow, p: Palette) -> gpui::AnyElement {
+    track_artwork_sized(row, 40.0, p)
 }
 
-fn track_artwork(row: &TrackRow) -> gpui::AnyElement {
-    track_artwork_sized(row, 40.0)
-}
-
-fn track_artwork_sized(row: &TrackRow, size: f32) -> gpui::AnyElement {
+fn track_artwork_sized(row: &TrackRow, size: f32, p: Palette) -> gpui::AnyElement {
     match row.artwork_path.as_deref() {
-        Some(path) => img(std::path::PathBuf::from(path.as_ref()))
+        Some(path) => img(std::path::PathBuf::from(path))
             .size(px(size))
             .rounded_md()
             .object_fit(gpui::ObjectFit::Cover)
@@ -2030,57 +2146,46 @@ fn track_artwork_sized(row: &TrackRow, size: f32) -> gpui::AnyElement {
         None => div()
             .size(px(size))
             .rounded_md()
-            .bg(rgb(PAPER_DEEP))
+            .bg(p.track)
             .flex()
             .items_center()
             .justify_center()
-            .text_color(rgb(MOSS))
-            .child("♫")
+            .text_color(p.primary)
+            .child(Icon::new(IconName::GalleryVerticalEnd).size(px(size * 0.45)))
             .into_any_element(),
     }
 }
 
-fn empty_artwork() -> gpui::AnyElement {
+fn empty_artwork(p: Palette) -> gpui::AnyElement {
     div()
         .size(px(40.0))
         .rounded_md()
-        .bg(rgb(PAPER_DEEP))
+        .bg(p.track)
         .flex()
         .items_center()
         .justify_center()
-        .text_color(rgb(MOSS))
-        .child("♫")
+        .text_color(p.primary)
+        .child(Icon::new(IconName::GalleryVerticalEnd).size(px(18.0)))
         .into_any_element()
 }
 
-fn format_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    format!("{:02}:{:02}", seconds / 60, seconds % 60)
-}
-
-fn action_button(label: &'static str, background: u32, foreground: u32) -> gpui::Div {
-    div()
-        .px(px(14.0))
-        .py(px(9.0))
-        .rounded_md()
-        .bg(rgb(background))
-        .text_sm()
-        .text_color(rgb(foreground))
-        .cursor_pointer()
-        .child(label)
-}
-
-fn setting_row(title: &'static str, value: &'static str, description: &'static str) -> gpui::Div {
+fn setting_row(
+    title: &'static str,
+    value: &'static str,
+    description: &'static str,
+    p: Palette,
+) -> gpui::Div {
     div()
         .flex()
         .items_center()
         .justify_between()
         .p(px(16.0))
-        .rounded_md()
-        .bg(rgb(PAPER_LIGHT))
+        .rounded_lg()
+        .bg(p.surface)
         .border_1()
-        .border_color(rgb(PAPER_DEEP))
+        .border_color(p.border)
         .cursor_pointer()
+        .hover(|style| style.bg(p.surface_hover))
         .child(
             div()
                 .flex()
@@ -2092,12 +2197,18 @@ fn setting_row(title: &'static str, value: &'static str, description: &'static s
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child(title),
                 )
-                .child(div().text_xs().text_color(rgb(MUTED)).child(description)),
+                .child(div().text_xs().text_color(p.muted).child(description)),
         )
-        .child(div().text_sm().text_color(rgb(MOSS)).child(value))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(p.primary)
+                .child(value),
+        )
 }
 
-fn search_status(title: &'static str, detail: impl Into<SharedString>) -> gpui::Div {
+fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palette) -> gpui::Div {
     div()
         .w_full()
         .flex()
@@ -2109,78 +2220,83 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>) -> gpui::
             div()
                 .text_lg()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(INK))
+                .text_color(p.foreground)
                 .child(title),
         )
-        .child(div().text_sm().text_color(rgb(MUTED)).child(detail.into()))
+        .child(div().text_sm().text_color(p.muted).child(detail.into()))
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        SearchInput::init(cx);
-        let tray = tray::TrayController::new().map(Arc::new);
-        let keep_in_tray = tray.is_some();
-        let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-        let window_handle = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                move |window, cx| {
-                    if keep_in_tray {
-                        window.on_window_should_close(cx, |window, _cx| {
-                            if let Some(hwnd) = tray::native_window_handle(window) {
-                                tray::hide_window(hwnd);
-                            }
-                            // Closing the window means hiding it to the tray. The
-                            // tray's explicit Exit command is the only operation
-                            // that quits the process.
-                            false
-                        });
-                    }
-                    cx.new(|_| MusicApp::new())
-                },
-            )
-            .expect("failed to open WCMusic GPUI window");
-
-        if let Some(tray) = tray {
-            let events = tray.events();
-            let tray_for_quit = tray.clone();
-            cx.on_app_quit(move |_| {
-                tray_for_quit.shutdown();
-                async {}
-            })
-            .detach();
-
-            let window_handle: AnyWindowHandle = window_handle.into();
-            let tray_for_events = tray.clone();
-            cx.spawn(async move |cx| {
-                loop {
-                    Timer::after(Duration::from_millis(100)).await;
-                    match events.try_recv() {
-                        Some(tray::TrayEvent::Show) => {
-                            let _ = window_handle.update(cx, |_, window, _| {
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(|cx: &mut App| {
+            gpui_kit::init(cx);
+            let tray = tray::TrayController::new().map(Arc::new);
+            let keep_in_tray = tray.is_some();
+            let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+            let window_handle = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        ..Default::default()
+                    },
+                    move |window, cx| {
+                        if keep_in_tray {
+                            window.on_window_should_close(cx, |window, _cx| {
                                 if let Some(hwnd) = tray::native_window_handle(window) {
-                                    tray::show_window(hwnd);
+                                    tray::hide_window(hwnd);
                                 }
-                                window.activate_window();
+                                // Closing the window means hiding it to the tray. The
+                                // tray's explicit Exit command is the only operation
+                                // that quits the process.
+                                false
                             });
                         }
-                        Some(tray::TrayEvent::Exit) => {
-                            tray_for_events.shutdown();
-                            let _ = cx.update(|cx| cx.quit());
-                            break;
-                        }
-                        None => {}
-                    }
-                }
-            })
-            .detach();
-        }
+                        let view = cx.new(|_| MusicApp::new());
+                        cx.new(|cx| Root::new(view, window, cx))
+                    },
+                )
+                .expect("failed to open WCMusic GPUI window");
 
-        cx.activate(true);
-    });
+            if let Some(tray) = tray {
+                let events = tray.events();
+                let tray_for_quit = tray.clone();
+                cx.on_app_quit(move |_| {
+                    tray_for_quit.shutdown();
+                    async {}
+                })
+                .detach();
+
+                let window_handle: AnyWindowHandle = window_handle.into();
+                let tray_for_events = tray.clone();
+                cx.spawn(async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                        match events.try_recv() {
+                            Some(tray::TrayEvent::Show) => {
+                                let _ = window_handle.update(cx, |_, window, _| {
+                                    if let Some(hwnd) = tray::native_window_handle(window) {
+                                        tray::show_window(hwnd);
+                                    }
+                                    window.activate_window();
+                                });
+                            }
+                            Some(tray::TrayEvent::Exit) => {
+                                tray_for_events.shutdown();
+                                let _ = cx.update(|cx| cx.quit());
+                                break;
+                            }
+                            None => {}
+                        }
+                    }
+                })
+                .detach();
+            }
+
+            cx.activate(true);
+        });
 }
 
 #[cfg(test)]

@@ -7,10 +7,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
-gpui = "0.2.2"
+gpui-kit = "0.6.1"
 rfd = "0.15.4"
 rodio = "0.20.1"
-unicode-segmentation = "1.12.0"
 ureq = "2.12.1"
 wcmusic_core = { path = "../wcmusic_core" }
 

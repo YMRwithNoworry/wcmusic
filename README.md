@@ -4,15 +4,15 @@ WCMusic 是面向 Windows 与 Android 的 GPUI + Rust 音乐播放器。Windows 
 
 ## GPUI 桌面客户端
 
-Windows 桌面客户端位于 `native/wcmusic_ui`，使用 GPUI 0.2.2 构建。启动桌面界面：
+Windows 桌面客户端位于 `native/wcmusic_ui`，使用 `gpui-kit 0.6`（GPUI + GPUI Component）构建。启动桌面界面：
 
 ```text
 cargo run --manifest-path native/wcmusic_ui/Cargo.toml
 ```
 
-生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。
+生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。如果本机并行编译时内存紧张，可通过 `WCMUSIC_BUILD_JOBS=1` 控制 Cargo 并行任务数。
 
-GPUI 客户端包含统一的侧边导航、搜索与曲库筛选、榜单、歌单、音源设置以及底部播放控制栏。它通过 `wcmusic_core::LibraryIndex` 使用同一套 Rust 曲库检索能力。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
+GPUI 客户端使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等组件重做了统一侧边导航、搜索、榜单、歌单、音源设置以及底部播放控制栏，并保留原有搜索、播放、榜单、歌单与音源管理功能。它通过 `wcmusic_core::LibraryIndex` 使用同一套 Rust 曲库检索能力。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
 
 ## 当前能力
 
