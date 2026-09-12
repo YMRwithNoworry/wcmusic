@@ -2136,37 +2136,76 @@ fn track_artwork(row: &TrackRow, p: Palette) -> gpui::AnyElement {
     track_artwork_sized(row, 40.0, p)
 }
 
-fn track_artwork_sized(row: &TrackRow, size: f32, p: Palette) -> gpui::AnyElement {
-    match row.artwork_path.as_deref() {
-        Some(path) => img(std::path::PathBuf::from(path))
-            .size(px(size))
-            .rounded_md()
-            .object_fit(gpui::ObjectFit::Cover)
-            .into_any_element(),
-        None => div()
-            .size(px(size))
-            .rounded_md()
-            .bg(p.track)
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(p.primary)
-            .child(Icon::new(IconName::GalleryVerticalEnd).size(px(size * 0.45)))
-            .into_any_element(),
-    }
+enum ArtworkSource {
+    Local(std::path::PathBuf),
+    Remote(SharedString),
+    Placeholder,
 }
 
-fn empty_artwork(p: Palette) -> gpui::AnyElement {
+fn remote_artwork_url(row: &TrackRow) -> Option<String> {
+    let value = row.track.artwork_uri.as_deref()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with("http://") {
+        return Some(value.replacen("http://", "https://", 1));
+    }
+    if value.starts_with("https://") {
+        return Some(value.to_owned());
+    }
+    if let Some(path) = value.strip_prefix("//") {
+        return Some(format!("https://{path}"));
+    }
+    // 旧收藏数据可能保存了酷我接口的 web_albumpic_short 相对路径。
+    if row.track.source == TrackSource::Kw {
+        let path = value.trim_start_matches('/');
+        return Some(format!("https://img1.kuwo.cn/star/albumcover/{path}"));
+    }
+    None
+}
+
+fn preferred_artwork_source(row: &TrackRow) -> ArtworkSource {
+    if let Some(path) = row.artwork_path.as_deref().filter(|path| !path.is_empty()) {
+        return ArtworkSource::Local(std::path::PathBuf::from(path));
+    }
+    if let Some(uri) = remote_artwork_url(row) {
+        return ArtworkSource::Remote(SharedString::from(uri));
+    }
+    ArtworkSource::Placeholder
+}
+
+fn artwork_placeholder(size: f32, p: Palette) -> gpui::AnyElement {
     div()
-        .size(px(40.0))
+        .size(px(size))
         .rounded_md()
         .bg(p.track)
         .flex()
         .items_center()
         .justify_center()
         .text_color(p.primary)
-        .child(Icon::new(IconName::GalleryVerticalEnd).size(px(18.0)))
+        .child(Icon::new(IconName::GalleryVerticalEnd).size(px(size * 0.45)))
         .into_any_element()
+}
+
+fn track_artwork_sized(row: &TrackRow, size: f32, p: Palette) -> gpui::AnyElement {
+    match preferred_artwork_source(row) {
+        ArtworkSource::Local(path) => img(path)
+            .size(px(size))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element(),
+        ArtworkSource::Remote(uri) => img(uri)
+            .size(px(size))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Cover)
+            .with_fallback(move || artwork_placeholder(size, p))
+            .into_any_element(),
+        ArtworkSource::Placeholder => artwork_placeholder(size, p),
+    }
+}
+
+fn empty_artwork(p: Palette) -> gpui::AnyElement {
+    artwork_placeholder(40.0, p)
 }
 
 fn setting_row(
@@ -2318,5 +2357,57 @@ mod tests {
         assert_eq!(row.title, "Slow Light");
         assert_eq!(row.artist, "Mizu");
         assert_eq!(row.album, "Still Water");
+    }
+
+    #[test]
+    fn uses_remote_artwork_when_no_local_copy_exists() {
+        let mut track = Track::local("test", "Slow Light", "file:///slow-light.mp3");
+        track.artwork_uri = Some("https://img.example/cover.jpg".into());
+        let row = TrackRow::from_core(track);
+
+        match preferred_artwork_source(&row) {
+            ArtworkSource::Remote(uri) => {
+                assert_eq!(uri.as_ref(), "https://img.example/cover.jpg");
+            }
+            _ => panic!("expected remote artwork source"),
+        }
+    }
+
+    #[test]
+    fn resolves_legacy_kuwo_relative_artwork() {
+        let mut track = Track::local("test", "Slow Light", "file:///slow-light.mp3");
+        track.source = TrackSource::Kw;
+        track.artwork_uri = Some("120/85/1/4091887608.jpg".into());
+        let row = TrackRow::from_core(track);
+
+        match preferred_artwork_source(&row) {
+            ArtworkSource::Remote(uri) => {
+                assert_eq!(
+                    uri.as_ref(),
+                    "https://img1.kuwo.cn/star/albumcover/120/85/1/4091887608.jpg"
+                );
+            }
+            _ => panic!("expected remote artwork source"),
+        }
+    }
+
+    #[test]
+    fn prefers_cached_artwork_over_remote_url() {
+        let mut track = Track::local("test", "Slow Light", "file:///slow-light.mp3");
+        track.artwork_uri = Some("https://img.example/cover.jpg".into());
+        let row = TrackRow::from_core_with_artwork(
+            track,
+            Some(r"C:\tmp\wcmusic-artwork\test.jpg".into()),
+        );
+
+        match preferred_artwork_source(&row) {
+            ArtworkSource::Local(path) => {
+                assert_eq!(
+                    path,
+                    std::path::PathBuf::from(r"C:\tmp\wcmusic-artwork\test.jpg")
+                );
+            }
+            _ => panic!("expected local artwork source"),
+        }
     }
 }
