@@ -325,6 +325,47 @@ pub fn set_window_topmost(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn set_window_topmost(_hwnd: isize) {}
 
+/// Remove the Windows 11 rounded-corner frame and non-client border from an
+/// overlay window. Without this, an otherwise transparent lyrics window still
+/// shows a faint rectangular outline.
+#[cfg(windows)]
+pub fn remove_window_border(hwnd: isize) {
+    use std::mem::size_of_val;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+    };
+
+    unsafe {
+        let hwnd = hwnd as HWND;
+        let corner = DWMWCP_DONOTROUND;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &corner as *const _ as _,
+            size_of_val(&corner) as u32,
+        );
+        let border = DWMWA_COLOR_NONE;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as u32,
+            &border as *const _ as _,
+            size_of_val(&border) as u32,
+        );
+        let non_client_rendering = DWMNCRP_DISABLED;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY as u32,
+            &non_client_rendering as *const _ as _,
+            size_of_val(&non_client_rendering) as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn remove_window_border(_hwnd: isize) {}
+
 #[cfg(windows)]
 pub fn hide_window(hwnd: isize) {
     windows::hide_window(hwnd);

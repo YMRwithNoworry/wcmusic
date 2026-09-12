@@ -11,6 +11,7 @@ use std::time::Duration;
 use gpui_kit as gpui;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
@@ -183,6 +184,9 @@ struct MusicApp {
     is_playing: bool,
     show_now_playing: bool,
     volume: f32,
+    progress_slider: Option<Entity<SliderState>>,
+    volume_slider: Option<Entity<SliderState>>,
+    seeking_progress: bool,
     elapsed_ms: u64,
     query: SharedString,
     search_input: Option<Entity<InputState>>,
@@ -230,6 +234,9 @@ impl MusicApp {
             is_playing: false,
             show_now_playing: false,
             volume: 0.8,
+            progress_slider: None,
+            volume_slider: None,
+            seeking_progress: false,
             elapsed_ms: 0,
             query: "".into(),
             search_input: None,
@@ -431,6 +438,108 @@ impl MusicApp {
         self.current_track = None;
         let online = row.track.source != TrackSource::Local;
         self.start_playback(row.track, online, cx);
+    }
+
+    fn ensure_player_sliders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.progress_slider.is_none() {
+            let slider = cx.new(|_| {
+                SliderState::new()
+                    .min(0.0)
+                    .max(100.0)
+                    .step(0.01)
+                    .default_value(0.0)
+            });
+            cx.subscribe_in(
+                &slider,
+                window,
+                |this, _slider, event, _window, cx| match event {
+                    SliderEvent::Change(value) => {
+                        this.seeking_progress = true;
+                        let progress = (value.start() / 100.0).clamp(0.0, 1.0);
+                        if let Some(row) = this.current_row() {
+                            this.elapsed_ms =
+                                (row.track.duration_ms as f32 * progress).round() as u64;
+                        }
+                        this.update_lyrics_position(cx);
+                        cx.notify();
+                    }
+                    SliderEvent::Release(value) => {
+                        this.seeking_progress = false;
+                        this.seek_to_progress((value.start() / 100.0).clamp(0.0, 1.0), cx);
+                    }
+                },
+            )
+            .detach();
+            self.progress_slider = Some(slider);
+        }
+
+        if self.volume_slider.is_none() {
+            let initial_volume = self.volume * 100.0;
+            let slider = cx.new(|_| {
+                SliderState::new()
+                    .min(0.0)
+                    .max(100.0)
+                    .step(1.0)
+                    .default_value(initial_volume)
+            });
+            cx.subscribe_in(
+                &slider,
+                window,
+                |this, _slider, event, _window, cx| match event {
+                    SliderEvent::Change(value) | SliderEvent::Release(value) => {
+                        this.set_volume_percent(value.start(), cx);
+                    }
+                },
+            )
+            .detach();
+            self.volume_slider = Some(slider);
+        }
+    }
+
+    fn sync_player_sliders(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let duration_ms = self
+            .current_row()
+            .map(|row| row.track.duration_ms)
+            .unwrap_or_default();
+        let elapsed_ms = if self.seeking_progress {
+            self.elapsed_ms
+        } else {
+            self.audio_player
+                .as_ref()
+                .and_then(AudioPlayer::position)
+                .map(|position| position.as_millis() as u64)
+                .unwrap_or(self.elapsed_ms)
+        };
+        let progress = if duration_ms == 0 {
+            0.0
+        } else {
+            (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0)
+        };
+        if let Some(slider) = &self.progress_slider {
+            let target = progress * 100.0;
+            slider.update(cx, |state, cx| {
+                if (state.value().start() - target).abs() > 0.05 {
+                    state.set_value(target, window, cx);
+                }
+            });
+        }
+        if let Some(slider) = &self.volume_slider {
+            let target = self.volume * 100.0;
+            slider.update(cx, |state, cx| {
+                if (state.value().start() - target).abs() > 0.05 {
+                    state.set_value(target, window, cx);
+                }
+            });
+        }
+    }
+
+    fn set_volume_percent(&mut self, percent: f32, cx: &mut Context<Self>) {
+        self.volume = (percent / 100.0).clamp(0.0, 1.0);
+        if let Some(player) = &self.audio_player {
+            player.set_volume(self.volume);
+        }
+        self.notice = format!("音量 {}%", (self.volume * 100.0).round() as u32).into();
+        cx.notify();
     }
 
     fn initialize_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -711,6 +820,7 @@ impl MusicApp {
             move |window, cx| {
                 if let Some(hwnd) = tray::native_window_handle(window) {
                     tray::set_window_topmost(hwnd);
+                    tray::remove_window_border(hwnd);
                 }
                 cx.new(|cx| {
                     Root::new(overlay_for_window.clone(), window, cx)
@@ -877,6 +987,7 @@ impl MusicApp {
         }
         self.is_playing = false;
         self.elapsed_ms = 0;
+        self.seeking_progress = false;
         let source_label = match track.source {
             TrackSource::Kw => OnlineSearchChannel::Kuwo.label(),
             TrackSource::Kg => OnlineSearchChannel::Kugou.label(),
@@ -1037,15 +1148,6 @@ impl MusicApp {
 
     fn close_now_playing(&mut self, cx: &mut Context<Self>) {
         self.show_now_playing = false;
-        cx.notify();
-    }
-
-    fn adjust_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
-        self.volume = (self.volume + delta).clamp(0.0, 1.0);
-        if let Some(player) = &self.audio_player {
-            player.set_volume(self.volume);
-        }
-        self.notice = format!("音量 {}%", (self.volume * 100.0).round() as u32).into();
         cx.notify();
     }
 
@@ -2224,23 +2326,12 @@ impl MusicApp {
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
         let row = self.current_row();
-        let (title, artist, duration_ms) = row
-            .map(|row| (row.title.clone(), row.artist.clone(), row.track.duration_ms))
-            .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into(), 0));
+        let (title, artist) = row
+            .map(|row| (row.title.clone(), row.artist.clone()))
+            .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into()));
         let artwork = row
             .map(|row| track_artwork(row, p))
             .unwrap_or_else(|| empty_artwork(p));
-        let elapsed = self
-            .audio_player
-            .as_ref()
-            .and_then(AudioPlayer::position)
-            .unwrap_or_else(|| Duration::from_millis(self.elapsed_ms));
-        let elapsed_ms = elapsed.as_millis() as u64;
-        let progress = if duration_ms == 0 {
-            0.0
-        } else {
-            (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0)
-        };
         let playing = self.is_playing;
         div()
             .w_full()
@@ -2305,55 +2396,37 @@ impl MusicApp {
                     .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
             )
             .child(
+                div().flex_1().h(px(20.0)).flex().items_center().child(
+                    Slider::new(
+                        self.progress_slider
+                            .as_ref()
+                            .expect("progress slider initialized"),
+                    )
+                    .w_full(),
+                ),
+            )
+            .child(
                 div()
-                    .id("player-progress")
-                    .h(px(6.0))
-                    .flex_1()
+                    .w(px(180.0))
                     .flex()
-                    .rounded_full()
-                    .bg(p.track)
-                    .children((0..20).map(|index| {
-                        let fraction = (index + 1) as f32 / 20.0;
+                    .items_center()
+                    .gap_2()
+                    .child(
                         div()
-                            .id(SharedString::from(format!("player-progress-{index}")))
-                            .h_full()
-                            .flex_1()
-                            .mx(px(1.0))
-                            .rounded_full()
-                            .bg(if progress >= fraction {
-                                p.primary
-                            } else {
-                                p.track
-                            })
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.seek_to_progress(fraction, cx)
-                            }))
-                    })),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(p.muted)
-                    .child(format!("{}%", (self.volume * 100.0).round() as u32)),
-            )
-            .child(
-                Button::new("player-volume-down")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Minus)
-                    .tooltip("减小音量")
-                    .accessibility_label("减小音量")
-                    .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(-0.1, cx))),
-            )
-            .child(
-                Button::new("player-volume-up")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Plus)
-                    .tooltip("增大音量")
-                    .accessibility_label("增大音量")
-                    .on_click(cx.listener(|this, _, _, cx| this.adjust_volume(0.1, cx))),
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(format!("{}%", (self.volume * 100.0).round() as u32)),
+                    )
+                    .child(
+                        div().w(px(120.0)).h(px(20.0)).flex().items_center().child(
+                            Slider::new(
+                                self.volume_slider
+                                    .as_ref()
+                                    .expect("volume slider initialized"),
+                            )
+                            .w_full(),
+                        ),
+                    ),
             )
     }
 }
@@ -2361,6 +2434,8 @@ impl MusicApp {
 impl Render for MusicApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.initialize_search_input(window, cx);
+        self.ensure_player_sliders(window, cx);
+        self.sync_player_sliders(window, cx);
         let p = Palette::new(cx);
         let page_content = self.content(cx);
         let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
