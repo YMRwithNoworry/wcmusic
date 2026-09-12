@@ -495,6 +495,24 @@ impl MusicApp {
         .detach();
     }
 
+    fn install_imported_source(&mut self, script: String) -> Result<Option<String>, String> {
+        let metadata = wcmusic_core::parse_script_metadata(&script)
+            .map_err(|error| format!("音源校验失败：{error}"))?;
+        let (name, warning) =
+            match wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop) {
+                Ok(manifest) => (manifest.metadata.name, None),
+                Err(error) => (metadata.name, Some(error.to_string())),
+            };
+        let name: SharedString = name.into();
+        self.imported_sources.push(ImportedSource {
+            name: name.clone(),
+            script: script.clone(),
+        });
+        self.source_script = Some(script);
+        self.source_name = name;
+        Ok(warning)
+    }
+
     fn import_source(&mut self, cx: &mut Context<Self>) {
         let Some(path) = rfd::FileDialog::new()
             .set_title("选择音源脚本")
@@ -507,25 +525,22 @@ impl MusicApp {
             return;
         };
         self.notice = "正在读取并校验音源...".into();
-        let result = std::fs::read_to_string(&path)
-            .map_err(|error| format!("读取音源失败：{error}"))
-            .and_then(|script| {
-                wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop)
-                    .map(|manifest| (script, manifest.metadata.name))
-                    .map_err(|error| format!("音源校验失败：{error}"))
-            });
-        match result {
-            Ok((script, name)) => {
-                let name: SharedString = name.into();
-                self.imported_sources.push(ImportedSource {
-                    name: name.clone(),
-                    script: script.clone(),
-                });
-                self.source_script = Some(script);
-                self.source_name = name;
-                self.notice = format!("已导入音源：{}", self.source_name).into();
-            }
-            Err(error) => self.notice = error.into(),
+        match std::fs::read_to_string(&path) {
+            Ok(script) => match self.install_imported_source(script) {
+                Ok(Some(warning)) => {
+                    let name = self.source_name.clone();
+                    self.notice = format!(
+                        "已导入音源：{name}（初始化校验未通过，播放时将尝试回退：{warning}）"
+                    )
+                    .into();
+                }
+                Ok(None) => {
+                    let name = self.source_name.clone();
+                    self.notice = format!("已导入音源：{name}").into();
+                }
+                Err(error) => self.notice = error.into(),
+            },
+            Err(error) => self.notice = format!("读取音源失败：{error}").into(),
         }
         cx.notify();
     }
@@ -2409,5 +2424,28 @@ mod tests {
             }
             _ => panic!("expected local artwork source"),
         }
+    }
+
+    #[test]
+    fn imports_source_even_when_initialization_fails() {
+        let mut app = MusicApp::new();
+        let script = "/*!\n * @name 测试音源\n */\n1 + 1;";
+
+        let warning = app.install_imported_source(script.to_owned()).unwrap();
+
+        assert!(warning.is_some());
+        assert_eq!(app.imported_sources.len(), 1);
+        assert_eq!(app.imported_sources[0].name.as_ref(), "测试音源");
+        assert_eq!(app.source_name.as_ref(), "测试音源");
+        assert!(app.source_script.is_some());
+    }
+
+    #[test]
+    fn rejects_source_without_name() {
+        let mut app = MusicApp::new();
+
+        assert!(app.install_imported_source("1 + 1;".into()).is_err());
+        assert!(app.imported_sources.is_empty());
+        assert!(app.source_script.is_none());
     }
 }
