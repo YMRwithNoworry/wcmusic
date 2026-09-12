@@ -233,17 +233,33 @@ fn load_channel_rankings(
 ) -> Result<Vec<PlatformRanking>, OnlineSearchError> {
     if channel == OnlineSearchChannel::Kuwo {
         return Ok([
-            ("93", "酷我飙升榜"),
-            ("17", "酷我新歌榜"),
-            ("16", "酷我热歌榜"),
-            ("158", "抖音热歌榜"),
+            (
+                "93",
+                "酷我飙升榜",
+                "https://img4.kuwo.cn/star/albumcover/120/s4s21/72/840798623.jpg",
+            ),
+            (
+                "17",
+                "酷我新歌榜",
+                "https://img4.kuwo.cn/star/albumcover/120/s4s54/20/114385110.jpg",
+            ),
+            (
+                "16",
+                "酷我热歌榜",
+                "https://img4.kuwo.cn/star/albumcover/120/s4s81/95/2497366108.jpg",
+            ),
+            (
+                "158",
+                "抖音热歌榜",
+                "https://img4.kuwo.cn/star/albumcover/120/s4s42/74/1407104681.jpg",
+            ),
         ]
         .into_iter()
-        .map(|(id, name)| PlatformRanking {
+        .map(|(id, name, artwork_uri)| PlatformRanking {
             id: id.to_owned(),
             name: name.to_owned(),
             channel,
-            artwork_uri: None,
+            artwork_uri: Some(artwork_uri.to_owned()),
         })
         .collect());
     }
@@ -379,13 +395,21 @@ fn parse_ranking_tracks(
     }
     .ok_or(OnlineSearchError::InvalidResponse(channel.label()))?;
 
+    // 酷我榜单接口的歌曲对象没有封面字段，榜单顶层 pic/v9_pic2 是歌单封面。
+    // 在歌曲自身缺少封面时使用它兜底，避免榜单歌曲全部显示有机封面。
+    let kuwo_fallback_artwork = if channel == OnlineSearchChannel::Kuwo {
+        kuwo_artwork(text(value.get("v9_pic2").or_else(|| value.get("pic"))))
+    } else {
+        None
+    };
+
     Ok(values
         .iter()
         .filter_map(|item| match channel {
             OnlineSearchChannel::Netease => parse_netease(item),
             OnlineSearchChannel::QqMusic => parse_qq(item.get("data").unwrap_or(item)),
             OnlineSearchChannel::Kugou => parse_kugou_ranking(item),
-            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item),
+            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item, kuwo_fallback_artwork.as_deref()),
         })
         .take(100)
         .collect())
@@ -424,7 +448,7 @@ fn parse_kuwo(value: &Value) -> Option<Track> {
         clean_html(text(value.get("ARTIST")))?,
         clean_html(text(value.get("ALBUM"))).unwrap_or_else(|| "单曲".to_owned()),
         integer(value.get("DURATION")).unwrap_or_default() * 1_000,
-        secure_url(text(
+        kuwo_artwork(text(
             value
                 .get("web_albumpic_short")
                 .or_else(|| value.get("hts_MVPIC")),
@@ -548,7 +572,7 @@ fn parse_qq(value: &Value) -> Option<Track> {
     )
 }
 
-fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
+fn parse_kuwo_ranking(value: &Value, fallback_artwork: Option<&str>) -> Option<Track> {
     let music_rid = text(
         value
             .get("musicrid")
@@ -556,7 +580,10 @@ fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
             .or_else(|| value.get("id")),
     )?;
     let source_id = music_rid.trim_start_matches("MUSIC_").to_owned();
-    let artwork = text(value.get("pic").or_else(|| value.get("web_albumpic_short")));
+    let artwork = kuwo_artwork(text(
+        value.get("pic").or_else(|| value.get("web_albumpic_short")),
+    ))
+    .or_else(|| fallback_artwork.map(str::to_owned));
     track(
         format!("kw-{source_id}"),
         clean_html(text(
@@ -570,7 +597,7 @@ fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
             .unwrap_or_else(|| "单曲".to_owned()),
         integer(value.get("duration").or_else(|| value.get("DURATION"))).unwrap_or_default()
             * 1_000,
-        secure_url(artwork),
+        artwork,
         TrackSource::Kw,
         source_id,
         "酷我音乐 · 整曲",
@@ -673,6 +700,24 @@ fn secure_url(value: Option<String>) -> Option<String> {
     value.map(|value| value.replacen("http://", "https://", 1))
 }
 
+/// 酷我搜索接口的 `web_albumpic_short` 是 `120/xx/xx/xxx.jpg` 这样的相对路径，
+/// 需要补全酷我 CDN 前缀；同时兼容完整地址和 `//host/path` 协议相对地址。
+fn kuwo_artwork(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with("http://") || value.starts_with("https://") {
+        return secure_url(Some(value.to_owned()));
+    }
+    if let Some(path) = value.strip_prefix("//") {
+        return Some(format!("https://{path}"));
+    }
+    let path = value.trim_start_matches('/');
+    Some(format!("https://img1.kuwo.cn/star/albumcover/{path}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,9 +755,60 @@ mod tests {
     }
 
     #[test]
+    fn parses_kuwo_relative_artwork() {
+        let tracks = parse_response(
+            OnlineSearchChannel::Kuwo,
+            &serde_json::json!({
+                "abslist": [{
+                    "DC_TARGETID": "1",
+                    "SONGNAME": "酷我歌",
+                    "ARTIST": "歌手",
+                    "DURATION": "120",
+                    "web_albumpic_short": "120/85/1/4091887608.jpg"
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            tracks[0].artwork_uri.as_deref(),
+            Some("https://img1.kuwo.cn/star/albumcover/120/85/1/4091887608.jpg")
+        );
+
+        let tracks = parse_response(
+            OnlineSearchChannel::Kuwo,
+            &serde_json::json!({
+                "abslist": [{
+                    "DC_TARGETID": "2",
+                    "SONGNAME": "酷我歌",
+                    "ARTIST": "歌手",
+                    "DURATION": "120",
+                    "web_albumpic_short": "http://img1.kuwo.cn/star/albumcover/120/85/1/cover.jpg"
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            tracks[0].artwork_uri.as_deref(),
+            Some("https://img1.kuwo.cn/star/albumcover/120/85/1/cover.jpg")
+        );
+    }
+
+    #[test]
     fn exposes_the_original_channel_order() {
         let labels = OnlineSearchChannel::ALL.map(OnlineSearchChannel::label);
         assert_eq!(labels, ["酷我音乐", "酷狗音乐", "QQ 音乐", "网易云音乐"]);
+    }
+
+    #[test]
+    fn exposes_kuwo_ranking_covers() {
+        let rankings = load_channel_rankings(OnlineSearchChannel::Kuwo, false).unwrap();
+        assert_eq!(rankings.len(), 4);
+        assert!(rankings.iter().all(|ranking| {
+            ranking
+                .artwork_uri
+                .as_deref()
+                .is_some_and(|uri| uri.starts_with("https://"))
+        }));
     }
 
     #[test]
@@ -743,5 +839,26 @@ mod tests {
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].id, "kg-abc");
         assert_eq!(tracks[0].duration_ms, 180_000);
+
+        let tracks = parse_ranking_tracks(
+            OnlineSearchChannel::Kuwo,
+            &serde_json::json!({
+                "v9_pic2": "http://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg",
+                "musiclist": [{
+                    "id": "624683929",
+                    "name": "酷我榜单歌曲",
+                    "artist": "歌手",
+                    "album": "专辑",
+                    "duration": "209"
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id, "kw-624683929");
+        assert_eq!(
+            tracks[0].artwork_uri.as_deref(),
+            Some("https://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg")
+        );
     }
 }

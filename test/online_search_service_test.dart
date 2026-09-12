@@ -16,6 +16,7 @@ void main() {
           'ARTIST': '测试歌手',
           'ALBUM': '测试专辑',
           'DURATION': '245',
+          'web_albumpic_short': '120/85/1/4091887608.jpg',
         },
       ],
     });
@@ -34,6 +35,10 @@ void main() {
     expect(tracks.single.duration, const Duration(minutes: 4, seconds: 5));
     expect(tracks.single.source, TrackSource.kw);
     expect(tracks.single.sourceId, '42');
+    expect(
+      tracks.single.artworkUri,
+      'https://img1.kuwo.cn/star/albumcover/120/85/1/4091887608.jpg',
+    );
     expect(tracks.single.uri, isEmpty);
   });
 
@@ -285,6 +290,10 @@ void main() {
     expect(qq.single.name, 'QQ 热歌榜');
     expect(kugou.single.artworkUri, 'https://img/400.jpg');
     expect(kuwo, isNotEmpty);
+    expect(
+      kuwo.every((ranking) => ranking.artworkUri?.isNotEmpty ?? false),
+      isTrue,
+    );
   });
 
   test('loads and maps QQ ranking tracks', () async {
@@ -319,6 +328,41 @@ void main() {
     expect(tracks.single.id, 'tx-RANK-MID');
     expect(tracks.single.artist, '榜单歌手');
     expect(tracks.single.duration, const Duration(minutes: 3, seconds: 30));
+  });
+
+  test('loads Kuwo ranking tracks with the playlist cover fallback', () async {
+    final server = await _jsonServer({
+      'pic': 'http://img1.kuwo.cn/star/mboxAlbum/BangPic/small/au_16_30.jpg',
+      'v9_pic2': 'http://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg',
+      'musiclist': [
+        {
+          'id': '624683929',
+          'name': '酷我榜单歌曲',
+          'artist': '榜单歌手',
+          'album': '榜单专辑',
+          'duration': '209',
+        },
+      ],
+    });
+    addTearDown(() => server.close(force: true));
+    final service = MultiSourceOnlineSearchService(
+      kuwoRankingTracksEndpoint: server.endpoint,
+    );
+    const ranking = PlatformRanking(
+      id: '16',
+      name: '酷我热歌榜',
+      channel: OnlineSearchChannel.kuwo,
+    );
+
+    final tracks = await service.loadRankingTracks(ranking);
+
+    expect(tracks.single.id, 'kw-624683929');
+    expect(tracks.single.artist, '榜单歌手');
+    expect(tracks.single.duration, const Duration(minutes: 3, seconds: 29));
+    expect(
+      tracks.single.artworkUri,
+      'https://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg',
+    );
   });
 }
 

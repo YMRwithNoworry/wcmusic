@@ -199,7 +199,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
           album: _cleanHtml(_text(value['ALBUM'])) ?? '单曲',
           duration: Duration(seconds: durationSeconds ?? 0),
           uri: '',
-          artworkUri: _secureUrl(
+          artworkUri: _kuwoArtworkUrl(
             _text(value['web_albumpic_short'] ?? value['hts_MVPIC']),
           ),
           source: TrackSource.kw,
@@ -593,21 +593,47 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     final decoded = await _getJson(uri);
     final values = decoded is Map ? decoded['musiclist'] : null;
     if (values is! List) throw const FormatException('酷我音乐榜单缺少歌曲');
+    final fallbackArtwork = _kuwoArtworkUrl(
+      _text((decoded as Map)['v9_pic2'] ?? decoded['pic']),
+    );
     return values
         .whereType<Map>()
-        .map(_parseKuwoRankingTrack)
+        .map(
+          (value) =>
+              _parseKuwoRankingTrack(value, fallbackArtwork: fallbackArtwork),
+        )
         .whereType<Track>()
         .toList(growable: false);
   }
 
   static const _kuwoRankings = [
-    PlatformRanking(id: '93', name: '酷我飙升榜', channel: OnlineSearchChannel.kuwo),
-    PlatformRanking(id: '17', name: '酷我新歌榜', channel: OnlineSearchChannel.kuwo),
-    PlatformRanking(id: '16', name: '酷我热歌榜', channel: OnlineSearchChannel.kuwo),
+    PlatformRanking(
+      id: '93',
+      name: '酷我飙升榜',
+      channel: OnlineSearchChannel.kuwo,
+      artworkUri:
+          'https://img4.kuwo.cn/star/albumcover/120/s4s21/72/840798623.jpg',
+    ),
+    PlatformRanking(
+      id: '17',
+      name: '酷我新歌榜',
+      channel: OnlineSearchChannel.kuwo,
+      artworkUri:
+          'https://img4.kuwo.cn/star/albumcover/120/s4s54/20/114385110.jpg',
+    ),
+    PlatformRanking(
+      id: '16',
+      name: '酷我热歌榜',
+      channel: OnlineSearchChannel.kuwo,
+      artworkUri:
+          'https://img4.kuwo.cn/star/albumcover/120/s4s81/95/2497366108.jpg',
+    ),
     PlatformRanking(
       id: '158',
       name: '抖音热歌榜',
       channel: OnlineSearchChannel.kuwo,
+      artworkUri:
+          'https://img4.kuwo.cn/star/albumcover/120/s4s42/74/1407104681.jpg',
     ),
   ];
 
@@ -709,7 +735,10 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     );
   }
 
-  Track? _parseKuwoRankingTrack(Map<dynamic, dynamic> value) {
+  Track? _parseKuwoRankingTrack(
+    Map<dynamic, dynamic> value, {
+    String? fallbackArtwork,
+  }) {
     final sourceId = _text(value['id'] ?? value['musicrid']);
     final title = _cleanHtml(_text(value['name'] ?? value['songname']));
     final artist = _cleanHtml(_text(value['artist']));
@@ -721,9 +750,9 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
       album: _cleanHtml(_text(value['album'])) ?? '单曲',
       duration: Duration(seconds: _integer(value['duration']) ?? 0),
       uri: '',
-      artworkUri: _secureUrl(
-        _text(value['pic'] ?? value['web_albumpic_short']),
-      ),
+      artworkUri:
+          _kuwoArtworkUrl(_text(value['pic'] ?? value['web_albumpic_short'])) ??
+          fallbackArtwork,
       source: TrackSource.kw,
       sourceId: sourceId,
       quality: '酷我音乐 · 整曲',
@@ -839,6 +868,19 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
 
   String? _secureUrl(String? value) =>
       value?.replaceFirst('http://', 'https://');
+
+  // 酷我搜索接口返回的 web_albumpic_short 是相对路径，需要补全 CDN 前缀；
+  // 榜单接口也可能返回 //host/path 形式的协议相对地址。
+  String? _kuwoArtworkUrl(String? value) {
+    final text = _text(value);
+    if (text == null) return null;
+    if (text.startsWith('http://') || text.startsWith('https://')) {
+      return _secureUrl(text);
+    }
+    if (text.startsWith('//')) return 'https:$text';
+    final path = text.startsWith('/') ? text.substring(1) : text;
+    return 'https://img1.kuwo.cn/star/albumcover/$path';
+  }
 
   String _normalized(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'[\s\-_.,·•()\[\]{}]'), '');
