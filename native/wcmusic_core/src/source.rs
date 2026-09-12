@@ -42,7 +42,7 @@ pub fn validate_source_script(
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(8 * 1024 * 1024);
+    runtime.set_max_stack_size(64 * 1024 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, false)?;
@@ -51,8 +51,7 @@ pub fn validate_source_script(
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
 
     context.with(|ctx| {
-        ctx.eval::<(), _>(bootstrap)
-            .map_err(|error| error.to_string())
+        eval_expression_with_message(&ctx, &bootstrap)
             .and_then(|_| eval_script_with_message(&ctx, script))
             .map_err(|error| CoreError::SourceInitialization(format!("脚本执行失败：{error}")))
     })?;
@@ -113,15 +112,14 @@ pub fn resolve_source_url_with_proxy(
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(8 * 1024 * 1024);
+    runtime.set_max_stack_size(64 * 1024 * 1024);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, use_proxy)?;
     install_crypto_guest(&context)?;
     let bootstrap = source_bootstrap(script, environment, &metadata)?;
     context.with(|ctx| {
-        ctx.eval::<(), _>(bootstrap)
-            .map_err(|error| error.to_string())
+        eval_expression_with_message(&ctx, &bootstrap)
             .and_then(|_| eval_script_with_message(&ctx, script))
             .map_err(|error| CoreError::SourceInitialization(format!("脚本执行失败：{error}")))
     })?;
@@ -154,8 +152,7 @@ pub fn resolve_source_url_with_proxy(
         "#
     );
     context.with(|ctx| {
-        eval_invoke_with_message(&ctx, &invoke)
-            .map_err(CoreError::SourceInitialization)
+        eval_invoke_with_message(&ctx, &invoke).map_err(CoreError::SourceInitialization)
     })?;
     drain_jobs(&runtime, &context)?;
     context.with(|ctx| {
@@ -213,7 +210,11 @@ fn source_bootstrap(
             options = options || {{}};
             const method = String(options.method || 'GET').toUpperCase();
             const headers = options.headers || {{}};
-            const body = options.body == null ? null : String(options.body);
+            const body = options.body == null
+              ? null
+              : (typeof options.body === 'string'
+                  ? options.body
+                  : JSON.stringify(options.body));
             let parsed;
             try {{
               parsed = JSON.parse(globalThis.__wcmusicFetch(
@@ -269,7 +270,11 @@ fn source_bootstrap(
 fn install_http_guest(context: &Context, use_proxy: bool) -> Result<(), CoreError> {
     context.with(|ctx| {
         let fetch = Func::new(
-            move |url: String, method: String, headers_json: String, body: Option<String>| -> String {
+            move |url: String,
+                  method: String,
+                  headers_json: String,
+                  body: Option<String>|
+                  -> String {
                 match http_request_json(&url, &method, &headers_json, body.as_deref(), use_proxy) {
                     Ok(value) => value,
                     Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
@@ -296,23 +301,45 @@ fn install_crypto_guest(context: &Context) -> Result<(), CoreError> {
 }
 
 fn eval_script_with_message(ctx: &rquickjs::Ctx<'_>, script: &str) -> Result<(), String> {
-    let script_json = serde_json::to_string(script)
-        .map_err(|error| error.to_string())?;
-    let wrapped = format!(
-        "(function() {{ try {{ eval({script_json}) }} catch (error) {{ \
-         throw new Error(error && error.message ? error.message : String(error)); }} }})()"
-    );
-    ctx.eval::<(), _>(wrapped).map_err(|error| error.to_string())
+    eval_expression_with_message(ctx, script)
 }
 
 fn eval_invoke_with_message(ctx: &rquickjs::Ctx<'_>, invoke: &str) -> Result<(), String> {
-    let invoke_json = serde_json::to_string(invoke)
-        .map_err(|error| error.to_string())?;
+    eval_expression_with_message(ctx, invoke)
+}
+
+fn eval_expression_with_message(ctx: &rquickjs::Ctx<'_>, expression: &str) -> Result<(), String> {
+    let expression_json = serde_json::to_string(expression).map_err(|error| error.to_string())?;
     let wrapped = format!(
-        "(function() {{ try {{ eval({invoke_json}) }} catch (error) {{ \
+        "(function() {{ try {{ eval({expression_json}) }} catch (error) {{ \
          throw new Error(error && error.message ? error.message : String(error)); }} }})()"
     );
-    ctx.eval::<(), _>(wrapped).map_err(|error| error.to_string())
+    match ctx.eval::<(), _>(wrapped) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let value = ctx.catch();
+            let message = value
+                .as_exception()
+                .and_then(|exception| exception.message())
+                .or_else(|| value.as_string().and_then(|string| string.to_string().ok()))
+                .unwrap_or_else(|| error.to_string());
+            Err(message)
+        }
+    }
+}
+
+fn http_error_message(error: ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let body = response.into_string().unwrap_or_default();
+            if body.trim().is_empty() {
+                format!("网络请求失败：HTTP {status}")
+            } else {
+                format!("网络请求失败：HTTP {status} {body}")
+            }
+        }
+        other => format!("网络请求失败：{other}"),
+    }
 }
 
 fn http_request_json(
@@ -322,8 +349,8 @@ fn http_request_json(
     body: Option<&str>,
     use_proxy: bool,
 ) -> Result<String, String> {
-    let headers: BTreeMap<String, String> = serde_json::from_str(headers_json)
-        .map_err(|error| format!("请求头格式无效：{error}"))?;
+    let headers: BTreeMap<String, String> =
+        serde_json::from_str(headers_json).map_err(|error| format!("请求头格式无效：{error}"))?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
         .try_proxy_from_env(use_proxy)
@@ -335,10 +362,8 @@ fn http_request_json(
     let response = match method {
         "POST" | "PUT" | "PATCH" => request
             .send_string(body.unwrap_or(""))
-            .map_err(|error| format!("网络请求失败：{error}"))?,
-        _ => request
-            .call()
-            .map_err(|error| format!("网络请求失败：{error}"))?,
+            .map_err(http_error_message)?,
+        _ => request.call().map_err(http_error_message)?,
     };
     let status_code = response.status();
     let content_type = response
@@ -362,15 +387,13 @@ fn http_request_json(
     } else {
         serde_json::Value::String(text)
     };
-    Ok(
-        serde_json::json!({
-            "ok": true,
-            "statusCode": status_code,
-            "headers": response_headers,
-            "body": body_value,
-        })
-        .to_string(),
-    )
+    Ok(serde_json::json!({
+        "ok": true,
+        "statusCode": status_code,
+        "headers": response_headers,
+        "body": body_value,
+    })
+    .to_string())
 }
 
 fn drain_jobs(runtime: &Runtime, context: &Context) -> Result<(), CoreError> {
@@ -400,7 +423,9 @@ fn drain_jobs(runtime: &Runtime, context: &Context) -> Result<(), CoreError> {
             error
         }
     });
-    Err(CoreError::SourceInitialization(format!("异步任务失败：{detail}")))
+    Err(CoreError::SourceInitialization(format!(
+        "异步任务失败：{detail}"
+    )))
 }
 
 #[derive(Deserialize)]
@@ -499,6 +524,9 @@ new Promise((resolve) => {{
     fn validates_bundled_source_on_mobile() {
         let script = include_str!("../../../assets/sources/paojiao_internal_source.js");
         let manifest = validate_source_script(script, SourceEnvironment::Mobile).unwrap();
-        assert!(manifest.sources.len() >= 5, "bundled source lost capabilities");
+        assert!(
+            manifest.sources.len() >= 5,
+            "bundled source lost capabilities"
+        );
     }
 }

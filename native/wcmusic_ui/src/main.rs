@@ -712,7 +712,11 @@ impl MusicApp {
                 if let Some(hwnd) = tray::native_window_handle(window) {
                     tray::set_window_topmost(hwnd);
                 }
-                cx.new(|cx| Root::new(overlay_for_window.clone(), window, cx))
+                cx.new(|cx| {
+                    Root::new(overlay_for_window.clone(), window, cx)
+                        .bordered(false)
+                        .bg(gpui::transparent_black())
+                })
             },
         );
         match handle {
