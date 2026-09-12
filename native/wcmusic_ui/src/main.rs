@@ -696,14 +696,15 @@ impl MusicApp {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("桌面歌词".into()),
+                    title: None,
+                    appears_transparent: true,
                     ..Default::default()
                 }),
                 focus: false,
                 show: true,
                 kind: gpui::WindowKind::PopUp,
                 is_movable: true,
-                is_resizable: true,
+                is_resizable: false,
                 window_background: WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             },

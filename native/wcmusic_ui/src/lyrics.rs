@@ -5,7 +5,9 @@ use base64::Engine as _;
 use regex::Regex;
 use serde_json::Value;
 
-use gpui::{AnyElement, Context, Render, Rgba, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{
+    AnyElement, Context, MouseButton, Render, Rgba, SharedString, Window, div, prelude::*, px, rgba,
+};
 use gpui_kit as gpui;
 use wcmusic_core::{Track, TrackSource};
 
@@ -442,8 +444,7 @@ impl Render for LyricsOverlay {
 
         div()
             .size_full()
-            .bg(rgba(0x141416E6))
-            .rounded_lg()
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
             .child(content)
     }
 }
