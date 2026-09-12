@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio_player;
+mod settings;
 mod tray;
 
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
+use crate::settings::AppSettings;
 
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
@@ -211,6 +213,7 @@ struct MusicApp {
 
 impl MusicApp {
     fn new() -> Self {
+        let settings = AppSettings::load();
         Self {
             active_tab: Tab::Home,
             current_track: None,
@@ -232,10 +235,10 @@ impl MusicApp {
             play_generation: 0,
             audio_player: None,
             notice: "准备播放".into(),
-            quality_index: 2,
-            dark_theme: false,
-            lyrics_enabled: false,
-            use_network_proxy: false,
+            quality_index: settings.quality_index,
+            dark_theme: settings.dark_theme,
+            lyrics_enabled: settings.lyrics_enabled,
+            use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
             ranking_tracks: Vec::new(),
@@ -247,6 +250,21 @@ impl MusicApp {
             rankings_generation: 0,
             ranking_tracks_generation: 0,
             selected_playlist: 1,
+        }
+    }
+
+    fn current_settings(&self) -> AppSettings {
+        AppSettings {
+            quality_index: self.quality_index,
+            dark_theme: self.dark_theme,
+            lyrics_enabled: self.lyrics_enabled,
+            use_network_proxy: self.use_network_proxy,
+        }
+    }
+
+    fn persist_settings(&mut self) {
+        if let Err(error) = self.current_settings().save() {
+            self.notice = format!("设置已更新，但保存失败：{error}").into();
         }
     }
 
@@ -596,6 +614,7 @@ impl MusicApp {
         self.quality_index = (self.quality_index + 1) % 3;
         let label = ["标准 128k", "高品 320k", "无损 FLAC"][self.quality_index];
         self.notice = format!("播放音质：{label}").into();
+        self.persist_settings();
         cx.notify();
     }
 
@@ -616,6 +635,7 @@ impl MusicApp {
             "主题偏好：浅色"
         }
         .into();
+        self.persist_settings();
         cx.notify();
     }
 
@@ -627,6 +647,7 @@ impl MusicApp {
             "桌面歌词：已关闭"
         }
         .into();
+        self.persist_settings();
         cx.notify();
     }
 
@@ -637,6 +658,7 @@ impl MusicApp {
         } else {
             "已关闭网络代理，网络请求将直连".into()
         };
+        self.persist_settings();
         cx.notify();
     }
 
@@ -2307,6 +2329,16 @@ fn main() {
                             });
                         }
                         let view = cx.new(|_| MusicApp::new());
+                        let dark_theme = view.read(cx).dark_theme;
+                        Theme::change(
+                            if dark_theme {
+                                ThemeMode::Dark
+                            } else {
+                                ThemeMode::Light
+                            },
+                            Some(window),
+                            cx,
+                        );
                         cx.new(|cx| Root::new(view, window, cx))
                     },
                 )

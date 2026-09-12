@@ -7999,6 +7999,8 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "rodio",
+ "serde",
+ "serde_json",
  "ureq",
  "wcmusic_core",
  "windows-sys 0.59.0",
