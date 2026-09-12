@@ -224,7 +224,51 @@ pub fn load_ranking_tracks_with_proxy(
         ),
     };
     let value = request_json(endpoint, &params, referer, use_proxy, json5_response)?;
-    parse_ranking_tracks(ranking.channel, &value)
+    let mut tracks = parse_ranking_tracks(ranking.channel, &value)?;
+    if ranking.channel == OnlineSearchChannel::Kuwo {
+        enrich_kuwo_ranking_artwork(&mut tracks, use_proxy);
+    }
+    Ok(tracks)
+}
+
+/// Fetch a real per-song cover for a Kuwo track. The PC ranking endpoint does
+/// not include artwork in the song list, while the mobile song-info endpoint
+/// returns a stable `data.songinfo.pic` URL.
+pub fn fetch_kuwo_track_cover_with_proxy(
+    source_id: &str,
+    use_proxy: bool,
+) -> Result<Option<String>, OnlineSearchError> {
+    let value = request_json(
+        "https://m.kuwo.cn/newh5/singles/songinfoandlrc",
+        &[("musicId", source_id.to_owned())],
+        "https://m.kuwo.cn/",
+        use_proxy,
+        false,
+    )?;
+    Ok(kuwo_artwork(text(value.pointer("/data/songinfo/pic"))))
+}
+
+fn enrich_kuwo_ranking_artwork(tracks: &mut [Track], use_proxy: bool) {
+    if tracks.is_empty() {
+        return;
+    }
+    let worker_count = tracks.len().min(8).max(1);
+    let chunk_size = tracks.len().div_ceil(worker_count);
+    std::thread::scope(|scope| {
+        for chunk in tracks.chunks_mut(chunk_size) {
+            scope.spawn(move || {
+                for track in chunk {
+                    let Some(source_id) = track.source_id.as_deref() else {
+                        continue;
+                    };
+                    if let Ok(Some(cover)) = fetch_kuwo_track_cover_with_proxy(source_id, use_proxy)
+                    {
+                        track.artwork_uri = Some(cover);
+                    }
+                }
+            });
+        }
+    });
 }
 
 fn load_channel_rankings(
@@ -395,21 +439,13 @@ fn parse_ranking_tracks(
     }
     .ok_or(OnlineSearchError::InvalidResponse(channel.label()))?;
 
-    // 酷我榜单接口的歌曲对象没有封面字段，榜单顶层 pic/v9_pic2 是歌单封面。
-    // 在歌曲自身缺少封面时使用它兜底，避免榜单歌曲全部显示有机封面。
-    let kuwo_fallback_artwork = if channel == OnlineSearchChannel::Kuwo {
-        kuwo_artwork(text(value.get("v9_pic2").or_else(|| value.get("pic"))))
-    } else {
-        None
-    };
-
     Ok(values
         .iter()
         .filter_map(|item| match channel {
             OnlineSearchChannel::Netease => parse_netease(item),
             OnlineSearchChannel::QqMusic => parse_qq(item.get("data").unwrap_or(item)),
             OnlineSearchChannel::Kugou => parse_kugou_ranking(item),
-            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item, kuwo_fallback_artwork.as_deref()),
+            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item),
         })
         .take(100)
         .collect())
@@ -572,7 +608,7 @@ fn parse_qq(value: &Value) -> Option<Track> {
     )
 }
 
-fn parse_kuwo_ranking(value: &Value, fallback_artwork: Option<&str>) -> Option<Track> {
+fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
     let music_rid = text(
         value
             .get("musicrid")
@@ -582,8 +618,7 @@ fn parse_kuwo_ranking(value: &Value, fallback_artwork: Option<&str>) -> Option<T
     let source_id = music_rid.trim_start_matches("MUSIC_").to_owned();
     let artwork = kuwo_artwork(text(
         value.get("pic").or_else(|| value.get("web_albumpic_short")),
-    ))
-    .or_else(|| fallback_artwork.map(str::to_owned));
+    ));
     track(
         format!("kw-{source_id}"),
         clean_html(text(
@@ -843,13 +878,14 @@ mod tests {
         let tracks = parse_ranking_tracks(
             OnlineSearchChannel::Kuwo,
             &serde_json::json!({
-                "v9_pic2": "http://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg",
+                "v9_pic2": "http://img4.kuwo.cn/star/albumcover/120/s4s81/95/playlist-cover.jpg",
                 "musiclist": [{
                     "id": "624683929",
                     "name": "酷我榜单歌曲",
                     "artist": "歌手",
                     "album": "专辑",
-                    "duration": "209"
+                    "duration": "209",
+                    "pic": "http://img1.kwcdn.kuwo.cn/star/albumcover/240/s4s81/95/song-cover.jpg"
                 }]
             }),
         )
@@ -858,7 +894,7 @@ mod tests {
         assert_eq!(tracks[0].id, "kw-624683929");
         assert_eq!(
             tracks[0].artwork_uri.as_deref(),
-            Some("https://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg")
+            Some("https://img1.kwcdn.kuwo.cn/star/albumcover/240/s4s81/95/song-cover.jpg")
         );
     }
 }

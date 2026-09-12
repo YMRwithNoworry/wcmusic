@@ -61,6 +61,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     Uri? kugouRankingsEndpoint,
     Uri? kugouRankingTracksEndpoint,
     Uri? kuwoRankingTracksEndpoint,
+    Uri? kuwoSongInfoEndpoint,
   }) : _clientFactory = clientFactory ?? HttpClient.new,
        _proxyResolver =
            proxyResolver ??
@@ -110,7 +111,10 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
            Uri.http('mobilecdnbj.kugou.com', '/api/v3/rank/song'),
        _kuwoRankingTracksEndpoint =
            kuwoRankingTracksEndpoint ??
-           Uri.http('kbangserver.kuwo.cn', '/ksong.s');
+           Uri.http('kbangserver.kuwo.cn', '/ksong.s'),
+       _kuwoSongInfoEndpoint =
+           kuwoSongInfoEndpoint ??
+           Uri.https('m.kuwo.cn', '/newh5/singles/songinfoandlrc');
 
   final HttpClient Function() _clientFactory;
   final String Function(Uri) _proxyResolver;
@@ -127,6 +131,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   final Uri _kugouRankingsEndpoint;
   final Uri _kugouRankingTracksEndpoint;
   final Uri _kuwoRankingTracksEndpoint;
+  final Uri _kuwoSongInfoEndpoint;
 
   // 判断是否应该绕过代理（国内音乐服务）
   static bool _shouldBypassProxy(Uri uri) {
@@ -593,17 +598,52 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     final decoded = await _getJson(uri);
     final values = decoded is Map ? decoded['musiclist'] : null;
     if (values is! List) throw const FormatException('酷我音乐榜单缺少歌曲');
-    final fallbackArtwork = _kuwoArtworkUrl(
-      _text((decoded as Map)['v9_pic2'] ?? decoded['pic']),
-    );
-    return values
+    final tracks = values
         .whereType<Map>()
-        .map(
-          (value) =>
-              _parseKuwoRankingTrack(value, fallbackArtwork: fallbackArtwork),
-        )
+        .map(_parseKuwoRankingTrack)
         .whereType<Track>()
         .toList(growable: false);
+    return _enrichKuwoRankingArtwork(tracks);
+  }
+
+  Future<List<Track>> _enrichKuwoRankingArtwork(List<Track> tracks) async {
+    if (tracks.isEmpty) return tracks;
+    final result = List<Track>.from(tracks);
+    var nextIndex = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = nextIndex++;
+        if (index >= result.length) return;
+        final track = result[index];
+        final sourceId = track.sourceId;
+        if (sourceId == null || sourceId.isEmpty) continue;
+        final uri = _kuwoSongInfoEndpoint.replace(
+          queryParameters: {
+            ..._kuwoSongInfoEndpoint.queryParameters,
+            'musicId': sourceId,
+          },
+        );
+        try {
+          final decoded = await _getJson(uri);
+          final data = decoded is Map ? decoded['data'] : null;
+          final songInfo = data is Map ? data['songinfo'] : null;
+          final artwork = songInfo is Map
+              ? _kuwoArtworkUrl(_text(songInfo['pic']))
+              : null;
+          if (artwork != null) {
+            result[index] = track.copyWith(artworkUri: artwork);
+          }
+        } on Object {
+          // Some tracks have no lyric/cover data; keep the normal placeholder
+          // instead of failing the whole chart.
+        }
+      }
+    }
+
+    await Future.wait(
+      List.generate(tracks.length.clamp(1, 8), (_) => worker()),
+    );
+    return result;
   }
 
   static const _kuwoRankings = [
@@ -735,10 +775,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     );
   }
 
-  Track? _parseKuwoRankingTrack(
-    Map<dynamic, dynamic> value, {
-    String? fallbackArtwork,
-  }) {
+  Track? _parseKuwoRankingTrack(Map<dynamic, dynamic> value) {
     final sourceId = _text(value['id'] ?? value['musicrid']);
     final title = _cleanHtml(_text(value['name'] ?? value['songname']));
     final artist = _cleanHtml(_text(value['artist']));
@@ -750,9 +787,9 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
       album: _cleanHtml(_text(value['album'])) ?? '单曲',
       duration: Duration(seconds: _integer(value['duration']) ?? 0),
       uri: '',
-      artworkUri:
-          _kuwoArtworkUrl(_text(value['pic'] ?? value['web_albumpic_short'])) ??
-          fallbackArtwork,
+      artworkUri: _kuwoArtworkUrl(
+        _text(value['pic'] ?? value['web_albumpic_short']),
+      ),
       source: TrackSource.kw,
       sourceId: sourceId,
       quality: '酷我音乐 · 整曲',

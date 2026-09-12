@@ -330,10 +330,10 @@ void main() {
     expect(tracks.single.duration, const Duration(minutes: 3, seconds: 30));
   });
 
-  test('loads Kuwo ranking tracks with the playlist cover fallback', () async {
-    final server = await _jsonServer({
-      'pic': 'http://img1.kuwo.cn/star/mboxAlbum/BangPic/small/au_16_30.jpg',
-      'v9_pic2': 'http://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg',
+  test('loads Kuwo ranking tracks with per-song covers', () async {
+    final rankingServer = await _jsonServer({
+      'v9_pic2':
+          'http://img4.kuwo.cn/star/albumcover/120/s4s81/95/playlist.jpg',
       'musiclist': [
         {
           'id': '624683929',
@@ -344,9 +344,18 @@ void main() {
         },
       ],
     });
-    addTearDown(() => server.close(force: true));
+    final songInfoServer = await _jsonServer({
+      'data': {
+        'songinfo': {
+          'pic': 'http://img1.kwcdn.kuwo.cn/star/albumcover/240/song.jpg',
+        },
+      },
+    });
+    addTearDown(() => rankingServer.close(force: true));
+    addTearDown(() => songInfoServer.close(force: true));
     final service = MultiSourceOnlineSearchService(
-      kuwoRankingTracksEndpoint: server.endpoint,
+      kuwoRankingTracksEndpoint: rankingServer.endpoint,
+      kuwoSongInfoEndpoint: songInfoServer.endpoint,
     );
     const ranking = PlatformRanking(
       id: '16',
@@ -361,7 +370,7 @@ void main() {
     expect(tracks.single.duration, const Duration(minutes: 3, seconds: 29));
     expect(
       tracks.single.artworkUri,
-      'https://img4.kuwo.cn/star/albumcover/120/s4s81/95/cover.jpg',
+      'https://img1.kwcdn.kuwo.cn/star/albumcover/240/song.jpg',
     );
   });
 }

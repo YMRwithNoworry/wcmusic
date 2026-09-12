@@ -354,25 +354,27 @@ impl MusicApp {
         let task = cx.background_spawn(async move {
             let tracks = load_ranking_tracks_with_proxy(&ranking, use_proxy)
                 .map_err(|error| error.to_string())?;
-            Ok::<Vec<TrackRow>, String>(
-                tracks
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, track)| {
-                        // Keep the first visible page responsive while still
-                        // showing real platform artwork in the ranking list.
-                        let artwork_path = if index < 24 {
-                            track
-                                .artwork_uri
-                                .as_deref()
-                                .and_then(|uri| download_artwork(uri, &track.id, use_proxy).ok())
-                        } else {
-                            None
-                        };
-                        TrackRow::from_core_with_artwork(track, artwork_path)
-                    })
-                    .collect(),
-            )
+            let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
+            if !rows.is_empty() {
+                let worker_count = rows.len().min(8).max(1);
+                let chunk_size = rows.len().div_ceil(worker_count);
+                std::thread::scope(|scope| {
+                    for chunk in rows.chunks_mut(chunk_size) {
+                        scope.spawn(move || {
+                            for row in chunk {
+                                let Some(uri) = row.track.artwork_uri.clone() else {
+                                    continue;
+                                };
+                                let id = row.track.id.clone();
+                                if let Ok(path) = download_artwork(&uri, &id, use_proxy) {
+                                    row.artwork_path = Some(path.into());
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+            Ok::<Vec<TrackRow>, String>(rows)
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;

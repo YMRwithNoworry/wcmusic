@@ -32,6 +32,7 @@ class Track {
   Track copyWith({
     String? title,
     String? uri,
+    String? artworkUri,
     TrackSource? source,
     String? sourceId,
     String? quality,
@@ -43,7 +44,7 @@ class Track {
     album: album,
     duration: duration,
     uri: uri ?? this.uri,
-    artworkUri: artworkUri,
+    artworkUri: artworkUri ?? this.artworkUri,
     source: source ?? this.source,
     sourceId: sourceId ?? this.sourceId,
     quality: quality ?? this.quality,
