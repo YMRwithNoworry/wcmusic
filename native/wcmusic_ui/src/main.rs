@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio_player;
+mod lyrics;
 mod settings;
 mod tray;
 
@@ -14,8 +15,9 @@ use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Render, SharedString, Window,
-    WindowBounds, WindowOptions, div, img, prelude::*, px, size,
+    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Render, SharedString, TitlebarOptions,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, div, img, point, prelude::*,
+    px, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -24,6 +26,7 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
+use crate::lyrics::{LyricsOverlay, fetch_lyrics};
 use crate::settings::AppSettings;
 
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
@@ -197,6 +200,12 @@ struct MusicApp {
     quality_index: usize,
     dark_theme: bool,
     lyrics_enabled: bool,
+    lyrics_font_family: SharedString,
+    lyrics_font_size: f32,
+    lyrics_karaoke: bool,
+    lyrics_overlay: Option<Entity<LyricsOverlay>>,
+    lyrics_window: Option<AnyWindowHandle>,
+    lyrics_generation: u64,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
@@ -238,6 +247,12 @@ impl MusicApp {
             quality_index: settings.quality_index,
             dark_theme: settings.dark_theme,
             lyrics_enabled: settings.lyrics_enabled,
+            lyrics_font_family: settings.lyrics_font_family.clone().into(),
+            lyrics_font_size: settings.lyrics_font_size,
+            lyrics_karaoke: settings.lyrics_karaoke,
+            lyrics_overlay: None,
+            lyrics_window: None,
+            lyrics_generation: 0,
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
@@ -258,6 +273,9 @@ impl MusicApp {
             quality_index: self.quality_index,
             dark_theme: self.dark_theme,
             lyrics_enabled: self.lyrics_enabled,
+            lyrics_font_family: self.lyrics_font_family.to_string(),
+            lyrics_font_size: self.lyrics_font_size,
+            lyrics_karaoke: self.lyrics_karaoke,
             use_network_proxy: self.use_network_proxy,
         }
     }
@@ -639,15 +657,172 @@ impl MusicApp {
         cx.notify();
     }
 
-    fn toggle_lyrics(&mut self, cx: &mut Context<Self>) {
+    fn toggle_lyrics(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.lyrics_enabled = !self.lyrics_enabled;
-        self.notice = if self.lyrics_enabled {
-            "桌面歌词：已开启"
+        if self.lyrics_enabled {
+            self.open_lyrics_window(cx);
+            self.notice = "桌面歌词：已开启".into();
         } else {
-            "桌面歌词：已关闭"
+            self.close_lyrics_window(cx);
+            self.notice = "桌面歌词：已关闭".into();
+        }
+        self.persist_settings();
+        cx.notify();
+    }
+
+    fn open_lyrics_window(&mut self, cx: &mut Context<Self>) {
+        if self.lyrics_window.is_some() {
+            return;
+        }
+        let overlay = match &self.lyrics_overlay {
+            Some(overlay) => overlay.clone(),
+            None => {
+                let overlay = cx.new(|_| {
+                    LyricsOverlay::new(
+                        self.lyrics_font_family.clone(),
+                        self.lyrics_font_size,
+                        self.lyrics_karaoke,
+                    )
+                });
+                self.lyrics_overlay = Some(overlay.clone());
+                overlay
+            }
+        };
+        let bounds = Bounds::new(point(px(80.0), px(80.0)), size(px(960.0), px(210.0)));
+        let overlay_for_window = overlay.clone();
+        let handle = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("桌面歌词".into()),
+                    ..Default::default()
+                }),
+                focus: false,
+                show: true,
+                kind: gpui::WindowKind::PopUp,
+                is_movable: true,
+                is_resizable: true,
+                window_background: WindowBackgroundAppearance::Transparent,
+                ..Default::default()
+            },
+            move |window, cx| {
+                if let Some(hwnd) = tray::native_window_handle(window) {
+                    tray::set_window_topmost(hwnd);
+                }
+                cx.new(|cx| Root::new(overlay_for_window.clone(), window, cx))
+            },
+        );
+        match handle {
+            Ok(handle) => {
+                self.lyrics_window = Some(handle.into());
+                self.refresh_lyrics(cx);
+            }
+            Err(error) => {
+                self.lyrics_enabled = false;
+                self.notice = format!("桌面歌词窗口创建失败：{error}").into();
+                cx.notify();
+            }
+        }
+    }
+
+    fn close_lyrics_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.lyrics_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        self.lyrics_overlay = None;
+    }
+
+    fn refresh_lyrics(&mut self, cx: &mut Context<Self>) {
+        if !self.lyrics_enabled || self.lyrics_overlay.is_none() {
+            return;
+        }
+        let Some(row) = self.current_row().cloned() else {
+            if let Some(overlay) = &self.lyrics_overlay {
+                overlay.update(cx, |overlay, cx| overlay.set_lyrics(Vec::new(), cx));
+            }
+            return;
+        };
+        self.lyrics_generation += 1;
+        let generation = self.lyrics_generation;
+        let track = row.track;
+        let use_proxy = self.use_network_proxy;
+        let task = cx.background_spawn(async move { fetch_lyrics(&track, use_proxy) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.lyrics_generation {
+                    return;
+                }
+                let Some(overlay) = this.lyrics_overlay.clone() else {
+                    return;
+                };
+                match result {
+                    Ok(lines) => overlay.update(cx, |overlay, cx| overlay.set_lyrics(lines, cx)),
+                    Err(error) => overlay.update(cx, |overlay, cx| overlay.set_error(error, cx)),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn update_lyrics_position(&self, cx: &mut Context<Self>) {
+        if let Some(overlay) = &self.lyrics_overlay {
+            let position_ms = self.elapsed_ms;
+            overlay.update(cx, |overlay, cx| overlay.set_position(position_ms, cx));
+        }
+    }
+
+    fn sync_lyrics_style(&self, cx: &mut Context<Self>) {
+        if let Some(overlay) = &self.lyrics_overlay {
+            let font_family = self.lyrics_font_family.clone();
+            let font_size = self.lyrics_font_size;
+            let karaoke = self.lyrics_karaoke;
+            overlay.update(cx, |overlay, cx| {
+                overlay.set_style(font_family, font_size, karaoke, cx)
+            });
+        }
+    }
+
+    fn cycle_lyrics_font(&mut self, cx: &mut Context<Self>) {
+        const FONT_FAMILIES: [&str; 4] = ["Microsoft YaHei UI", "SimSun", "KaiTi", "Arial"];
+        let current = self.lyrics_font_family.to_string();
+        let index = FONT_FAMILIES
+            .iter()
+            .position(|family| *family == current)
+            .unwrap_or(0);
+        let next = FONT_FAMILIES[(index + 1) % FONT_FAMILIES.len()];
+        self.lyrics_font_family = next.into();
+        self.notice = format!("歌词字体：{next}").into();
+        self.persist_settings();
+        self.sync_lyrics_style(cx);
+        cx.notify();
+    }
+
+    fn cycle_lyrics_font_size(&mut self, cx: &mut Context<Self>) {
+        const FONT_SIZES: [f32; 6] = [20.0, 24.0, 28.0, 32.0, 40.0, 48.0];
+        let index = FONT_SIZES
+            .iter()
+            .position(|size| (*size - self.lyrics_font_size).abs() < f32::EPSILON)
+            .unwrap_or(0);
+        let next = FONT_SIZES[(index + 1) % FONT_SIZES.len()];
+        self.lyrics_font_size = next;
+        self.notice = format!("歌词字号：{next:.0}").into();
+        self.persist_settings();
+        self.sync_lyrics_style(cx);
+        cx.notify();
+    }
+
+    fn toggle_lyrics_karaoke(&mut self, cx: &mut Context<Self>) {
+        self.lyrics_karaoke = !self.lyrics_karaoke;
+        self.notice = if self.lyrics_karaoke {
+            "卡拉OK歌词效果：已开启"
+        } else {
+            "卡拉OK歌词效果：已关闭"
         }
         .into();
         self.persist_settings();
+        self.sync_lyrics_style(cx);
         cx.notify();
     }
 
@@ -780,6 +955,7 @@ impl MusicApp {
                             Ok(()) => {
                                 this.is_playing = true;
                                 this.schedule_progress_timer(cx);
+                                this.refresh_lyrics(cx);
                                 this.notice = format!("正在播放 {}", track.title).into();
                             }
                             Err(error) => {
@@ -880,6 +1056,7 @@ impl MusicApp {
             }
         }
         self.elapsed_ms = target.as_millis() as u64;
+        self.update_lyrics_position(cx);
         cx.notify();
     }
 
@@ -904,6 +1081,7 @@ impl MusicApp {
                             this.is_playing = false;
                         }
                     }
+                    this.update_lyrics_position(cx);
                     cx.notify();
                     this.is_playing
                 }) else {
@@ -1980,11 +2158,45 @@ impl MusicApp {
                     } else {
                         "已关闭"
                     },
-                    "播放时显示可拖动的歌词窗口",
+                    "播放时显示始终置顶的歌词窗口",
                     p,
                 )
                 .id("setting-lyrics")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics(cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_lyrics(window, cx))),
+            )
+            .child(
+                setting_row(
+                    "歌词字体",
+                    self.lyrics_font_family.clone(),
+                    "点击切换桌面歌词字体",
+                    p,
+                )
+                .id("setting-lyrics-font")
+                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font(cx))),
+            )
+            .child(
+                setting_row(
+                    "歌词字号",
+                    format!("{:.0} px", self.lyrics_font_size),
+                    "当前播放歌词会放大显示",
+                    p,
+                )
+                .id("setting-lyrics-size")
+                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_size(cx))),
+            )
+            .child(
+                setting_row(
+                    "卡拉OK效果",
+                    if self.lyrics_karaoke {
+                        "已开启"
+                    } else {
+                        "已关闭"
+                    },
+                    "当前歌词随播放进度逐字填充",
+                    p,
+                )
+                .id("setting-lyrics-karaoke")
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics_karaoke(cx))),
             )
             .child(
                 setting_row(
@@ -2247,7 +2459,7 @@ fn empty_artwork(p: Palette) -> gpui::AnyElement {
 
 fn setting_row(
     title: &'static str,
-    value: &'static str,
+    value: impl Into<SharedString>,
     description: &'static str,
     p: Palette,
 ) -> gpui::Div {
@@ -2280,7 +2492,7 @@ fn setting_row(
                 .text_sm()
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(p.primary)
-                .child(value),
+                .child(value.into()),
         )
 }
 
@@ -2310,6 +2522,10 @@ fn main() {
             let tray = tray::TrayController::new().map(Arc::new);
             let keep_in_tray = tray.is_some();
             let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+            let view = cx.new(|_| MusicApp::new());
+            let dark_theme = view.read(cx).dark_theme;
+            let lyrics_enabled = view.read(cx).lyrics_enabled;
+            let view_for_window = view.clone();
             let window_handle = cx
                 .open_window(
                     WindowOptions {
@@ -2328,8 +2544,6 @@ fn main() {
                                 false
                             });
                         }
-                        let view = cx.new(|_| MusicApp::new());
-                        let dark_theme = view.read(cx).dark_theme;
                         Theme::change(
                             if dark_theme {
                                 ThemeMode::Dark
@@ -2339,10 +2553,13 @@ fn main() {
                             Some(window),
                             cx,
                         );
-                        cx.new(|cx| Root::new(view, window, cx))
+                        cx.new(|cx| Root::new(view_for_window, window, cx))
                     },
                 )
                 .expect("failed to open WCMusic GPUI window");
+            if lyrics_enabled {
+                view.update(cx, |this, cx| this.open_lyrics_window(cx));
+            }
 
             if let Some(tray) = tray {
                 let events = tray.events();

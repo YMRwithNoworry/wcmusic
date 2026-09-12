@@ -7995,8 +7995,10 @@ dependencies = [
 name = "wcmusic_ui"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "gpui-kit",
  "raw-window-handle",
+ "regex",
  "rfd",
  "rodio",
  "serde",

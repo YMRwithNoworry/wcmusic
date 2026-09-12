@@ -303,6 +303,29 @@ pub fn native_window_handle(_window: &gpui::Window) -> Option<isize> {
 }
 
 #[cfg(windows)]
+pub fn set_window_topmost(hwnd: isize) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_window_topmost(_hwnd: isize) {}
+
+#[cfg(windows)]
 pub fn hide_window(hwnd: isize) {
     windows::hide_window(hwnd);
 }

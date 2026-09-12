@@ -2,12 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// User preferences persisted under the platform's per-user configuration directory.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     pub quality_index: usize,
     pub dark_theme: bool,
     pub lyrics_enabled: bool,
+    pub lyrics_font_family: String,
+    pub lyrics_font_size: f32,
+    pub lyrics_karaoke: bool,
     pub use_network_proxy: bool,
 }
 
@@ -17,6 +20,9 @@ impl Default for AppSettings {
             quality_index: 2,
             dark_theme: false,
             lyrics_enabled: false,
+            lyrics_font_family: "Microsoft YaHei UI".to_owned(),
+            lyrics_font_size: 28.0,
+            lyrics_karaoke: true,
             use_network_proxy: false,
         }
     }
@@ -31,9 +37,17 @@ impl AppSettings {
         let path = path?;
         let data = fs::read_to_string(path).ok()?;
         let mut settings: Self = serde_json::from_str(&data).ok()?;
-        // A corrupted or future file should never make the audio quality
-        // selector index out of bounds.
+        // A corrupted or future file should never make selectors go out of
+        // bounds or render unreadable lyrics.
         settings.quality_index = settings.quality_index.min(2);
+        if settings.lyrics_font_family.trim().is_empty() {
+            settings.lyrics_font_family = Self::default().lyrics_font_family;
+        }
+        settings.lyrics_font_size = if settings.lyrics_font_size.is_finite() {
+            settings.lyrics_font_size.clamp(12.0, 72.0)
+        } else {
+            Self::default().lyrics_font_size
+        };
         Some(settings)
     }
 
@@ -81,6 +95,9 @@ mod tests {
             quality_index: 1,
             dark_theme: true,
             lyrics_enabled: true,
+            lyrics_font_family: "KaiTi".to_owned(),
+            lyrics_font_size: 36.0,
+            lyrics_karaoke: false,
             use_network_proxy: true,
         };
 
@@ -103,6 +120,33 @@ mod tests {
 
         assert!(loaded.dark_theme);
         assert_eq!(loaded.quality_index, AppSettings::default().quality_index);
+        assert_eq!(
+            loaded.lyrics_font_family,
+            AppSettings::default().lyrics_font_family
+        );
+        assert!(loaded.lyrics_karaoke);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn clamps_loaded_lyrics_font_size_and_repairs_empty_family() {
+        let path = std::env::temp_dir().join(format!(
+            "wcmusic-settings-lyrics-test-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"lyrics_font_family":"  ","lyrics_font_size":999.0}"#,
+        )
+        .unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(
+            loaded.lyrics_font_family,
+            AppSettings::default().lyrics_font_family
+        );
+        assert_eq!(loaded.lyrics_font_size, 72.0);
         let _ = fs::remove_file(path);
     }
 
