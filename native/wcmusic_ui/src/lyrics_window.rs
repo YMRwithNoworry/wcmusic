@@ -13,9 +13,9 @@
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetWindowLongPtrW,
+        CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetCursorPos, GetWindowLongPtrW,
         HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, SWP_FRAMECHANGED,
         SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
         WM_MOUSEACTIVATE, WM_NCHITTEST, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
@@ -88,6 +88,25 @@ mod platform {
         CLICK_THROUGH.store(enabled, Ordering::Relaxed);
     }
 
+    /// Current cursor position in logical pixels.
+    ///
+    /// Lyrics dragging tracks the cursor instead of running Windows' modal move
+    /// loop: `WM_NCLBUTTONDOWN` re-enters GPUI's event handling from inside a
+    /// click handler and trips its borrow checker.
+    pub fn cursor_position(scale_factor: f32) -> Option<(f32, f32)> {
+        let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            1.0
+        };
+        let mut point = POINT { x: 0, y: 0 };
+        let ok = unsafe { GetCursorPos(&mut point) };
+        if ok == 0 {
+            return None;
+        }
+        Some((point.x as f32 / scale, point.y as f32 / scale))
+    }
+
     /// Toggle the always-on-top state of the lyric window.
     pub fn set_topmost(hwnd: isize, enabled: bool) {
         unsafe {
@@ -131,6 +150,9 @@ pub use platform::*;
 mod stub {
     pub fn install_overlay_window(_hwnd: isize) {}
     pub fn set_click_through(_hwnd: isize, _enabled: bool) {}
+    pub fn cursor_position(_scale_factor: f32) -> Option<(f32, f32)> {
+        None
+    }
     pub fn set_topmost(_hwnd: isize, _enabled: bool) {}
     pub fn move_window(_hwnd: isize, _x: f32, _y: f32, _scale_factor: f32) {}
 }

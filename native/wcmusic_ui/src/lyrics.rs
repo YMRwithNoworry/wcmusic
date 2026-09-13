@@ -15,9 +15,9 @@ use regex::Regex;
 use serde_json::Value;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, Entity, FontWeight, Hsla, MouseButton, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, TextAlign, TextRun, WeakEntity, Window, div, font,
-    prelude::*, px, rgba,
+    AnyElement, App, ClickEvent, Context, Div, Entity, FontWeight, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollDelta, ScrollWheelEvent,
+    SharedString, TextAlign, TextRun, WeakEntity, Window, div, font, prelude::*, px, rgba,
 };
 use gpui_kit as gpui;
 use gpui_kit::assets::IconName as Lucide;
@@ -31,6 +31,9 @@ const PANEL_WIDTH: f32 = 392.0;
 const PANEL_TOP: f32 = 42.0;
 const PANEL_LEFT: f32 = 14.0;
 const PANEL_HEIGHT: f32 = 208.0;
+/// 工具条占据的区域，从这里按下不会拖动窗口。
+const TOOLBAR_TOP: f32 = 40.0;
+const TOOLBAR_RESERVED_WIDTH: f32 = 344.0;
 const ANIMATION_SECONDS: f32 = 0.32;
 const FRAME_MILLIS: u64 = 16;
 /// How far the smoothed karaoke position may run ahead of the real playback position.
@@ -618,6 +621,17 @@ impl LyricsStyleStore {
     }
 }
 
+/// 拖动歌词窗口时记录的起点。
+#[derive(Clone, Copy)]
+struct DragSession {
+    /// 按下时的光标位置（逻辑像素）。
+    cursor: (f32, f32),
+    /// 按下时的窗口位置（逻辑像素）。
+    origin: (f32, f32),
+    /// 最近一次移动后的窗口位置。
+    current: (f32, f32),
+}
+
 /// 桌面歌词窗口视图。
 pub struct LyricsOverlay {
     store: Entity<LyricsStyleStore>,
@@ -639,6 +653,8 @@ pub struct LyricsOverlay {
 
     panel_open: bool,
     hovered: bool,
+    /// 正在拖动歌词窗口：记录按下时的光标位置与窗口位置。
+    dragging: Option<DragSession>,
     notice: Option<SharedString>,
     notice_generation: u64,
     ticking: bool,
@@ -672,6 +688,7 @@ impl LyricsOverlay {
             animating: false,
             panel_open: false,
             hovered: false,
+            dragging: None,
             notice: None,
             notice_generation: 0,
             ticking: false,
@@ -1373,6 +1390,72 @@ impl LyricsOverlay {
         layer.into_any_element()
     }
 
+    /// 工具条与设置面板覆盖的区域：在这里按下应该交给按钮，而不是拖动窗口。
+    fn press_on_controls(&self, x: f32, y: f32, width: f32, panel_open: bool) -> bool {
+        let toolbar = y <= TOOLBAR_TOP && x >= width - TOOLBAR_RESERVED_WIDTH;
+        let panel = panel_open
+            && x >= PANEL_LEFT
+            && x <= PANEL_LEFT + PANEL_WIDTH
+            && y >= PANEL_TOP
+            && y <= PANEL_TOP + PANEL_HEIGHT;
+        toolbar || panel
+    }
+
+    /// 开始拖动歌词窗口。
+    fn begin_drag(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(cursor) = lyrics_window::cursor_position(self.scale_factor) else {
+            return;
+        };
+        let bounds = window.bounds();
+        let origin = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        self.dragging = Some(DragSession {
+            cursor,
+            origin,
+            current: origin,
+        });
+        self.hovered = true;
+        cx.notify();
+    }
+
+    /// 跟随光标移动窗口；按钮松开后记录新位置。
+    fn update_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.dragging else {
+            return;
+        };
+        let Some(cursor) = lyrics_window::cursor_position(self.scale_factor) else {
+            return;
+        };
+        let Some(hwnd) = self.hwnd else {
+            return;
+        };
+        let target = (
+            session.origin.0 + (cursor.0 - session.cursor.0),
+            session.origin.1 + (cursor.1 - session.cursor.1),
+        );
+        lyrics_window::move_window(hwnd, target.0, target.1, self.scale_factor);
+        if let Some(session) = self.dragging.as_mut() {
+            session.current = target;
+        }
+        cx.notify();
+    }
+
+    /// 结束拖动并保存窗口位置。
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.dragging.take() else {
+            return;
+        };
+        if (session.current.0 - session.origin.0).abs() < 0.5
+            && (session.current.1 - session.origin.1).abs() < 0.5
+        {
+            return;
+        }
+        let origin = session.current;
+        self.mutate_style(cx, |style| {
+            style.window_x = Some(origin.0);
+            style.window_y = Some(origin.1);
+        });
+    }
+
     fn tool_button(
         &self,
         id: &'static str,
@@ -1781,13 +1864,35 @@ impl Render for LyricsOverlay {
                     cx.notify();
                 }
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                if this.style.locked {
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if this.style.locked {
+                        return;
+                    }
+                    let x = f32::from(event.position.x);
+                    let y = f32::from(event.position.y);
+                    if this.press_on_controls(x, y, width, panel_open) {
+                        return;
+                    }
+                    this.begin_drag(window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if this.dragging.is_none() {
                     return;
                 }
-                window.start_window_move();
-                cx.stop_propagation();
+                if !event.dragging() {
+                    this.end_drag(cx);
+                    return;
+                }
+                this.update_drag(cx);
             }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_drag(cx)),
+            )
             .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| {
                 if this.style.locked {
                     return;
