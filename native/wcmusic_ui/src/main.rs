@@ -2,6 +2,7 @@
 
 mod audio_player;
 mod lyrics;
+mod lyrics_window;
 mod settings;
 mod tray;
 
@@ -16,9 +17,9 @@ use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Render, SharedString, TitlebarOptions,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, div, img, point, prelude::*,
-    px, size,
+    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Pixels, Point, Render, SharedString,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, div, img,
+    point, prelude::*, px, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -27,7 +28,7 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
-use crate::lyrics::{LyricsOverlay, fetch_lyrics};
+use crate::lyrics::{LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics};
 use crate::settings::AppSettings;
 
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
@@ -204,9 +205,9 @@ struct MusicApp {
     quality_index: usize,
     dark_theme: bool,
     lyrics_enabled: bool,
-    lyrics_font_family: SharedString,
-    lyrics_font_size: f32,
-    lyrics_karaoke: bool,
+    /// 桌面歌词设置，与 `lyrics_store` 保持同步。
+    lyrics: LyricsStyle,
+    lyrics_store: Option<Entity<LyricsStyleStore>>,
     lyrics_overlay: Option<Entity<LyricsOverlay>>,
     lyrics_window: Option<AnyWindowHandle>,
     lyrics_generation: u64,
@@ -254,9 +255,8 @@ impl MusicApp {
             quality_index: settings.quality_index,
             dark_theme: settings.dark_theme,
             lyrics_enabled: settings.lyrics_enabled,
-            lyrics_font_family: settings.lyrics_font_family.clone().into(),
-            lyrics_font_size: settings.lyrics_font_size,
-            lyrics_karaoke: settings.lyrics_karaoke,
+            lyrics: settings.lyrics.clone(),
+            lyrics_store: None,
             lyrics_overlay: None,
             lyrics_window: None,
             lyrics_generation: 0,
@@ -280,9 +280,7 @@ impl MusicApp {
             quality_index: self.quality_index,
             dark_theme: self.dark_theme,
             lyrics_enabled: self.lyrics_enabled,
-            lyrics_font_family: self.lyrics_font_family.to_string(),
-            lyrics_font_size: self.lyrics_font_size,
-            lyrics_karaoke: self.lyrics_karaoke,
+            lyrics: self.lyrics.clone(),
             use_network_proxy: self.use_network_proxy,
         }
     }
@@ -460,7 +458,7 @@ impl MusicApp {
                             this.elapsed_ms =
                                 (row.track.duration_ms as f32 * progress).round() as u64;
                         }
-                        this.update_lyrics_position(cx);
+                        this.sync_lyrics_playback(cx);
                         cx.notify();
                     }
                     SliderEvent::Release(value) => {
@@ -769,8 +767,17 @@ impl MusicApp {
     }
 
     fn toggle_lyrics(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.lyrics_enabled = !self.lyrics_enabled;
-        if self.lyrics_enabled {
+        let enabled = !self.lyrics_enabled;
+        self.set_lyrics_enabled(enabled, cx);
+    }
+
+    /// 开启或关闭桌面歌词，歌词窗口里的关闭按钮也会走到这里。
+    pub(crate) fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.lyrics_enabled == enabled && (enabled == self.lyrics_window.is_some()) {
+            return;
+        }
+        self.lyrics_enabled = enabled;
+        if enabled {
             self.open_lyrics_window(cx);
             self.notice = "桌面歌词：已开启".into();
         } else {
@@ -781,25 +788,55 @@ impl MusicApp {
         cx.notify();
     }
 
+    /// 桌面歌词设置的唯一入口：写入共享的样式实体，再由观察者落盘。
+    fn update_lyrics_style(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut LyricsStyle),
+    ) {
+        match self.lyrics_store.clone() {
+            Some(store) => store.update(cx, |store, cx| store.mutate(cx, change)),
+            None => {
+                change(&mut self.lyrics);
+                self.lyrics.clamp();
+                self.persist_settings();
+                cx.notify();
+            }
+        }
+    }
+
+    /// 创建歌词样式实体，主窗口与歌词窗口共享同一份设置。
+    fn ensure_lyrics_store(&mut self, cx: &mut Context<Self>) -> Entity<LyricsStyleStore> {
+        if let Some(store) = &self.lyrics_store {
+            return store.clone();
+        }
+        let store = cx.new(|_| LyricsStyleStore::new(self.lyrics.clone()));
+        cx.observe(&store, |this, store, cx| {
+            this.lyrics = store.read(cx).style().clone();
+            this.persist_settings();
+            cx.notify();
+        })
+        .detach();
+        self.lyrics_store = Some(store.clone());
+        store
+    }
+
     fn open_lyrics_window(&mut self, cx: &mut Context<Self>) {
         if self.lyrics_window.is_some() {
             return;
         }
+        let store = self.ensure_lyrics_store(cx);
         let overlay = match &self.lyrics_overlay {
             Some(overlay) => overlay.clone(),
             None => {
-                let overlay = cx.new(|_| {
-                    LyricsOverlay::new(
-                        self.lyrics_font_family.clone(),
-                        self.lyrics_font_size,
-                        self.lyrics_karaoke,
-                    )
-                });
+                let host = cx.entity().downgrade();
+                let overlay = cx.new(|cx| LyricsOverlay::new(store, cx));
+                overlay.update(cx, |overlay, _| overlay.attach_host(host));
                 self.lyrics_overlay = Some(overlay.clone());
                 overlay
             }
         };
-        let bounds = Bounds::new(point(px(80.0), px(80.0)), size(px(960.0), px(210.0)));
+        let bounds = self.lyrics_window_bounds(cx);
         let overlay_for_window = overlay.clone();
         let handle = cx.open_window(
             WindowOptions {
@@ -819,8 +856,11 @@ impl MusicApp {
             },
             move |window, cx| {
                 if let Some(hwnd) = tray::native_window_handle(window) {
-                    tray::set_window_topmost(hwnd);
                     tray::remove_window_border(hwnd);
+                    let scale_factor = window.scale_factor();
+                    overlay_for_window.update(cx, |overlay, cx| {
+                        overlay.attach_window(hwnd, scale_factor, cx)
+                    });
                 }
                 cx.new(|cx| {
                     Root::new(overlay_for_window.clone(), window, cx)
@@ -833,6 +873,7 @@ impl MusicApp {
             Ok(handle) => {
                 self.lyrics_window = Some(handle.into());
                 self.refresh_lyrics(cx);
+                self.sync_lyrics_playback(cx);
             }
             Err(error) => {
                 self.lyrics_enabled = false;
@@ -842,11 +883,78 @@ impl MusicApp {
         }
     }
 
+    /// 歌词窗口的初始位置：优先用上次拖动保存的位置，否则屏幕底部居中。
+    fn lyrics_window_bounds(&self, cx: &mut Context<Self>) -> Bounds<Pixels> {
+        let origin = match (self.lyrics.window_x, self.lyrics.window_y) {
+            (Some(x), Some(y)) => point(px(x), px(y)),
+            _ => self.default_lyrics_origin(cx),
+        };
+        Bounds::new(
+            origin,
+            size(px(self.lyrics.window_width), px(self.lyrics.window_height)),
+        )
+    }
+
+    fn default_lyrics_origin(&self, cx: &App) -> Point<Pixels> {
+        let Some(display) = cx.primary_display() else {
+            return point(px(80.0), px(80.0));
+        };
+        let bounds = display.bounds();
+        let left = f32::from(bounds.origin.x);
+        let top = f32::from(bounds.origin.y);
+        let display_width = f32::from(bounds.size.width);
+        let display_height = f32::from(bounds.size.height);
+        let x = left + ((display_width - self.lyrics.window_width) / 2.0).max(0.0);
+        let y = top + (display_height - self.lyrics.window_height - 132.0).max(0.0);
+        point(px(x), px(y))
+    }
+
     fn close_lyrics_window(&mut self, cx: &mut Context<Self>) {
+        self.sync_lyrics_window_position(cx);
         if let Some(handle) = self.lyrics_window.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
         self.lyrics_overlay = None;
+    }
+
+    /// 记录拖动后的窗口位置，让下次开启歌词时回到同一处。
+    fn sync_lyrics_window_position(&mut self, cx: &mut Context<Self>) {
+        let Some(handle) = self.lyrics_window else {
+            return;
+        };
+        let origin = handle
+            .update(cx, |_, window, _| {
+                let bounds = window.bounds();
+                (f32::from(bounds.origin.x), f32::from(bounds.origin.y))
+            })
+            .ok();
+        let Some((x, y)) = origin else {
+            return;
+        };
+        let moved = match (self.lyrics.window_x, self.lyrics.window_y) {
+            (Some(saved_x), Some(saved_y)) => {
+                (saved_x - x).abs() > 1.5 || (saved_y - y).abs() > 1.5
+            }
+            _ => true,
+        };
+        if moved {
+            self.update_lyrics_style(cx, |style| {
+                style.window_x = Some(x);
+                style.window_y = Some(y);
+            });
+        }
+    }
+
+    fn reset_lyrics_position(&mut self, cx: &mut Context<Self>) {
+        match self.lyrics_overlay.clone() {
+            Some(overlay) => overlay.update(cx, |overlay, cx| overlay.reset_position(cx)),
+            None => self.update_lyrics_style(cx, |style| {
+                style.window_x = None;
+                style.window_y = None;
+            }),
+        }
+        self.notice = "歌词窗口已回到默认位置".into();
+        cx.notify();
     }
 
     fn refresh_lyrics(&mut self, cx: &mut Context<Self>) {
@@ -875,7 +983,7 @@ impl MusicApp {
                 };
                 match result {
                     Ok(lines) => overlay.update(cx, |overlay, cx| overlay.set_lyrics(lines, cx)),
-                    Err(error) => overlay.update(cx, |overlay, cx| overlay.set_error(error, cx)),
+                    Err(error) => overlay.update(cx, |overlay, cx| overlay.set_message(error, cx)),
                 }
             })
             .ok();
@@ -883,63 +991,75 @@ impl MusicApp {
         .detach();
     }
 
-    fn update_lyrics_position(&self, cx: &mut Context<Self>) {
+    /// 把播放状态与进度推给歌词窗口。
+    fn sync_lyrics_playback(&self, cx: &mut Context<Self>) {
         if let Some(overlay) = &self.lyrics_overlay {
             let position_ms = self.elapsed_ms;
-            overlay.update(cx, |overlay, cx| overlay.set_position(position_ms, cx));
-        }
-    }
-
-    fn sync_lyrics_style(&self, cx: &mut Context<Self>) {
-        if let Some(overlay) = &self.lyrics_overlay {
-            let font_family = self.lyrics_font_family.clone();
-            let font_size = self.lyrics_font_size;
-            let karaoke = self.lyrics_karaoke;
+            let playing = self.is_playing;
             overlay.update(cx, |overlay, cx| {
-                overlay.set_style(font_family, font_size, karaoke, cx)
+                overlay.set_playing(playing, cx);
+                overlay.set_position(position_ms, cx);
             });
         }
     }
 
-    fn cycle_lyrics_font(&mut self, cx: &mut Context<Self>) {
-        const FONT_FAMILIES: [&str; 4] = ["Microsoft YaHei UI", "SimSun", "KaiTi", "Arial"];
-        let current = self.lyrics_font_family.to_string();
-        let index = FONT_FAMILIES
+    /// 循环切换桌面歌词的字号预设。
+    fn cycle_lyrics_font_size(&mut self, cx: &mut Context<Self>) {
+        const FONT_SIZES: [f32; 8] = [20.0, 24.0, 28.0, 32.0, 36.0, 44.0, 54.0, 64.0];
+        let current = self.lyrics.font_size;
+        let index = FONT_SIZES
             .iter()
-            .position(|family| *family == current)
-            .unwrap_or(0);
-        let next = FONT_FAMILIES[(index + 1) % FONT_FAMILIES.len()];
-        self.lyrics_font_family = next.into();
-        self.notice = format!("歌词字体：{next}").into();
-        self.persist_settings();
-        self.sync_lyrics_style(cx);
+            .position(|size| (*size - current).abs() < 0.5)
+            .unwrap_or(usize::MAX);
+        let next = match index {
+            usize::MAX => FONT_SIZES[0],
+            index => FONT_SIZES[(index + 1) % FONT_SIZES.len()],
+        };
+        self.update_lyrics_style(cx, |style| style.font_size = next);
+        self.notice = format!("桌面歌词字号：{next:.0}").into();
         cx.notify();
     }
 
-    fn cycle_lyrics_font_size(&mut self, cx: &mut Context<Self>) {
-        const FONT_SIZES: [f32; 6] = [20.0, 24.0, 28.0, 32.0, 40.0, 48.0];
-        let index = FONT_SIZES
+    /// 按固定步长微调桌面歌词字号，托盘菜单使用。
+    fn nudge_lyrics_font_size(&mut self, delta: f32, cx: &mut Context<Self>) {
+        let next = (self.lyrics.font_size + delta).clamp(16.0, 96.0);
+        self.update_lyrics_style(cx, |style| style.font_size = next);
+        self.notice = format!("桌面歌词字号：{next:.0}").into();
+        cx.notify();
+    }
+
+    /// 循环切换字重，模仿 LX Music 的字体粗细设置。
+    fn cycle_lyrics_font_weight(&mut self, cx: &mut Context<Self>) {
+        const WEIGHTS: [f32; 4] = [400.0, 500.0, 700.0, 900.0];
+        let current = self.lyrics.font_weight;
+        let index = WEIGHTS
             .iter()
-            .position(|size| (*size - self.lyrics_font_size).abs() < f32::EPSILON)
-            .unwrap_or(0);
-        let next = FONT_SIZES[(index + 1) % FONT_SIZES.len()];
-        self.lyrics_font_size = next;
-        self.notice = format!("歌词字号：{next:.0}").into();
-        self.persist_settings();
-        self.sync_lyrics_style(cx);
+            .position(|weight| (*weight - current).abs() < 1.0)
+            .unwrap_or(usize::MAX);
+        let next = match index {
+            usize::MAX => WEIGHTS[0],
+            index => WEIGHTS[(index + 1) % WEIGHTS.len()],
+        };
+        self.update_lyrics_style(cx, |style| style.font_weight = next);
+        self.notice = format!("歌词字重：{next:.0}").into();
         cx.notify();
     }
 
     fn toggle_lyrics_karaoke(&mut self, cx: &mut Context<Self>) {
-        self.lyrics_karaoke = !self.lyrics_karaoke;
-        self.notice = if self.lyrics_karaoke {
-            "卡拉OK歌词效果：已开启"
+        self.update_lyrics_style(cx, |style| style.karaoke = !style.karaoke);
+        self.notice = if self.lyrics.karaoke {
+            "卡拉OK歌词效果：已开启".into()
         } else {
-            "卡拉OK歌词效果：已关闭"
-        }
-        .into();
-        self.persist_settings();
-        self.sync_lyrics_style(cx);
+            "卡拉OK歌词效果：已关闭".into()
+        };
+        cx.notify();
+    }
+
+    fn nudge_lyrics_offset(&mut self, delta_ms: i64, cx: &mut Context<Self>) {
+        self.update_lyrics_style(cx, |style| style.offset_ms += delta_ms);
+        let offset = self.lyrics.offset_ms as f32 / 1000.0;
+        self.notice = format!("歌词偏移 {offset:+.1}s").into();
+        self.sync_lyrics_playback(cx);
         cx.notify();
     }
 
@@ -1165,7 +1285,7 @@ impl MusicApp {
             }
         }
         self.elapsed_ms = target.as_millis() as u64;
-        self.update_lyrics_position(cx);
+        self.sync_lyrics_playback(cx);
         cx.notify();
     }
 
@@ -1190,7 +1310,8 @@ impl MusicApp {
                             this.is_playing = false;
                         }
                     }
-                    this.update_lyrics_position(cx);
+                    this.sync_lyrics_playback(cx);
+                    this.sync_lyrics_window_position(cx);
                     cx.notify();
                     this.is_playing
                 }) else {
@@ -1712,6 +1833,8 @@ impl MusicApp {
                             this.import_source(cx);
                         } else if action == "刷新榜单" {
                             this.refresh_rankings(cx);
+                        } else if action == "重置歌词位置" {
+                            this.reset_lyrics_position(cx);
                         } else {
                             this.announce(action, cx);
                         }
@@ -2259,6 +2382,7 @@ impl MusicApp {
                 .id("setting-theme")
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
             )
+            .child(self.section_title("桌面歌词", "重置歌词位置", cx))
             .child(
                 setting_row(
                     "桌面歌词",
@@ -2275,19 +2399,53 @@ impl MusicApp {
             )
             .child(
                 setting_row(
+                    "锁定歌词",
+                    if self.lyrics.locked {
+                        "已锁定（鼠标穿透）"
+                    } else {
+                        "可拖动与设置"
+                    },
+                    "锁定后点击会穿透到下层窗口，解锁后可拖动并显示工具条",
+                    p,
+                )
+                .id("setting-lyrics-lock")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| style.locked = !style.locked)
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词置顶",
+                    if self.lyrics.always_on_top {
+                        "始终置顶"
+                    } else {
+                        "普通窗口"
+                    },
+                    "关闭后歌词会被其它窗口覆盖",
+                    p,
+                )
+                .id("setting-lyrics-top")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| style.always_on_top = !style.always_on_top)
+                })),
+            )
+            .child(
+                setting_row(
                     "歌词字体",
-                    self.lyrics_font_family.clone(),
+                    self.lyrics.font_family.clone(),
                     "点击切换桌面歌词字体",
                     p,
                 )
                 .id("setting-lyrics-font")
-                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font(cx))),
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_font_family)
+                })),
             )
             .child(
                 setting_row(
                     "歌词字号",
-                    format!("{:.0} px", self.lyrics_font_size),
-                    "当前播放歌词会放大显示",
+                    format!("{:.0} px", self.lyrics.font_size),
+                    "当前播放的歌词会放大显示，歌词窗口内滚动滚轮也能调整",
                     p,
                 )
                 .id("setting-lyrics-size")
@@ -2295,17 +2453,180 @@ impl MusicApp {
             )
             .child(
                 setting_row(
-                    "卡拉OK效果",
-                    if self.lyrics_karaoke {
+                    "歌词字重",
+                    format!("{:.0}", self.lyrics.font_weight),
+                    "点击在常规与加粗之间切换",
+                    p,
+                )
+                .id("setting-lyrics-weight")
+                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_weight(cx))),
+            )
+            .child(
+                setting_row(
+                    "对齐方式",
+                    self.lyrics.alignment.label(),
+                    "控制歌词在窗口中的水平位置",
+                    p,
+                )
+                .id("setting-lyrics-align")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| style.alignment = style.alignment.next())
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词动画",
+                    self.lyrics.animation.label(),
+                    "切换歌词时的过渡效果",
+                    p,
+                )
+                .id("setting-lyrics-animation")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| style.animation = style.animation.next())
+                })),
+            )
+            .child(
+                setting_row(
+                    "单行模式",
+                    if self.lyrics.single_line {
+                        "只显示当前行"
+                    } else {
+                        "显示上下句"
+                    },
+                    "上下句模式会把前后的歌词淡出显示",
+                    p,
+                )
+                .id("setting-lyrics-single")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| style.single_line = !style.single_line)
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词翻译",
+                    if self.lyrics.show_translation {
                         "已开启"
                     } else {
                         "已关闭"
                     },
-                    "当前歌词随播放进度逐字填充",
+                    "网易云与 QQ 音乐提供逐行翻译时随歌词显示",
+                    p,
+                )
+                .id("setting-lyrics-translation")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| {
+                        style.show_translation = !style.show_translation
+                    })
+                })),
+            )
+            .child(
+                setting_row(
+                    "卡拉OK填充",
+                    if self.lyrics.karaoke {
+                        "已开启"
+                    } else {
+                        "已关闭"
+                    },
+                    "当前歌词随播放进度逐字填充高亮色",
                     p,
                 )
                 .id("setting-lyrics-karaoke")
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics_karaoke(cx))),
+            )
+            .child(
+                setting_row(
+                    "歌词文字颜色",
+                    self.lyrics.text_color_label(),
+                    "未播放部分的文字颜色",
+                    p,
+                )
+                .id("setting-lyrics-color")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_text_color)
+                })),
+            )
+            .child(
+                setting_row(
+                    "已播放颜色",
+                    self.lyrics.highlight_color_label(),
+                    "逐字填充与当前行高亮使用的颜色",
+                    p,
+                )
+                .id("setting-lyrics-highlight")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_highlight_color)
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词描边",
+                    self.lyrics.stroke_label(),
+                    "给文字加描边，在浅色壁纸上也清晰",
+                    p,
+                )
+                .id("setting-lyrics-stroke")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_stroke_width)
+                })),
+            )
+            .child(
+                setting_row(
+                    "描边颜色",
+                    self.lyrics.stroke_color_label(),
+                    "浅色壁纸用深色描边，深色壁纸用亮色描边",
+                    p,
+                )
+                .id("setting-lyrics-stroke-color")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_stroke_color)
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词背景",
+                    self.lyrics.background_label(),
+                    "默认完全透明，也可以加深色底衬",
+                    p,
+                )
+                .id("setting-lyrics-background")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, LyricsStyle::next_background)
+                })),
+            )
+            .child(
+                setting_row(
+                    "歌词偏移",
+                    format!("{:+.1}s", self.lyrics.offset_ms as f32 / 1000.0),
+                    "歌词比人声快时点击延后，慢时点击提前",
+                    p,
+                )
+                .id("setting-lyrics-offset")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    let delta = if this.lyrics.offset_ms >= 1_500 {
+                        -2_000
+                    } else {
+                        500
+                    };
+                    this.nudge_lyrics_offset(delta, cx)
+                })),
+            )
+            .child(
+                setting_row(
+                    "暂停时隐藏",
+                    if self.lyrics.hide_when_paused {
+                        "已开启"
+                    } else {
+                        "已关闭"
+                    },
+                    "暂停播放后自动隐藏歌词文字",
+                    p,
+                )
+                .id("setting-lyrics-pause-hide")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_lyrics_style(cx, |style| {
+                        style.hide_when_paused = !style.hide_when_paused
+                    })
+                })),
             )
             .child(
                 setting_row(
@@ -2598,13 +2919,16 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palett
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
             gpui_kit::init(cx);
             let tray = tray::TrayController::new().map(Arc::new);
             let keep_in_tray = tray.is_some();
             let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
             let view = cx.new(|_| MusicApp::new());
+            view.update(cx, |this, cx| {
+                this.ensure_lyrics_store(cx);
+            });
             let dark_theme = view.read(cx).dark_theme;
             let lyrics_enabled = view.read(cx).lyrics_enabled;
             let view_for_window = view.clone();
@@ -2654,10 +2978,11 @@ fn main() {
 
                 let window_handle: AnyWindowHandle = window_handle.into();
                 let tray_for_events = tray.clone();
+                let view_for_tray = view.clone();
                 cx.spawn(async move |cx| {
                     loop {
                         cx.background_executor()
-                            .timer(Duration::from_millis(100))
+                            .timer(Duration::from_millis(120))
                             .await;
                         match events.try_recv() {
                             Some(tray::TrayEvent::Show) => {
@@ -2673,8 +2998,44 @@ fn main() {
                                 let _ = cx.update(|cx| cx.quit());
                                 break;
                             }
+                            Some(tray::TrayEvent::LyricsToggle) => {
+                                let _ = view_for_tray.update(cx, |this, cx| {
+                                    let enabled = !this.lyrics_enabled;
+                                    this.set_lyrics_enabled(enabled, cx);
+                                });
+                            }
+                            Some(tray::TrayEvent::LyricsLock) => {
+                                let _ = view_for_tray.update(cx, |this, cx| {
+                                    this.update_lyrics_style(cx, |style| style.locked = !style.locked);
+                                    this.notice = if this.lyrics.locked {
+                                        "桌面歌词：已锁定（鼠标穿透）".into()
+                                    } else {
+                                        "桌面歌词：已解锁，可拖动".into()
+                                    };
+                                    cx.notify();
+                                });
+                            }
+                            Some(tray::TrayEvent::LyricsFontLarger) => {
+                                let _ = view_for_tray.update(cx, |this, cx| {
+                                    this.nudge_lyrics_font_size(2.0, cx)
+                                });
+                            }
+                            Some(tray::TrayEvent::LyricsFontSmaller) => {
+                                let _ = view_for_tray.update(cx, |this, cx| {
+                                    this.nudge_lyrics_font_size(-2.0, cx)
+                                });
+                            }
+                            Some(tray::TrayEvent::LyricsResetPosition) => {
+                                let _ = view_for_tray.update(cx, |this, cx| {
+                                    this.reset_lyrics_position(cx)
+                                });
+                            }
                             None => {}
                         }
+                        // 桌面歌词窗口被拖动后位置会变化，这里顺带落盘。
+                        let _ = view_for_tray.update(cx, |this, cx| {
+                            this.sync_lyrics_window_position(cx);
+                        });
                     }
                 })
                 .detach();

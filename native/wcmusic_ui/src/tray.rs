@@ -14,6 +14,13 @@ use gpui_kit as gpui;
 pub enum TrayEvent {
     Show,
     Exit,
+    /// 开启/关闭桌面歌词。
+    LyricsToggle,
+    /// 锁定/解锁桌面歌词。
+    LyricsLock,
+    LyricsFontLarger,
+    LyricsFontSmaller,
+    LyricsResetPosition,
 }
 
 #[derive(Clone)]
@@ -49,17 +56,22 @@ mod windows {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
         DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, IDI_APPLICATION, LoadIconW,
-        MF_STRING, PostQuitMessage, PostThreadMessageW, RegisterClassW, SW_HIDE, SW_RESTORE,
-        SW_SHOW, SetForegroundWindow, ShowWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD,
-        TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK,
-        WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_POPUP,
+        MF_POPUP, MF_STRING, PostQuitMessage, PostThreadMessageW, RegisterClassW, SW_HIDE,
+        SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+        TPM_RETURNCMD, TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY,
+        WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_POPUP,
     };
 
     const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 1;
     const TRAY_ICON_ID: u32 = 1;
     const SHOW_COMMAND: usize = 1001;
     const EXIT_COMMAND: usize = 1002;
+    const LYRICS_TOGGLE_COMMAND: usize = 1003;
+    const LYRICS_LOCK_COMMAND: usize = 1004;
+    const LYRICS_FONT_LARGER_COMMAND: usize = 1005;
+    const LYRICS_FONT_SMALLER_COMMAND: usize = 1006;
+    const LYRICS_RESET_POSITION_COMMAND: usize = 1007;
     const CLASS_NAME: &[u16] = &[
         'W' as u16, 'C' as u16, 'M' as u16, 'u' as u16, 's' as u16, 'i' as u16, 'c' as u16,
         'T' as u16, 'r' as u16, 'a' as u16, 'y' as u16, 0,
@@ -224,8 +236,55 @@ mod windows {
             return;
         }
         let show_label = wide_string("显示 WCMusic");
+        let lyrics_label = wide_string("桌面歌词");
+        let lyrics_toggle_label = wide_string("开启/关闭桌面歌词");
+        let lyrics_lock_label = wide_string("锁定/解锁歌词");
+        let lyrics_larger_label = wide_string("增大歌词字号");
+        let lyrics_smaller_label = wide_string("减小歌词字号");
+        let lyrics_reset_label = wide_string("歌词窗口回到默认位置");
         let exit_label = wide_string("退出");
         AppendMenuW(menu, MF_STRING, SHOW_COMMAND, show_label.as_ptr());
+        // 桌面歌词子菜单，与 LX Music 的托盘菜单保持一致。
+        let lyrics_menu = CreatePopupMenu();
+        if !lyrics_menu.is_null() {
+            AppendMenuW(
+                lyrics_menu,
+                MF_STRING,
+                LYRICS_TOGGLE_COMMAND,
+                lyrics_toggle_label.as_ptr(),
+            );
+            AppendMenuW(
+                lyrics_menu,
+                MF_STRING,
+                LYRICS_LOCK_COMMAND,
+                lyrics_lock_label.as_ptr(),
+            );
+            AppendMenuW(
+                lyrics_menu,
+                MF_STRING,
+                LYRICS_FONT_LARGER_COMMAND,
+                lyrics_larger_label.as_ptr(),
+            );
+            AppendMenuW(
+                lyrics_menu,
+                MF_STRING,
+                LYRICS_FONT_SMALLER_COMMAND,
+                lyrics_smaller_label.as_ptr(),
+            );
+            AppendMenuW(
+                lyrics_menu,
+                MF_STRING,
+                LYRICS_RESET_POSITION_COMMAND,
+                lyrics_reset_label.as_ptr(),
+            );
+            // 子菜单由父菜单持有，DestroyMenu(menu) 会一并销毁。
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                lyrics_menu as usize,
+                lyrics_label.as_ptr(),
+            );
+        }
         AppendMenuW(menu, MF_STRING, EXIT_COMMAND, exit_label.as_ptr());
 
         let mut point = POINT { x: 0, y: 0 };
@@ -244,6 +303,11 @@ mod windows {
         match command as usize {
             SHOW_COMMAND => send_event(TrayEvent::Show),
             EXIT_COMMAND => send_event(TrayEvent::Exit),
+            LYRICS_TOGGLE_COMMAND => send_event(TrayEvent::LyricsToggle),
+            LYRICS_LOCK_COMMAND => send_event(TrayEvent::LyricsLock),
+            LYRICS_FONT_LARGER_COMMAND => send_event(TrayEvent::LyricsFontLarger),
+            LYRICS_FONT_SMALLER_COMMAND => send_event(TrayEvent::LyricsFontSmaller),
+            LYRICS_RESET_POSITION_COMMAND => send_event(TrayEvent::LyricsResetPosition),
             _ => {}
         }
     }
@@ -301,29 +365,6 @@ pub fn native_window_handle(window: &gpui::Window) -> Option<isize> {
 pub fn native_window_handle(_window: &gpui::Window) -> Option<isize> {
     None
 }
-
-#[cfg(windows)]
-pub fn set_window_topmost(hwnd: isize) {
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
-    };
-
-    unsafe {
-        SetWindowPos(
-            hwnd as HWND,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-        );
-    }
-}
-
-#[cfg(not(windows))]
-pub fn set_window_topmost(_hwnd: isize) {}
 
 /// Remove the Windows 11 rounded-corner frame and non-client border from an
 /// overlay window. Without this, an otherwise transparent lyrics window still
