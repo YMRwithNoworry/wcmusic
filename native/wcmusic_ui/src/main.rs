@@ -13,6 +13,7 @@ use gpui_kit as gpui;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
@@ -147,6 +148,14 @@ struct ImportedSource {
     script: String,
 }
 
+/// 正在获取（解析播放地址 + 下载音频）的歌曲，用来在界面上显示「获取中」。
+#[derive(Clone, PartialEq)]
+struct FetchingTrack {
+    row: TrackRow,
+    /// 平台名称，例如「酷我」。
+    source: SharedString,
+}
+
 impl TrackRow {
     fn from_core(track: Track) -> Self {
         Self::from_core_with_artwork(track, None)
@@ -202,6 +211,8 @@ struct MusicApp {
     play_generation: u64,
     audio_player: Option<AudioPlayer>,
     notice: SharedString,
+    /// 正在获取的歌曲，None 表示当前没有获取任务。
+    fetching: Option<FetchingTrack>,
     quality_index: usize,
     dark_theme: bool,
     lyrics_enabled: bool,
@@ -252,6 +263,7 @@ impl MusicApp {
             play_generation: 0,
             audio_player: None,
             notice: "准备播放".into(),
+            fetching: None,
             quality_index: settings.quality_index,
             dark_theme: settings.dark_theme,
             lyrics_enabled: settings.lyrics_enabled,
@@ -435,7 +447,7 @@ impl MusicApp {
         self.current_online_track = Some(row.clone());
         self.current_track = None;
         let online = row.track.source != TrackSource::Local;
-        self.start_playback(row.track, online, cx);
+        self.start_playback(row, online, cx);
     }
 
     fn ensure_player_sliders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1083,7 +1095,7 @@ impl MusicApp {
             self.current_online_track = Some(row.clone());
             self.current_track = None;
         }
-        self.start_playback(row.track, true, cx);
+        self.start_playback(row, true, cx);
     }
 
     fn toggle_ranking_track(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1096,10 +1108,11 @@ impl MusicApp {
         }
         self.current_online_track = Some(row.clone());
         self.current_track = None;
-        self.start_playback(row.track, true, cx);
+        self.start_playback(row, true, cx);
     }
 
-    fn start_playback(&mut self, track: Track, online: bool, cx: &mut Context<Self>) {
+    fn start_playback(&mut self, row: TrackRow, online: bool, cx: &mut Context<Self>) {
+        let track = row.track.clone();
         self.play_generation += 1;
         let generation = self.play_generation;
         if let Some(player) = self.audio_player.as_mut() {
@@ -1115,20 +1128,27 @@ impl MusicApp {
             TrackSource::Wy => OnlineSearchChannel::Netease.label(),
             _ => self.search_channel.label(),
         };
+        // 标记为「获取中」，列表行与播放栏都会显示转圈提示。
+        self.fetching = Some(FetchingTrack {
+            row: row.clone(),
+            source: source_label.into(),
+        });
         self.notice = if online {
-            format!("正在通过{}解析整曲...", source_label)
+            format!("获取中：正在通过{source_label}解析整曲地址…")
         } else {
-            format!("正在准备 {}", track.title)
+            format!("获取中：正在准备 {}", track.title)
         }
         .into();
         cx.notify();
 
         if track.source == TrackSource::Local {
+            self.fetching = None;
             self.notice = "本地歌曲文件不可用".into();
             cx.notify();
             return;
         }
         let Some(source_id) = track.source_id.clone() else {
+            self.fetching = None;
             self.notice = "搜索结果缺少平台歌曲 ID".into();
             cx.notify();
             return;
@@ -1139,6 +1159,7 @@ impl MusicApp {
             TrackSource::Tx => "tx",
             TrackSource::Wy => "wy",
             _ => {
+                self.fetching = None;
                 self.notice = "该歌曲暂不支持整曲解析".into();
                 cx.notify();
                 return;
@@ -1169,6 +1190,8 @@ impl MusicApp {
                 if generation != this.play_generation {
                     return;
                 }
+                // 获取结束（成功或失败）后取消「获取中」标记。
+                this.fetching = None;
                 match result {
                     Ok((_url, bytes)) => {
                         let player = match this.audio_player.as_mut() {
@@ -1340,7 +1363,7 @@ impl MusicApp {
             let row = self.ranking_tracks[index].clone();
             self.current_online_track = Some(row.clone());
             self.current_track = None;
-            self.start_playback(row.track, true, cx);
+            self.start_playback(row, true, cx);
             return;
         }
         if let Some(current) = &self.current_online_track
@@ -1355,7 +1378,7 @@ impl MusicApp {
             let index = (current_index + offset).rem_euclid(len) as usize;
             let row = self.search_results[index].clone();
             self.current_online_track = Some(row.clone());
-            self.start_playback(row.track, true, cx);
+            self.start_playback(row, true, cx);
             return;
         }
         if self.rows.is_empty() {
@@ -1368,13 +1391,20 @@ impl MusicApp {
         let index = (current + offset).rem_euclid(len) as usize;
         self.current_track = Some(index);
         self.current_online_track = None;
-        self.start_playback(self.rows[index].track.clone(), false, cx);
+        self.start_playback(self.rows[index].clone(), false, cx);
     }
 
     fn current_row(&self) -> Option<&TrackRow> {
         self.current_online_track
             .as_ref()
             .or_else(|| self.current_track.and_then(|index| self.rows.get(index)))
+    }
+
+    /// 该行是否正在获取音频。
+    fn is_fetching_row(&self, row: &TrackRow) -> bool {
+        self.fetching
+            .as_ref()
+            .is_some_and(|fetching| &fetching.row == row)
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1463,12 +1493,29 @@ impl MusicApp {
             )
             .child(nav)
             .child(
-                div().flex_1().flex().items_end().child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child("GPUI KIT · DESKTOP"),
-                ),
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        // 状态行：搜索、获取歌曲、出错等信息都会显示在这里。
+                        div()
+                            .text_xs()
+                            .text_color(if self.fetching.is_some() {
+                                p.primary
+                            } else {
+                                p.muted
+                            })
+                            .child(self.notice.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child("GPUI KIT · DESKTOP"),
+                    ),
             )
     }
 
@@ -1666,6 +1713,7 @@ impl MusicApp {
             for (index, row) in self.search_results.iter().cloned().enumerate() {
                 let selected = self.current_online_track.as_ref() == Some(&row);
                 let playing = selected && self.is_playing;
+                let fetching = self.is_fetching_row(&row);
                 results = results.child(
                     div()
                         .id(("online-track", index))
@@ -1693,19 +1741,7 @@ impl MusicApp {
                                 } else {
                                     p.primary
                                 })
-                                .child(
-                                    Icon::new(if playing {
-                                        IconName::Pause
-                                    } else {
-                                        IconName::Play
-                                    })
-                                    .size(px(16.0))
-                                    .text_color(if playing {
-                                        p.primary_foreground
-                                    } else {
-                                        p.primary
-                                    }),
-                                ),
+                                .child(row_action_icon(playing, fetching, p)),
                         )
                         .child(track_artwork(&row, p))
                         .child(
@@ -1734,7 +1770,15 @@ impl MusicApp {
                                         .text_color(p.primary)
                                         .child(self.search_channel.label()),
                                 )
-                                .child(div().text_xs().text_color(p.muted).child(row.duration)),
+                                .child(if fetching {
+                                    fetching_note(p)
+                                } else {
+                                    div()
+                                        .text_xs()
+                                        .text_color(p.muted)
+                                        .child(row.duration)
+                                        .into_any_element()
+                                }),
                         ),
                 );
             }
@@ -2025,6 +2069,7 @@ impl MusicApp {
         for (index, row) in self.ranking_tracks.iter().cloned().enumerate() {
             let selected = self.current_online_track.as_ref() == Some(&row);
             let playing = selected && self.is_playing;
+            let fetching = self.is_fetching_row(&row);
             list = list.child(
                 div()
                     .id(("ranking-track", index))
@@ -2059,19 +2104,7 @@ impl MusicApp {
                             } else {
                                 p.primary
                             })
-                            .child(
-                                Icon::new(if playing {
-                                    IconName::Pause
-                                } else {
-                                    IconName::Play
-                                })
-                                .size(px(16.0))
-                                .text_color(if playing {
-                                    p.primary_foreground
-                                } else {
-                                    p.primary
-                                }),
-                            ),
+                            .child(row_action_icon(playing, fetching, p)),
                     )
                     .child(track_artwork(&row, p))
                     .child(
@@ -2088,7 +2121,15 @@ impl MusicApp {
                                     .child(format!("{} · {}", row.artist, row.album)),
                             ),
                     )
-                    .child(div().text_xs().text_color(p.muted).child(row.duration)),
+                    .child(if fetching {
+                        fetching_badge("获取中", p)
+                    } else {
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(row.duration)
+                            .into_any_element()
+                    }),
             );
         }
         list
@@ -2210,6 +2251,7 @@ impl MusicApp {
         for (index, row) in tracks.into_iter().enumerate() {
             let selected = self.current_online_track.as_ref() == Some(&row);
             let playing = selected && self.is_playing;
+            let fetching = self.is_fetching_row(&row);
             let row_for_click = row.clone();
             list = list.child(
                 div()
@@ -2245,19 +2287,7 @@ impl MusicApp {
                             } else {
                                 p.primary
                             })
-                            .child(
-                                Icon::new(if playing {
-                                    IconName::Pause
-                                } else {
-                                    IconName::Play
-                                })
-                                .size(px(16.0))
-                                .text_color(if playing {
-                                    p.primary_foreground
-                                } else {
-                                    p.primary
-                                }),
-                            ),
+                            .child(row_action_icon(playing, fetching, p)),
                     )
                     .child(track_artwork(&row, p))
                     .child(
@@ -2274,7 +2304,15 @@ impl MusicApp {
                                     .child(format!("{} · {}", row.artist, row.album)),
                             ),
                     )
-                    .child(div().text_xs().text_color(p.muted).child(row.duration)),
+                    .child(if fetching {
+                        fetching_badge("获取中", p)
+                    } else {
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(row.duration)
+                            .into_any_element()
+                    }),
             );
         }
         list
@@ -2654,6 +2692,11 @@ impl MusicApp {
             .map(|row| track_artwork(row, p))
             .unwrap_or_else(|| empty_artwork(p));
         let playing = self.is_playing;
+        let fetching = self.fetching.clone();
+        let status = fetching
+            .as_ref()
+            .map(|fetching| format!("获取中：正在通过{}解析整曲…", fetching.source))
+            .unwrap_or_else(|| artist.to_string());
         div()
             .w_full()
             .mt(px(18.0))
@@ -2681,8 +2724,24 @@ impl MusicApp {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(p.foreground).child(title))
-                            .child(div().text_xs().text_color(p.muted).child(artist)),
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().text_color(p.foreground).child(title))
+                                    .when_some(fetching.clone(), |this, fetching| {
+                                        this.child(fetching_badge(
+                                            format!("获取中 · {}", fetching.source),
+                                            p,
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if fetching.is_some() { p.primary } else { p.muted })
+                                    .child(status),
+                            ),
                     ),
             )
             .child(
@@ -2694,8 +2753,23 @@ impl MusicApp {
                     .accessibility_label("上一首")
                     .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
             )
-            .child(
-                Button::new("player-toggle")
+            .child(match fetching.clone() {
+                // 获取中：把播放键换成转圈，明确告诉用户正在取歌。
+                Some(_) => div()
+                    .size(px(32.0))
+                    .flex_shrink_0()
+                    .rounded(px(999.0))
+                    .bg(p.primary)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Spinner::new()
+                            .with_size(px(16.0))
+                            .color(p.primary_foreground),
+                    )
+                    .into_any_element(),
+                None => Button::new("player-toggle")
                     .primary()
                     .rounded(px(999.0))
                     .icon(if playing {
@@ -2705,8 +2779,9 @@ impl MusicApp {
                     })
                     .tooltip(if playing { "暂停" } else { "播放" })
                     .accessibility_label(if playing { "暂停" } else { "播放" })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx))),
-            )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
+                    .into_any_element(),
+            })
             .child(
                 Button::new("player-next")
                     .ghost()
@@ -2897,6 +2972,54 @@ fn setting_row(
                 .text_color(p.primary)
                 .child(value.into()),
         )
+}
+
+/// 「获取中」胶囊：转圈动画 + 文案，用于播放栏与列表行。
+fn fetching_badge(label: impl Into<SharedString>, p: Palette) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_1()
+        .pl(px(6.0))
+        .pr(px(9.0))
+        .py(px(2.0))
+        .rounded(px(999.0))
+        .bg(p.primary.opacity(0.16))
+        .child(Spinner::new().with_size(px(12.0)).color(p.primary))
+        .child(div().text_xs().text_color(p.primary).child(label.into()))
+        .into_any_element()
+}
+
+/// 列表行里的「获取中」文字提示。
+fn fetching_note(p: Palette) -> gpui::AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(Spinner::new().with_size(px(12.0)).color(p.primary))
+        .child(div().text_xs().text_color(p.primary).child("获取中"))
+        .into_any_element()
+}
+
+/// 列表行左侧的圆形按钮：获取中显示转圈，否则显示播放/暂停。
+fn row_action_icon(playing: bool, fetching: bool, p: Palette) -> gpui::AnyElement {
+    let color = if playing {
+        p.primary_foreground
+    } else {
+        p.primary
+    };
+    if fetching {
+        return Spinner::new().with_size(px(16.0)).color(color).into_any_element();
+    }
+    Icon::new(if playing {
+        IconName::Pause
+    } else {
+        IconName::Play
+    })
+    .size(px(16.0))
+    .text_color(color)
+    .into_any_element()
 }
 
 fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palette) -> gpui::Div {
