@@ -81,7 +81,7 @@ const STROKE_DIRECTIONS: [(f32, f32); 8] = [
 ];
 
 /// 将 `0xRRGGBB` 与透明度组合成 GPUI 颜色。
-fn tint(rgb: u32, alpha: f32) -> Hsla {
+pub fn tint(rgb: u32, alpha: f32) -> Hsla {
     let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     rgba(((rgb & 0x00FF_FFFF) << 8) | alpha).into()
 }

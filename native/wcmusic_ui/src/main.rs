@@ -29,11 +29,15 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
-use crate::lyrics::{LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics};
+use crate::lyrics::{
+    LyricLine, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics,
+};
 use crate::settings::AppSettings;
 
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
+/// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
+const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
 
 /// A small, copyable projection of the active GPUI Kit theme.
 ///
@@ -222,6 +226,12 @@ struct MusicApp {
     lyrics_overlay: Option<Entity<LyricsOverlay>>,
     lyrics_window: Option<AnyWindowHandle>,
     lyrics_generation: u64,
+    /// 当前歌曲的歌词，供专享模式显示。
+    lyric_lines: Vec<LyricLine>,
+    lyric_lines_loading: bool,
+    lyric_lines_error: Option<SharedString>,
+    /// 歌词对应的歌曲标识，避免重复请求。
+    lyric_lines_key: Option<String>,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
@@ -272,6 +282,10 @@ impl MusicApp {
             lyrics_overlay: None,
             lyrics_window: None,
             lyrics_generation: 0,
+            lyric_lines: Vec::new(),
+            lyric_lines_loading: false,
+            lyric_lines_error: None,
+            lyric_lines_key: None,
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
@@ -969,20 +983,50 @@ impl MusicApp {
         cx.notify();
     }
 
+    /// 歌词缓存对应的歌曲标识，避免同一首歌重复拉取。
+    fn track_lyrics_key(track: &Track) -> String {
+        format!(
+            "{:?}|{}|{}",
+            track.source,
+            track.source_id.as_deref().unwrap_or_default(),
+            track.title
+        )
+    }
+
+    /// 专享模式打开时按需获取歌词。
+    fn ensure_lyrics_for_current(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        let key = Self::track_lyrics_key(&row.track);
+        if self.lyric_lines_loading || self.lyric_lines_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.refresh_lyrics(cx);
+    }
+
     fn refresh_lyrics(&mut self, cx: &mut Context<Self>) {
-        if !self.lyrics_enabled || self.lyrics_overlay.is_none() {
+        if self.lyrics_overlay.is_none() && !self.show_now_playing {
             return;
         }
         let Some(row) = self.current_row().cloned() else {
+            self.lyric_lines.clear();
+            self.lyric_lines_error = None;
+            self.lyric_lines_key = None;
             if let Some(overlay) = &self.lyrics_overlay {
                 overlay.update(cx, |overlay, cx| overlay.set_lyrics(Vec::new(), cx));
             }
+            cx.notify();
             return;
         };
         self.lyrics_generation += 1;
         let generation = self.lyrics_generation;
+        let key = Self::track_lyrics_key(&row.track);
         let track = row.track;
         let use_proxy = self.use_network_proxy;
+        self.lyric_lines_loading = true;
+        self.lyric_lines_error = None;
+        cx.notify();
         let task = cx.background_spawn(async move { fetch_lyrics(&track, use_proxy) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -990,13 +1034,26 @@ impl MusicApp {
                 if generation != this.lyrics_generation {
                     return;
                 }
-                let Some(overlay) = this.lyrics_overlay.clone() else {
-                    return;
-                };
+                this.lyric_lines_loading = false;
+                this.lyric_lines_key = Some(key);
                 match result {
-                    Ok(lines) => overlay.update(cx, |overlay, cx| overlay.set_lyrics(lines, cx)),
-                    Err(error) => overlay.update(cx, |overlay, cx| overlay.set_message(error, cx)),
+                    Ok(lines) => {
+                        this.lyric_lines_error = None;
+                        this.lyric_lines = lines.clone();
+                        if let Some(overlay) = &this.lyrics_overlay {
+                            overlay
+                                .update(cx, |overlay, cx| overlay.set_lyrics(lines, cx));
+                        }
+                    }
+                    Err(error) => {
+                        this.lyric_lines.clear();
+                        this.lyric_lines_error = Some(error.clone().into());
+                        if let Some(overlay) = &this.lyrics_overlay {
+                            overlay.update(cx, |overlay, cx| overlay.set_message(error, cx));
+                        }
+                    }
                 }
+                cx.notify();
             })
             .ok();
         })
@@ -1280,11 +1337,13 @@ impl MusicApp {
         cx.notify();
     }
 
+    /// 进入专享模式：全窗口只显示封面、歌曲信息与滚动歌词。
     fn open_now_playing(&mut self, cx: &mut Context<Self>) {
         if self.current_row().is_none() {
             self.notice = "请先选择一首歌曲".into();
         } else {
             self.show_now_playing = true;
+            self.ensure_lyrics_for_current(cx);
         }
         cx.notify();
     }
@@ -1310,6 +1369,42 @@ impl MusicApp {
         self.elapsed_ms = target.as_millis() as u64;
         self.sync_lyrics_playback(cx);
         cx.notify();
+    }
+
+    /// 跳转到指定毫秒（专享模式点歌词时使用）。
+    fn seek_to_ms(&mut self, position_ms: u64, cx: &mut Context<Self>) {
+        if let Some(player) = &self.audio_player {
+            if let Err(error) = player.seek(Duration::from_millis(position_ms)) {
+                self.notice = error.into();
+                cx.notify();
+                return;
+            }
+        }
+        self.elapsed_ms = position_ms;
+        self.seeking_progress = false;
+        self.sync_lyrics_playback(cx);
+        cx.notify();
+    }
+
+    /// 歌词里排在当前播放位置之前的最后一行。
+    fn current_lyric_index(&self) -> Option<usize> {
+        if self.lyric_lines.is_empty() {
+            return None;
+        }
+        let offset = (self.elapsed_ms as i64 + self.lyrics_offset_ms()).max(0) as u64;
+        let mut index = 0;
+        for (line_index, line) in self.lyric_lines.iter().enumerate() {
+            if line.time_ms <= offset {
+                index = line_index;
+            } else {
+                break;
+            }
+        }
+        Some(index)
+    }
+
+    fn lyrics_offset_ms(&self) -> i64 {
+        self.lyrics.offset_ms
     }
 
     fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
@@ -1533,93 +1628,190 @@ impl MusicApp {
         }
     }
 
+    /// 专享模式：左侧大封面与歌曲信息，右侧随时间滚动的歌词。
     fn now_playing_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let p = Palette::new(cx);
         let Some(row) = self.current_row() else {
             return div()
+                .size_full()
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
-                .text_color(p.muted)
-                .child("请先选择一首歌曲")
+                .gap_4()
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(p.foreground)
+                        .child("还没有正在播放的歌曲"),
+                )
+                .child(
+                    Button::new("close-now-playing")
+                        .secondary()
+                        .label("返回")
+                        .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
+                )
                 .into_any_element();
         };
+
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        let artwork = track_artwork_sized(row, 320.0, p);
-        let lyrics = [
-            "How many winters in a gaze",
-            "Lost inside a maze?",
-            "And how many feelings unspoken",
-            "Held in this hand?",
-            "The weight of the old skies on my shoulders",
-            "Sunlight in disguise",
-            "Who would have known",
-        ];
+        let artwork = track_artwork_sized(row, 300.0, p);
+
         div()
             .size_full()
+            .relative()
             .flex()
-            .flex_col()
-            .gap_4()
+            .gap_10()
             .child(
                 div()
+                    .w(px(320.0))
+                    .flex_shrink_0()
                     .flex()
-                    .items_center()
-                    .justify_between()
+                    .flex_col()
+                    .gap_4()
                     .child(
+                        // 再点一次封面即可退出专享模式。
                         div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("正在播放"),
+                            .id("now-playing-cover")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
+                            .child(artwork),
                     )
+                    .child(now_playing_info("歌曲名", title, p))
+                    .child(now_playing_info("艺术家", artist, p))
+                    .child(now_playing_info("专辑名", album, p)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.now_playing_lyrics(cx)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
                     .child(
                         Button::new("close-now-playing")
-                            .secondary()
-                            .label("返回")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ChevronDown)
+                            .tooltip("返回")
+                            .accessibility_label("返回")
                             .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
                     ),
             )
-            .child(
-                div()
+            .into_any_element()
+    }
+
+    /// 歌词面板：当前行高亮居中，前后几句淡出，点歌词可跳转。
+    fn now_playing_lyrics(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let p = Palette::new(cx);
+        if self.lyric_lines_loading && self.lyric_lines.is_empty() {
+            return centered_status(
+                "正在获取歌词…",
+                Some(
+                    Spinner::new()
+                        .with_size(px(16.0))
+                        .color(p.primary)
+                        .into_any_element(),
+                ),
+                p,
+            );
+        }
+        if self.lyric_lines.is_empty() {
+            if let Some(error) = self.lyric_lines_error.clone() {
+                return div()
+                    .size_full()
                     .flex()
-                    .flex_1()
-                    .gap_8()
+                    .flex_col()
                     .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .child(div().text_sm().text_color(p.muted).child(error))
                     .child(
-                        div()
-                            .w(px(360.0))
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap_3()
-                            .child(artwork)
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .child(div().text_sm().text_color(p.muted).child(artist))
-                            .child(div().text_xs().text_color(p.muted).child(album)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap_5()
-                            .children(lyrics.into_iter().enumerate().map(|(index, line)| {
-                                div()
-                                    .text_lg()
-                                    .text_color(if index == 0 { p.foreground } else { p.muted })
-                                    .child(line)
+                        Button::new("retry-lyrics")
+                            .secondary()
+                            .small()
+                            .label("重新获取歌词")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.lyric_lines_key = None;
+                                this.ensure_lyrics_for_current(cx);
                             })),
-                    ),
-            )
+                    )
+                    .into_any_element();
+            }
+            return centered_status("暂无歌词", None, p);
+        }
+
+        let show_translation = self.lyrics.show_translation;
+        let current = self.current_lyric_index().unwrap_or(0);
+        let accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
+        let total = self.lyric_lines.len() as f32 * LYRIC_ROW_HEIGHT;
+        // 让当前行的中心落在面板中心：整体居中后再平移。
+        let shift = total / 2.0 - (current as f32 * LYRIC_ROW_HEIGHT + LYRIC_ROW_HEIGHT / 2.0);
+
+        let mut rows = div().relative().w_full().h(px(total));
+        for (index, line) in self.lyric_lines.iter().enumerate() {
+            let is_current = index == current;
+            let time_ms = line.time_ms;
+            let mut text = div()
+                .whitespace_nowrap()
+                .text_lg()
+                .child(line.text.clone());
+            text = if is_current {
+                text.font_weight(gpui::FontWeight::SEMIBOLD).text_color(accent)
+            } else {
+                text.text_color(p.muted)
+            };
+            let mut column = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(2.0))
+                .px(px(12.0))
+                .child(text);
+            if show_translation {
+                if let Some(translation) = line
+                    .translation
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    column = column.child(
+                        div()
+                            .text_sm()
+                            .text_color(if is_current { accent } else { p.muted })
+                            .opacity(if is_current { 0.9 } else { 0.7 })
+                            .child(SharedString::from(translation.to_owned())),
+                    );
+                }
+            }
+            rows = rows.child(
+                div()
+                    .id(("now-playing-lyric", index))
+                    .absolute()
+                    .left_0()
+                    .top(px(index as f32 * LYRIC_ROW_HEIGHT))
+                    .w_full()
+                    .h(px(LYRIC_ROW_HEIGHT))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.seek_to_ms(time_ms, cx)))
+                    .child(column),
+            );
+        }
+
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .child(rows.relative().top(px(shift)))
             .into_any_element()
     }
 
@@ -2845,7 +3037,8 @@ impl Render for MusicApp {
             .flex()
             .bg(p.background)
             .text_color(p.foreground)
-            .child(self.sidebar(cx))
+            // 专享模式隐藏侧边栏，让封面与歌词占满窗口。
+            .when(!self.show_now_playing, |this| this.child(self.sidebar(cx)))
             .child(
                 div()
                     .flex_1()
@@ -2974,6 +3167,42 @@ fn setting_row(
         )
 }
 
+/// 专享模式下每行歌词的高度，用来让当前行稳定地停在面板中间。
+const LYRIC_ROW_HEIGHT: f32 = 56.0;
+
+/// 专享模式的歌曲信息行：灰色标签 + 值。
+fn now_playing_info(
+    label: &'static str,
+    value: impl Into<SharedString>,
+    p: Palette,
+) -> gpui::AnyElement {
+    h_flex()
+        .items_start()
+        .gap(px(2.0))
+        .text_sm()
+        .child(div().flex_shrink_0().text_color(p.muted).child(label))
+        .child(div().text_color(p.foreground).child(value.into()))
+        .into_any_element()
+}
+
+/// 歌词区域的居中提示（加载中 / 暂无歌词）。
+fn centered_status(
+    title: impl Into<SharedString>,
+    spinner: Option<gpui::AnyElement>,
+    p: Palette,
+) -> gpui::AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .when_some(spinner, |this, spinner| this.child(spinner))
+        .child(div().text_sm().text_color(p.muted).child(title.into()))
+        .into_any_element()
+}
+
 /// 「获取中」胶囊：转圈动画 + 文案，用于播放栏与列表行。
 fn fetching_badge(label: impl Into<SharedString>, p: Palette) -> gpui::AnyElement {
     div()
@@ -3040,10 +3269,34 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palett
         .child(div().text_sm().text_color(p.muted).child(detail.into()))
 }
 
+/// 崩溃时把 panic 信息写到 `%APPDATA%\wcmusic\panic.log`，方便用户反馈问题时排查。
+///
+/// 仍然调用 GPUI 安装的旧 hook，保持它原有的退出行为。
+fn install_panic_log() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let text = format!(
+            "{info}\n\nbacktrace:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+        if let Some(dir) = std::env::var_os("APPDATA") {
+            let path = std::path::PathBuf::from(dir)
+                .join("wcmusic")
+                .join("panic.log");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, text);
+        }
+        previous(info);
+    }));
+}
+
 fn main() {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
+            install_panic_log();
             gpui_kit::init(cx);
             let tray = tray::TrayController::new().map(Arc::new);
             let keep_in_tray = tray.is_some();
