@@ -764,6 +764,8 @@ impl LyricsOverlay {
         if playing {
             self.ensure_ticker(cx);
         }
+        // 暂停隐藏时窗口里什么都不画，这时也不能挡住桌面上的其它应用。
+        self.apply_native_state();
         cx.notify();
     }
 
@@ -777,7 +779,10 @@ impl LyricsOverlay {
         let Some(hwnd) = self.hwnd else {
             return;
         };
-        lyrics_window::set_click_through(hwnd, self.style.locked);
+        // 锁定后整扇窗口穿透鼠标；「暂停隐藏」时窗口里没有任何内容，
+        // 同样让它穿透，否则会有一块看不见的区域挡住下层应用。
+        let hidden_while_paused = self.style.hide_when_paused && !self.playing;
+        lyrics_window::set_click_through(hwnd, self.style.locked || hidden_while_paused);
         lyrics_window::set_topmost(hwnd, self.style.always_on_top);
     }
 

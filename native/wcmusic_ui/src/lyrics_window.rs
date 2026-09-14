@@ -2,9 +2,17 @@
 //!
 //! GPUI owns the lyrics window's message loop, so the LX Music "locked" lyric —
 //! an always-on-top strip that stays visible while every click falls through to
-//! the application underneath — is implemented by subclassing that window's
-//! procedure: while the lyrics are locked every `WM_NCHITTEST` answers
-//! `HTTRANSPARENT`, which makes Windows hand the mouse to the window below.
+//! the application underneath — is implemented in two layers:
+//!
+//! * while the lyrics are locked the window carries `WS_EX_TRANSPARENT`, the
+//!   style Windows skips during *mouse hit testing*. That flag is what makes a
+//!   click land on whatever sits below the overlay even when that window
+//!   belongs to another process / another thread — the same mechanism
+//!   Electron's `setIgnoreMouseEvents` (and therefore LX Music's locked lyrics)
+//!   relies on;
+//! * the subclassed window procedure additionally answers `HTTRANSPARENT` to
+//!   `WM_NCHITTEST` and `MA_NOACTIVATE` to `WM_MOUSEACTIVATE`, which covers the
+//!   windows owned by this process and keeps the overlay from stealing focus.
 //!
 //! The helpers here are intentionally tiny and stateful through statics: a
 //! player only ever owns one desktop lyrics window.
@@ -19,6 +27,7 @@ mod platform {
         HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, SWP_FRAMECHANGED,
         SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
         WM_MOUSEACTIVATE, WM_NCHITTEST, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TRANSPARENT,
     };
 
     /// True while the lyric window must ignore the mouse entirely.
@@ -84,8 +93,41 @@ mod platform {
     }
 
     /// Enable or disable mouse pass-through for the locked lyric window.
-    pub fn set_click_through(_hwnd: isize, enabled: bool) {
+    ///
+    /// `HTTRANSPARENT` alone only forwards the click to windows owned by the
+    /// same thread, so a locked overlay still swallowed clicks aimed at other
+    /// applications (the desktop lyrics "block the mouse" bug). The window
+    /// therefore also carries `WS_EX_TRANSPARENT` while locked: with that style
+    /// Windows skips the window entirely during mouse hit testing, so the click
+    /// reaches the application underneath, whatever process it belongs to.
+    pub fn set_click_through(hwnd: isize, enabled: bool) {
         CLICK_THROUGH.store(enabled, Ordering::Relaxed);
+        if hwnd == 0 {
+            return;
+        }
+        unsafe {
+            let hwnd = hwnd as HWND;
+            let flag = WS_EX_TRANSPARENT as isize;
+            let ext_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let wanted = if enabled {
+                ext_style | flag
+            } else {
+                ext_style & !flag
+            };
+            if wanted != ext_style {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted);
+                // The style change only takes effect after a framed update.
+                SetWindowPos(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+            }
+        }
     }
 
     /// Current cursor position in logical pixels.
