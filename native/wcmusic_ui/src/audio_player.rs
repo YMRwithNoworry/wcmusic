@@ -1,9 +1,156 @@
 use std::io::{BufReader, Cursor, Read};
+use std::sync::Arc;
 use std::time::Duration;
 
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::source::SeekError;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sample, Sink, Source};
 
 const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Shared, immutable audio payload.
+///
+/// Wrapping the `Vec<u8>` in an `Arc` lets every decoder rebuilt while seeking
+/// refer to the same buffer instead of copying it. `Cursor<T>` needs a concrete
+/// `AsRef<[u8]>` type, which `Arc<Vec<u8>>` does not provide directly, so this
+/// thin newtype forwards the slice. Cloning it only bumps the `Arc` refcount.
+#[derive(Clone)]
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+type MemoryDecoder = Decoder<BufReader<Cursor<SharedBytes>>>;
+
+/// In-memory `rodio::Source` that can always seek.
+///
+/// rodio 0.20.1's FLAC and Vorbis decoders return
+/// [`SeekError::NotSupported`] for every seek, regardless of the reader type.
+/// Because the whole file is already held in memory, a seek can be emulated by
+/// rebuilding a decoder from the retained bytes and dropping samples up to the
+/// requested position. Native seeks (WAV/MP3, and anything that gains support
+/// later) are attempted first so the common case stays cheap.
+///
+/// Cost note: the rebuild/skip runs on the audio thread, where the sink
+/// processes seek orders. Decoding originates from memory and the walk is
+/// bounded by the track length, so a seek on a normal song costs a brief
+/// (typically sub-second) hiccup; it is not free, but it is the trade-off for
+/// supporting FLAC seeking without upgrading rodio.
+struct MemorySource {
+    inner: MemoryDecoder,
+    bytes: Arc<Vec<u8>>,
+}
+
+impl MemorySource {
+    fn from_bytes(bytes: Arc<Vec<u8>>) -> Result<Self, rodio::decoder::DecoderError> {
+        let inner = Self::build_decoder(&bytes)?;
+        Ok(Self { inner, bytes })
+    }
+
+    /// Builds a fresh decoder over the shared buffer.
+    fn build_decoder(bytes: &Arc<Vec<u8>>) -> Result<MemoryDecoder, rodio::decoder::DecoderError> {
+        Decoder::new(BufReader::new(Cursor::new(SharedBytes(Arc::clone(bytes)))))
+    }
+
+    /// Rebuilds the decoder from the retained bytes and drops samples until
+    /// `target` is reached. The previous decoder is only replaced on success,
+    /// so a failed rebuild cannot leave the source in a broken state.
+    fn reseek(&mut self, target: Duration) -> Result<(), SeekError> {
+        let mut decoder =
+            Self::build_decoder(&self.bytes).map_err(|error| SeekError::Other(Box::new(error)))?;
+
+        // Clamp to the known duration so an out-of-range seek saturates at the
+        // end instead of decoding the whole file for nothing.
+        let target = clamp_seek_target(target, decoder.total_duration());
+        let skip = samples_to_skip(target, decoder.sample_rate(), decoder.channels());
+        for _ in 0..skip {
+            if decoder.next().is_none() {
+                // Reached the end early: there is nothing left to skip.
+                break;
+            }
+        }
+
+        self.inner = decoder;
+        Ok(())
+    }
+}
+
+impl Iterator for MemorySource {
+    type Item = f32;
+
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        self.inner.next().map(|sample| sample.to_f32())
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl Source for MemorySource {
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        self.inner.current_frame_len()
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        self.inner.channels()
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+
+    #[inline]
+    fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
+        // Fast path: let the decoder seek natively (WAV/MP3 support this).
+        if self.inner.try_seek(pos).is_ok() {
+            return Ok(());
+        }
+        // Fallback: rebuild from the retained bytes and skip forward. This
+        // also repairs the source if a native seek failed after mutating it.
+        self.reseek(pos)
+    }
+}
+
+/// Number of interleaved samples to drop to reach `target`.
+///
+/// Saturates to `u64::MAX` instead of overflowing, so a position far past the
+/// end cannot panic or wrap around. Returns `0` for degenerate stream
+/// properties so callers never divide by zero.
+fn samples_to_skip(target: Duration, sample_rate: u32, channels: u16) -> u64 {
+    if sample_rate == 0 || channels == 0 {
+        return 0;
+    }
+    let samples = target.as_secs_f64() * sample_rate as f64 * channels as f64;
+    if !samples.is_finite() || samples <= 0.0 {
+        return 0;
+    }
+    // Rust's `f64 as u64` saturates, so an out-of-range target yields
+    // `u64::MAX`; the skip loop below still terminates at the end of the
+    // source, it just walks to EOF first.
+    samples as u64
+}
+
+/// Clamps a requested seek position to the known total duration.
+fn clamp_seek_target(target: Duration, total: Option<Duration>) -> Duration {
+    match total {
+        Some(total) if target > total => total,
+        _ => target,
+    }
+}
 
 pub struct AudioPlayer {
     _stream: OutputStream,
@@ -24,11 +171,14 @@ impl AudioPlayer {
 
     pub fn play(&mut self, bytes: Vec<u8>) -> Result<(), String> {
         self.stop();
-        let decoder = Decoder::new(BufReader::new(Cursor::new(bytes)))
-            .map_err(|error| format!("无法解码音频: {error}"))?;
+        // Move the payload into a shared buffer: no copy, and every decoder
+        // rebuilt while seeking can borrow the very same bytes.
+        let bytes = Arc::new(bytes);
+        let source =
+            MemorySource::from_bytes(bytes).map_err(|error| format!("无法解码音频: {error}"))?;
         let sink =
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
-        sink.append(decoder);
+        sink.append(source);
         sink.play();
         self.sink = Some(sink);
         Ok(())
@@ -119,7 +269,7 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
         .get(url)
         .set(
             "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WCMusic/1.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WCMusic/1.0",
         )
         .call()
         .map_err(|error| format!("下载封面失败: {error}"))?;
@@ -147,4 +297,98 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
     let path = dir.join(format!("{safe_id}.jpg"));
     std::fs::write(&path, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_seek_target, samples_to_skip, MemorySource};
+    use rodio::Source;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn samples_to_skip_matches_interleaved_frame_math() {
+        assert_eq!(samples_to_skip(Duration::from_secs(1), 44_100, 2), 88_200);
+        assert_eq!(
+            samples_to_skip(Duration::from_millis(500), 48_000, 2),
+            48_000
+        );
+        assert_eq!(samples_to_skip(Duration::from_secs(2), 44_100, 1), 88_200);
+        assert_eq!(samples_to_skip(Duration::ZERO, 44_100, 2), 0);
+        // A sub-sample duration floors to zero instead of rounding up.
+        assert_eq!(samples_to_skip(Duration::from_nanos(1), 44_100, 2), 0);
+    }
+
+    #[test]
+    fn samples_to_skip_saturates_past_the_end() {
+        // Far beyond any real file: must saturate, never wrap or panic.
+        assert_eq!(samples_to_skip(Duration::MAX, 192_000, 8), u64::MAX);
+    }
+
+    #[test]
+    fn samples_to_skip_handles_degenerate_stream_properties() {
+        assert_eq!(samples_to_skip(Duration::from_secs(3), 0, 2), 0);
+        assert_eq!(samples_to_skip(Duration::from_secs(3), 44_100, 0), 0);
+    }
+
+    #[test]
+    fn clamp_seek_target_saturates_at_known_duration() {
+        let total = Duration::from_secs(42);
+        assert_eq!(
+            clamp_seek_target(Duration::from_secs(10), Some(total)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(clamp_seek_target(Duration::from_secs(60), Some(total)), total);
+        assert_eq!(
+            clamp_seek_target(Duration::from_secs(60), None),
+            Duration::from_secs(60)
+        );
+    }
+
+    /// Builds a tiny silent 16-bit PCM WAV in memory, with no external files.
+    fn silent_wav(sample_rate: u32, channels: u16, frames: u32) -> Vec<u8> {
+        let bits_per_sample: u16 = 16;
+        let block_align = channels * bits_per_sample / 8;
+        let byte_rate = sample_rate * block_align as u32;
+        let data_len = frames * block_align as u32;
+
+        let mut wav = Vec::with_capacity(44 + data_len as usize);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&block_align.to_le_bytes());
+        wav.extend_from_slice(&bits_per_sample.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.resize(44 + data_len as usize, 0);
+        wav
+    }
+
+    #[test]
+    fn memory_source_decodes_and_seeks_in_memory_wav() {
+        // 1 second, 8 kHz, stereo => 8000 frames / 16000 interleaved samples.
+        let mut source = MemorySource::from_bytes(Arc::new(silent_wav(8_000, 2, 8_000)))
+            .expect("in-memory wav should decode");
+        assert_eq!(source.channels(), 2);
+        assert_eq!(source.sample_rate(), 8_000);
+        assert_eq!(source.total_duration(), Some(Duration::from_secs(1)));
+
+        // Native WAV seek: half a second leaves half the samples.
+        assert!(source.try_seek(Duration::from_millis(500)).is_ok());
+        assert_eq!(source.count(), 8_000);
+    }
+
+    #[test]
+    fn memory_source_seek_past_end_saturates() {
+        let mut source = MemorySource::from_bytes(Arc::new(silent_wav(8_000, 2, 8_000)))
+            .expect("in-memory wav should decode");
+        assert!(source.try_seek(Duration::from_secs(5)).is_ok());
+        assert_eq!(source.next(), None);
+    }
 }

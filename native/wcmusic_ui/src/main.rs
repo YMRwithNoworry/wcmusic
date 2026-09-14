@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio_player;
+mod hotkey;
 mod lyrics;
 mod lyrics_window;
 mod settings;
@@ -19,8 +20,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Pixels, Point, Render, SharedString,
-    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, div, img,
-    point, prelude::*, px, size,
+    Subscription, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
+    div, img, point, prelude::*, px, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -29,10 +30,11 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
+use crate::hotkey::{HotKeyAction, HotKeyManager};
 use crate::lyrics::{
-    LyricLine, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics,
+    LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics,
 };
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, HotKeySettings};
 
 const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
@@ -198,6 +200,8 @@ struct MusicApp {
     is_playing: bool,
     show_now_playing: bool,
     volume: f32,
+    /// 静音前的音量，用于取消静音。
+    muted_volume: Option<f32>,
     progress_slider: Option<Entity<SliderState>>,
     volume_slider: Option<Entity<SliderState>>,
     seeking_progress: bool,
@@ -232,6 +236,23 @@ struct MusicApp {
     lyric_lines_error: Option<SharedString>,
     /// 歌词对应的歌曲标识，避免重复请求。
     lyric_lines_key: Option<String>,
+    /// 专享模式歌词滚动动画的起点（行号，可能带小数）。
+    lyric_scroll_from: f32,
+    /// 专享模式歌词滚动动画的进度，0.0..=1.0。
+    lyric_scroll_progress: f32,
+    /// 专享模式歌词是否正在缓动滚动。
+    lyric_scroll_animating: bool,
+    /// 上一次已知的当前行索引，用来检测歌词行切换。
+    lyric_scroll_index: Option<usize>,
+    /// 专享模式歌词的逐帧刷新任务是否在运行。
+    lyric_scroll_ticking: bool,
+    /// 全局快捷键设置，与 `hotkey_manager` 保持一致。
+    hotkeys: HotKeySettings,
+    hotkey_manager: Option<Arc<HotKeyManager>>,
+    /// 正在等待用户按下新快捷键的动作。
+    capturing_hotkey: Option<HotKeyAction>,
+    /// 捕获快捷键用的全局按键观察者。
+    hotkey_observer: Option<Subscription>,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
@@ -256,6 +277,7 @@ impl MusicApp {
             is_playing: false,
             show_now_playing: false,
             volume: 0.8,
+            muted_volume: None,
             progress_slider: None,
             volume_slider: None,
             seeking_progress: false,
@@ -286,6 +308,15 @@ impl MusicApp {
             lyric_lines_loading: false,
             lyric_lines_error: None,
             lyric_lines_key: None,
+            lyric_scroll_from: 0.0,
+            lyric_scroll_progress: 1.0,
+            lyric_scroll_animating: false,
+            lyric_scroll_index: None,
+            lyric_scroll_ticking: false,
+            hotkeys: settings.hotkeys.clone(),
+            hotkey_manager: None,
+            capturing_hotkey: None,
+            hotkey_observer: None,
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
@@ -307,6 +338,7 @@ impl MusicApp {
             dark_theme: self.dark_theme,
             lyrics_enabled: self.lyrics_enabled,
             lyrics: self.lyrics.clone(),
+            hotkeys: self.hotkeys.clone(),
             use_network_proxy: self.use_network_proxy,
         }
     }
@@ -1013,6 +1045,7 @@ impl MusicApp {
             self.lyric_lines.clear();
             self.lyric_lines_error = None;
             self.lyric_lines_key = None;
+            self.reset_lyric_scroll();
             if let Some(overlay) = &self.lyrics_overlay {
                 overlay.update(cx, |overlay, cx| overlay.set_lyrics(Vec::new(), cx));
             }
@@ -1040,6 +1073,8 @@ impl MusicApp {
                     Ok(lines) => {
                         this.lyric_lines_error = None;
                         this.lyric_lines = lines.clone();
+                        // 歌词被整段替换：重置滚动状态，下一次直接对齐到当前行。
+                        this.reset_lyric_scroll();
                         if let Some(overlay) = &this.lyrics_overlay {
                             overlay
                                 .update(cx, |overlay, cx| overlay.set_lyrics(lines, cx));
@@ -1048,6 +1083,7 @@ impl MusicApp {
                     Err(error) => {
                         this.lyric_lines.clear();
                         this.lyric_lines_error = Some(error.clone().into());
+                        this.reset_lyric_scroll();
                         if let Some(overlay) = &this.lyrics_overlay {
                             overlay.update(cx, |overlay, cx| overlay.set_message(error, cx));
                         }
@@ -1178,6 +1214,8 @@ impl MusicApp {
         self.is_playing = false;
         self.elapsed_ms = 0;
         self.seeking_progress = false;
+        // 切歌时旧歌词还没被替换：先清空滚动动画，避免在新歌词到来前乱滚。
+        self.reset_lyric_scroll();
         let source_label = match track.source {
             TrackSource::Kw => OnlineSearchChannel::Kuwo.label(),
             TrackSource::Kg => OnlineSearchChannel::Kugou.label(),
@@ -1407,6 +1445,109 @@ impl MusicApp {
         self.lyrics.offset_ms
     }
 
+    // ---- 专享模式歌词滚动动画 ----
+
+    /// 屏幕上当前停留的（可能是小数的）行号，动画中会在两行之间插值。
+    fn displayed_lyric_position(&self) -> f32 {
+        if self.lyric_scroll_animating {
+            lyric_scroll_position(
+                self.lyric_scroll_from,
+                self.target_lyric_position(),
+                self.lyric_scroll_progress,
+            )
+        } else {
+            self.target_lyric_position()
+        }
+    }
+
+    /// 当前行在歌词列表里的目标位置。
+    fn target_lyric_position(&self) -> f32 {
+        self.lyric_scroll_index
+            .map(|index| index as f32)
+            .unwrap_or(0.0)
+    }
+
+    /// 切歌或歌词重新加载时调用：清空滚动状态，下一次直接对齐到目标行，不做动画。
+    fn reset_lyric_scroll(&mut self) {
+        self.lyric_scroll_from = 0.0;
+        self.lyric_scroll_progress = 1.0;
+        self.lyric_scroll_animating = false;
+        self.lyric_scroll_index = None;
+    }
+
+    /// 检测当前歌词行是否变化；变化时从屏幕上的当前位置缓动到新行。
+    /// 首次出现 / 歌词被替换 / 关闭动画时直接对齐，不产生滚动。
+    fn update_lyric_scroll(&mut self, cx: &mut Context<Self>) {
+        let target = self.current_lyric_index();
+        // 用户把动画关掉时，正在进行中的滚动也立刻停下并对齐到目标行。
+        if self.lyric_scroll_animating && self.lyrics.animation == LyricsAnimation::Off {
+            self.lyric_scroll_index = target;
+            self.lyric_scroll_from = self.target_lyric_position();
+            self.lyric_scroll_progress = 1.0;
+            self.lyric_scroll_animating = false;
+            return;
+        }
+        if target == self.lyric_scroll_index {
+            return;
+        }
+        let previous = self.lyric_scroll_index;
+        // 先记录切换前屏幕上停留的位置，动画从这里滚向新行。
+        let from = self.displayed_lyric_position();
+        self.lyric_scroll_index = target;
+        let animate =
+            previous.is_some() && target.is_some() && self.lyrics.animation != LyricsAnimation::Off;
+        if animate {
+            self.lyric_scroll_from = from;
+            self.lyric_scroll_progress = 0.0;
+            self.lyric_scroll_animating = true;
+            self.ensure_lyric_scroll_ticker(cx);
+        } else {
+            self.lyric_scroll_from = self.target_lyric_position();
+            self.lyric_scroll_progress = 1.0;
+            self.lyric_scroll_animating = false;
+        }
+    }
+
+    /// 保证专享模式的逐帧刷新任务在运行，直到滚动动画结束。
+    fn ensure_lyric_scroll_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.lyric_scroll_ticking {
+            return;
+        }
+        self.lyric_scroll_ticking = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(LYRIC_SCROLL_FRAME_MILLIS))
+                    .await;
+                let keep_going = this
+                    .update(cx, |this, cx| this.tick_lyric_scroll(cx))
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// 推进一帧滚动动画，返回动画是否还要继续。
+    fn tick_lyric_scroll(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.lyric_scroll_animating {
+            self.lyric_scroll_progress = (self.lyric_scroll_progress
+                + LYRIC_SCROLL_FRAME_MILLIS as f32 / 1000.0 / LYRIC_SCROLL_SECONDS)
+                .min(1.0);
+            if self.lyric_scroll_progress >= 1.0 {
+                self.lyric_scroll_animating = false;
+            }
+        }
+        cx.notify();
+        let keep_going = self.lyric_scroll_animating;
+        if !keep_going {
+            self.lyric_scroll_ticking = false;
+        }
+        keep_going
+    }
+
     fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -1417,15 +1558,20 @@ impl MusicApp {
                     if !this.is_playing {
                         return false;
                     }
-                    if let Some(position) =
-                        this.audio_player.as_ref().and_then(AudioPlayer::position)
-                    {
-                        this.elapsed_ms = position.as_millis() as u64;
-                        if let Some(row) = this.current_row()
-                            && row.track.duration_ms > 0
-                            && this.elapsed_ms >= row.track.duration_ms
+                    // 拖动进度条时不能再用播放位置覆盖 `elapsed_ms`：否则 250ms 的
+                    // 计时器会把拖动值拽回真实播放位置，进度条和左侧时间会跳回去
+                    // （跨过 10 分钟等位数变化时特别明显）。
+                    if !this.seeking_progress {
+                        if let Some(position) =
+                            this.audio_player.as_ref().and_then(AudioPlayer::position)
                         {
-                            this.is_playing = false;
+                            this.elapsed_ms = position.as_millis() as u64;
+                            if let Some(row) = this.current_row()
+                                && row.track.duration_ms > 0
+                                && this.elapsed_ms >= row.track.duration_ms
+                            {
+                                this.is_playing = false;
+                            }
                         }
                     }
                     this.sync_lyrics_playback(cx);
@@ -1500,6 +1646,193 @@ impl MusicApp {
         self.fetching
             .as_ref()
             .is_some_and(|fetching| &fetching.row == row)
+    }
+
+    // ---- 全局快捷键 ----
+
+    /// 按当前设置重新注册全局快捷键，并汇报注册失败的原因。
+    fn apply_hotkeys(&mut self, cx: &mut Context<Self>) {
+        self.hotkey_manager = None;
+        self.persist_settings();
+        if !self.hotkeys.enabled {
+            self.notice = "全局快捷键：已关闭".into();
+            cx.notify();
+            return;
+        }
+        let manager = HotKeyManager::new(&self.hotkeys.bindings());
+        let Some(manager) = manager else {
+            self.notice = "全局快捷键：注册失败，暂不支持当前系统".into();
+            cx.notify();
+            return;
+        };
+        let errors = manager.errors();
+        self.notice = if errors.is_empty() {
+            format!("全局快捷键已生效（{} 项）", self.hotkeys.bindings().len()).into()
+        } else {
+            format!(
+                "有 {} 个快捷键注册失败：{}",
+                errors.len(),
+                errors
+                    .first()
+                    .map(|(_, reason)| reason.clone())
+                    .unwrap_or_default()
+            )
+            .into()
+        };
+        self.hotkey_manager = Some(Arc::new(manager));
+        cx.notify();
+    }
+
+    fn ensure_hotkeys(&mut self, cx: &mut Context<Self>) {
+        if self.hotkey_observer.is_none() {
+            // 录制快捷键时靠全局按键观察者接住按键（不依赖焦点落在哪个控件上）。
+            let subscription = cx.observe_keystrokes(|this, event, _window, cx| {
+                this.handle_capture_keystroke(&event.keystroke.clone(), cx);
+            });
+            self.hotkey_observer = Some(subscription);
+        }
+        if self.hotkeys.enabled && self.hotkey_manager.is_none() {
+            self.apply_hotkeys(cx);
+        }
+    }
+
+    fn set_hotkey_binding(
+        &mut self,
+        action: HotKeyAction,
+        binding: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        match binding {
+            Some(binding) => {
+                // 同一个快捷键不能绑到两个动作上。
+                for other in HotKeyAction::ALL {
+                    if other != action && self.hotkeys.binding(other) == binding {
+                        self.notice = format!(
+                            "「{}」已经使用了 {}",
+                            other.label(),
+                            crate::hotkey::binding_label(&binding)
+                        )
+                        .into();
+                        cx.notify();
+                        return;
+                    }
+                }
+                self.hotkeys.set_binding(action, binding.clone());
+                self.notice =
+                    format!("{}：{}", action.label(), crate::hotkey::binding_label(&binding)).into();
+            }
+            None => {
+                self.hotkeys.set_binding(action, String::new());
+                self.notice = format!("{}：已清除", action.label()).into();
+            }
+        }
+        self.capturing_hotkey = None;
+        self.apply_hotkeys(cx);
+    }
+
+    /// 进入快捷键录制状态：先注销全局快捷键，否则新组合会被系统截走。
+    fn begin_hotkey_capture(
+        &mut self,
+        action: HotKeyAction,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hotkey_manager = None;
+        self.capturing_hotkey = Some(action);
+        self.notice = format!("请按下「{}」的新快捷键（Esc 取消，Backspace 清除）", action.label())
+            .into();
+        cx.notify();
+    }
+
+    /// 录制中的按键处理：Esc 取消，Backspace/Delete 清除，其余作为新快捷键。
+    fn handle_capture_keystroke(&mut self, keystroke: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let Some(action) = self.capturing_hotkey else {
+            return;
+        };
+        let key = keystroke.key.to_ascii_lowercase();
+        match key.as_str() {
+            "escape" => self.cancel_hotkey_capture(cx),
+            "backspace" | "delete" => self.set_hotkey_binding(action, None, cx),
+            // 只按下修饰键时继续等待真正的按键。
+            "control" | "alt" | "shift" | "win" | "cmd" | "super" | "platform" | "fn" | "" => {}
+            _ => {
+                let binding = keystroke.unparse();
+                if let Err(reason) = crate::hotkey::binding_to_vk(&binding) {
+                    self.notice = reason.into();
+                    cx.notify();
+                    return;
+                }
+                self.set_hotkey_binding(action, Some(binding), cx);
+            }
+        }
+    }
+
+    fn cancel_hotkey_capture(&mut self, cx: &mut Context<Self>) {
+        self.capturing_hotkey = None;
+        self.notice = "已取消快捷键设置".into();
+        self.apply_hotkeys(cx);
+    }
+
+    fn toggle_hotkeys(&mut self, cx: &mut Context<Self>) {
+        self.hotkeys.enabled = !self.hotkeys.enabled;
+        self.apply_hotkeys(cx);
+    }
+
+    fn restore_default_hotkeys(&mut self, cx: &mut Context<Self>) {
+        self.hotkeys.restore_defaults();
+        self.notice = "已恢复默认快捷键".into();
+        self.apply_hotkeys(cx);
+    }
+
+    /// 分发全局快捷键触发的动作（主界面显示/隐藏由调用方处理）。
+    fn handle_hot_key(&mut self, action: HotKeyAction, cx: &mut Context<Self>) {
+        match action {
+            HotKeyAction::Previous => self.play_offset(-1, cx),
+            HotKeyAction::Next => self.play_offset(1, cx),
+            HotKeyAction::TogglePlay => self.toggle_playback(cx),
+            HotKeyAction::VolumeUp => self.nudge_volume(0.05, cx),
+            HotKeyAction::VolumeDown => self.nudge_volume(-0.05, cx),
+            HotKeyAction::Mute => self.toggle_mute(cx),
+            HotKeyAction::SeekForward => self.nudge_seek(5, cx),
+            HotKeyAction::SeekBackward => self.nudge_seek(-5, cx),
+            HotKeyAction::ToggleLyrics => {
+                let enabled = !self.lyrics_enabled;
+                self.set_lyrics_enabled(enabled, cx);
+            }
+            HotKeyAction::ToggleWindow => {}
+        }
+    }
+
+    fn nudge_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.muted_volume = None;
+        let next = (self.volume + delta).clamp(0.0, 1.0) * 100.0;
+        self.set_volume_percent(next, cx);
+    }
+
+    fn toggle_mute(&mut self, cx: &mut Context<Self>) {
+        match self.muted_volume.take() {
+            Some(previous) => {
+                self.set_volume_percent(previous * 100.0, cx);
+                self.notice =
+                    format!("已取消静音（{}%）", (previous * 100.0).round() as u32).into();
+            }
+            None => {
+                if self.volume > 0.0 {
+                    self.muted_volume = Some(self.volume);
+                }
+                self.set_volume_percent(0.0, cx);
+                self.notice = "已静音".into();
+            }
+        }
+        cx.notify();
+    }
+
+    fn nudge_seek(&mut self, seconds: i64, cx: &mut Context<Self>) {
+        let target = (self.elapsed_ms as i64 + seconds * 1000).max(0);
+        self.seek_to_ms(target as u64, cx);
+        let label = if seconds >= 0 { "快进" } else { "快退" };
+        self.notice = format!("{label} {} 秒", seconds.abs()).into();
+        cx.notify();
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1750,18 +2083,25 @@ impl MusicApp {
 
         let show_translation = self.lyrics.show_translation;
         let current = self.current_lyric_index().unwrap_or(0);
+        // 动画中的小数行号：同时决定面板平移与每行歌词的强调程度。
+        let displayed_position = self.displayed_lyric_position();
         let accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
         let total = self.lyric_lines.len() as f32 * LYRIC_ROW_HEIGHT;
         // 让当前行的中心落在面板中心：整体居中后再平移。
-        let shift = total / 2.0 - (current as f32 * LYRIC_ROW_HEIGHT + LYRIC_ROW_HEIGHT / 2.0);
+        // 用缓动中的小数行号，动画结束后与原来的整数行号位置完全一致。
+        let shift = total / 2.0 - (displayed_position * LYRIC_ROW_HEIGHT + LYRIC_ROW_HEIGHT / 2.0);
 
         let mut rows = div().relative().w_full().h(px(total));
         for (index, line) in self.lyric_lines.iter().enumerate() {
             let is_current = index == current;
+            // 离动画位置越远越淡、越小：当前行最亮，邻居依次退到背景。
+            let emphasis = lyric_emphasis(index, displayed_position);
+            let opacity = LYRIC_MIN_OPACITY + (1.0 - LYRIC_MIN_OPACITY) * emphasis;
+            let font_size = LYRIC_BASE_TEXT_SIZE * (0.94 + 0.14 * emphasis);
             let time_ms = line.time_ms;
             let mut text = div()
                 .whitespace_nowrap()
-                .text_lg()
+                .text_size(px(font_size))
                 .child(line.text.clone());
             text = if is_current {
                 text.font_weight(gpui::FontWeight::SEMIBOLD).text_color(accent)
@@ -1800,6 +2140,7 @@ impl MusicApp {
                     .top(px(index as f32 * LYRIC_ROW_HEIGHT))
                     .w_full()
                     .h(px(LYRIC_ROW_HEIGHT))
+                    .opacity(opacity)
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.seek_to_ms(time_ms, cx)))
                     .child(column),
@@ -2071,6 +2412,8 @@ impl MusicApp {
                             this.refresh_rankings(cx);
                         } else if action == "重置歌词位置" {
                             this.reset_lyrics_position(cx);
+                        } else if action == "恢复默认" {
+                            this.restore_default_hotkeys(cx);
                         } else {
                             this.announce(action, cx);
                         }
@@ -2587,7 +2930,7 @@ impl MusicApp {
 
     fn settings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
-        div()
+        let mut content = div()
             .flex()
             .flex_col()
             .gap_4()
@@ -2872,6 +3215,116 @@ impl MusicApp {
                 .id("setting-proxy")
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_network_proxy(cx))),
             )
+            .child(self.section_title("快捷键", "恢复默认", cx))
+            .child(
+                setting_row(
+                    "全局快捷键",
+                    if self.hotkeys.enabled {
+                        "已开启"
+                    } else {
+                        "已关闭"
+                    },
+                    "开启后即使在其它程序里也能用快捷键控制播放",
+                    p,
+                )
+                .id("setting-hotkeys")
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_hotkeys(cx))),
+            );
+
+        for action in HotKeyAction::ALL {
+            let binding = self.hotkeys.binding(action).to_owned();
+            let capturing = self.capturing_hotkey == Some(action);
+            content = content.child(self.hotkey_row(action, &binding, capturing, cx));
+        }
+
+        content
+    }
+
+    /// 一行快捷键设置：点右侧的键位开始录制，点「清除」解绑。
+    fn hotkey_row(
+        &self,
+        action: HotKeyAction,
+        binding: &str,
+        capturing: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let p = Palette::new(cx);
+        let value = if capturing {
+            "请按下新的快捷键…".to_owned()
+        } else {
+            crate::hotkey::binding_label(binding)
+        };
+        let action_for_click = action;
+        let has_binding = !binding.trim().is_empty();
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .p(px(16.0))
+            .rounded_lg()
+            .bg(if capturing { p.accent } else { p.surface })
+            .border_1()
+            .border_color(if capturing { p.primary } else { p.border })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(action.label()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(if capturing {
+                                "Esc 取消，Backspace 清除"
+                            } else {
+                                "点击右侧键位即可重新录制"
+                            }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .when(has_binding && !capturing, |this| {
+                        this.child(
+                            div()
+                                .id(("hotkey-clear", action.position()))
+                                .text_xs()
+                                .text_color(p.muted)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_hotkey_binding(action_for_click, None, cx)
+                                }))
+                                .child("清除"),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id(("hotkey-binding", action.position()))
+                            .px(px(10.0))
+                            .py(px(5.0))
+                            .rounded_md()
+                            .bg(if capturing { p.primary } else { p.track })
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(if capturing {
+                                p.primary_foreground
+                            } else {
+                                p.foreground
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.begin_hotkey_capture(action_for_click, window, cx)
+                            }))
+                            .child(value),
+                    ),
+            )
     }
 
     fn player_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2984,6 +3437,15 @@ impl MusicApp {
                     .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
             )
             .child(
+                // 已播放时间：固定宽度的对齐槽，数字位数变化不会推移进度条。
+                div().w(px(46.0)).flex_shrink_0().flex().justify_end().child(
+                    div()
+                        .text_xs()
+                        .text_color(p.muted)
+                        .child(format_playback_time(self.elapsed_ms)),
+                ),
+            )
+            .child(
                 div().flex_1().h(px(20.0)).flex().items_center().child(
                     Slider::new(
                         self.progress_slider
@@ -2994,16 +3456,34 @@ impl MusicApp {
                 ),
             )
             .child(
+                // 总时长同样占固定宽度，拖动时进度条两侧都不会移动。
+                div().w(px(46.0)).flex_shrink_0().flex().child(
+                    div()
+                        .text_xs()
+                        .text_color(p.muted)
+                        .child(match row.map(|row| row.track.duration_ms) {
+                            Some(duration_ms) if duration_ms > 0 => {
+                                format_playback_time(duration_ms)
+                            }
+                            _ => "--:--".to_owned(),
+                        }),
+                ),
+            )
+            .child(
                 div()
                     .w(px(180.0))
                     .flex()
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(p.muted)
-                            .child(format!("{}%", (self.volume * 100.0).round() as u32)),
+                        // 固定宽度的数字槽：音量在 100% 与 9% 之间变化时位数不同，
+                        // 不固定宽度就会把右边的滑杆推来推去。
+                        div().w(px(40.0)).flex().justify_end().child(
+                            div()
+                                .text_xs()
+                                .text_color(p.muted)
+                                .child(format!("{}%", (self.volume * 100.0).round() as u32)),
+                        ),
                     )
                     .child(
                         div().w(px(120.0)).h(px(20.0)).flex().items_center().child(
@@ -3024,6 +3504,10 @@ impl Render for MusicApp {
         self.initialize_search_input(window, cx);
         self.ensure_player_sliders(window, cx);
         self.sync_player_sliders(window, cx);
+        // 专享模式下检测当前歌词行是否变化，必要时启动缓动滚动动画。
+        if self.show_now_playing {
+            self.update_lyric_scroll(cx);
+        }
         let p = Palette::new(cx);
         let page_content = self.content(cx);
         let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
@@ -3032,7 +3516,7 @@ impl Render for MusicApp {
         } else {
             library_scroll.overflow_y_scroll().child(page_content)
         };
-        div()
+        let root = div()
             .size_full()
             .flex()
             .bg(p.background)
@@ -3048,7 +3532,8 @@ impl Render for MusicApp {
                     .p(px(30.0))
                     .child(library_scroll)
                     .child(self.player_bar(cx)),
-            )
+            );
+        root
     }
 }
 
@@ -3169,6 +3654,34 @@ fn setting_row(
 
 /// 专享模式下每行歌词的高度，用来让当前行稳定地停在面板中间。
 const LYRIC_ROW_HEIGHT: f32 = 56.0;
+/// 专享模式歌词行切换的缓出滚动时长（秒），参考 Apple Music 的节奏。
+const LYRIC_SCROLL_SECONDS: f32 = 0.3;
+/// 专享模式歌词滚动动画的帧间隔（毫秒），约 60fps。
+const LYRIC_SCROLL_FRAME_MILLIS: u64 = 16;
+/// 专享模式歌词行上下淡出的距离（行数）：离动画位置多远后完全淡出。
+const LYRIC_FADE_LINES: f32 = 3.0;
+/// 专享模式歌词的基础字号（像素），与 `text_lg`（1.125rem）对齐。
+const LYRIC_BASE_TEXT_SIZE: f32 = 18.0;
+/// 非当前行的最低不透明度，避免远处歌词完全消失。
+const LYRIC_MIN_OPACITY: f32 = 0.25;
+
+/// 缓出曲线（cubic ease-out），让歌词切换时先快后慢地停下。
+fn lyric_ease_out(progress: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    1.0 - (1.0 - progress).powi(3)
+}
+
+/// 在起止行号之间按缓出曲线插值，得到屏幕上停留的（可能带小数的）行号。
+/// 进度为 0 时返回起点，为 1 时精确返回终点，保证动画结束后与原位置一致。
+fn lyric_scroll_position(from: f32, to: f32, progress: f32) -> f32 {
+    from + (to - from) * lyric_ease_out(progress)
+}
+
+/// 歌词行离动画位置越远，强调程度越低（1.0 表示完全强调）。
+fn lyric_emphasis(index: usize, displayed_position: f32) -> f32 {
+    let distance = (index as f32 - displayed_position).abs();
+    (1.0 - distance / LYRIC_FADE_LINES).clamp(0.0, 1.0)
+}
 
 /// 专享模式的歌曲信息行：灰色标签 + 值。
 fn now_playing_info(
@@ -3218,6 +3731,13 @@ fn fetching_badge(label: impl Into<SharedString>, p: Palette) -> gpui::AnyElemen
         .child(Spinner::new().with_size(px(12.0)).color(p.primary))
         .child(div().text_xs().text_color(p.primary).child(label.into()))
         .into_any_element()
+}
+
+/// 播放进度的时间文本：分钟补零，配合播放条上的固定宽度时间槽，
+/// 数字位数变化时不会把进度条推走。
+fn format_playback_time(ms: u64) -> String {
+    let seconds = ms / 1000;
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
 /// 列表行里的「获取中」文字提示。
@@ -3304,6 +3824,7 @@ fn main() {
             let view = cx.new(|_| MusicApp::new());
             view.update(cx, |this, cx| {
                 this.ensure_lyrics_store(cx);
+                this.ensure_hotkeys(cx);
             });
             let dark_theme = view.read(cx).dark_theme;
             let lyrics_enabled = view.read(cx).lyrics_enabled;
@@ -3341,6 +3862,46 @@ fn main() {
                 .expect("failed to open WCMusic GPUI window");
             if lyrics_enabled {
                 view.update(cx, |this, cx| this.open_lyrics_window(cx));
+            }
+
+            // 全局快捷键：轮询管理器的事件通道，按当前设置自动切换管理器。
+            {
+                let window_handle: AnyWindowHandle = window_handle.into();
+                let view_for_hotkeys = view.clone();
+                cx.spawn(async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(60))
+                            .await;
+                        let events = view_for_hotkeys.read_with(cx, |this, _| {
+                            this.hotkey_manager
+                                .as_ref()
+                                .map(|manager| manager.events())
+                        });
+                        let Some(events) = events else {
+                            continue;
+                        };
+                        while let Some(action) = events.try_recv() {
+                            if action == HotKeyAction::ToggleWindow {
+                                let _ = window_handle.update(cx, |_, window, _| {
+                                    let Some(hwnd) = tray::native_window_handle(window) else {
+                                        return;
+                                    };
+                                    if tray::window_visible(hwnd) {
+                                        tray::hide_window(hwnd);
+                                    } else {
+                                        tray::show_window(hwnd);
+                                        window.activate_window();
+                                    }
+                                });
+                            } else {
+                                let _ = view_for_hotkeys
+                                    .update(cx, |this, cx| this.handle_hot_key(action, cx));
+                            }
+                        }
+                    }
+                })
+                .detach();
             }
 
             if let Some(tray) = tray {
@@ -3515,5 +4076,38 @@ mod tests {
         assert!(app.install_imported_source("1 + 1;".into()).is_err());
         assert!(app.imported_sources.is_empty());
         assert!(app.source_script.is_none());
+    }
+
+    #[test]
+    fn lyric_scroll_position_hits_both_endpoints() {
+        // 动画起点与终点必须精确落回整数行号，保证结束后几何位置不变。
+        assert!((lyric_scroll_position(2.0, 5.0, 0.0) - 2.0).abs() < 1e-5);
+        assert!((lyric_scroll_position(2.0, 5.0, 1.0) - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn lyric_scroll_position_eases_out_between_lines() {
+        // 缓出曲线：进度过半时已经跑过中点，随后逐渐变慢。
+        let middle = lyric_scroll_position(0.0, 4.0, 0.5);
+        assert!(middle > 2.0 && middle < 4.0);
+        // 单调不减，避免滚动过程来回抖动。
+        let mut previous = f32::NEG_INFINITY;
+        let mut progress = 0.0;
+        while progress <= 1.0 {
+            let position = lyric_scroll_position(0.0, 4.0, progress);
+            assert!(position >= previous);
+            previous = position;
+            progress += 0.1;
+        }
+    }
+
+    #[test]
+    fn lyric_emphasis_fades_by_distance() {
+        // 正好停在当前行时强调拉满。
+        assert!((lyric_emphasis(3, 3.0) - 1.0).abs() < 1e-5);
+        // 距离越远越淡，超过淡出距离后不再强调。
+        assert!(lyric_emphasis(4, 3.0) < lyric_emphasis(3, 3.0));
+        assert!(lyric_emphasis(5, 3.0) < lyric_emphasis(4, 3.0));
+        assert_eq!(lyric_emphasis(0, 10.0), 0.0);
     }
 }

@@ -10,6 +10,36 @@ use crate::{CoreError, SourceCapability, SourceEnvironment, SourceManifest, Sour
 
 const SCRIPT_MEMORY_LIMIT: usize = 32 * 1024 * 1024;
 const MAX_INITIALIZATION_JOBS: usize = 128;
+/// QuickJS 允许的 C 栈增长上限。
+///
+/// 必须明显小于 [`SCRIPT_THREAD_STACK`]：QuickJS 的栈溢出检查对比的是 C 栈指针，
+/// 如果上限比真实线程栈还大，深递归脚本会先冲垮线程栈（`STATUS_STACK_BUFFER_OVERRUN`，
+/// 进程无提示消失），而不是抛出可捕获的 `RangeError`。
+const SCRIPT_STACK_LIMIT: usize = 8 * 1024 * 1024;
+/// 音源脚本在独立线程上执行时预留的栈空间，给 QuickJS 留足余量。
+const SCRIPT_THREAD_STACK: usize = 24 * 1024 * 1024;
+
+/// 在带足够栈空间的独立线程上执行音源脚本。
+///
+/// QuickJS 运行时不是线程安全的，所以运行时、上下文以及所有脚本调用都只在
+/// 这个线程内创建和释放；调用方线程栈再小也不会被脚本递归冲垮。
+fn run_script_task<T, F>(task: F) -> Result<T, CoreError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, CoreError> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name("wcmusic-source".into())
+        .stack_size(SCRIPT_THREAD_STACK)
+        .spawn(task)
+        .map_err(|error| CoreError::SourceInitialization(format!("无法启动音源执行线程：{error}")))?;
+    match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err(CoreError::SourceInitialization(
+            "音源脚本执行线程异常退出".into(),
+        )),
+    }
+}
 
 pub fn parse_script_metadata(script: &str) -> Result<SourceScriptMetadata, CoreError> {
     let header = script
@@ -39,10 +69,19 @@ pub fn validate_source_script(
     environment: SourceEnvironment,
 ) -> Result<SourceManifest, CoreError> {
     let metadata = parse_script_metadata(script)?;
+    let script = script.to_owned();
+    run_script_task(move || validate_source_script_inner(&script, environment, metadata))
+}
+
+fn validate_source_script_inner(
+    script: &str,
+    environment: SourceEnvironment,
+    metadata: SourceScriptMetadata,
+) -> Result<SourceManifest, CoreError> {
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(64 * 1024 * 1024);
+    runtime.set_max_stack_size(SCRIPT_STACK_LIMIT);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, false)?;
@@ -109,10 +148,37 @@ pub fn resolve_source_url_with_proxy(
     use_proxy: bool,
 ) -> Result<String, CoreError> {
     let metadata = parse_script_metadata(script)?;
+    let script = script.to_owned();
+    let source = source.to_owned();
+    let song_id = song_id.to_owned();
+    let quality = quality.to_owned();
+    run_script_task(move || {
+        resolve_source_url_inner(
+            &script,
+            environment,
+            &source,
+            &song_id,
+            &quality,
+            use_proxy,
+            metadata,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_source_url_inner(
+    script: &str,
+    environment: SourceEnvironment,
+    source: &str,
+    song_id: &str,
+    quality: &str,
+    use_proxy: bool,
+    metadata: SourceScriptMetadata,
+) -> Result<String, CoreError> {
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
-    runtime.set_max_stack_size(64 * 1024 * 1024);
+    runtime.set_max_stack_size(SCRIPT_STACK_LIMIT);
     let context = Context::full(&runtime)
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, use_proxy)?;
@@ -528,5 +594,36 @@ new Promise((resolve) => {{
             manifest.sources.len() >= 5,
             "bundled source lost capabilities"
         );
+    }
+
+    /// GPUI 的点击回调跑在很小的主线程栈上（Windows 主线程默认约 1 MB），
+    /// 校验必须能在这种调用环境里存活。
+    #[test]
+    fn validation_survives_a_tight_caller_stack() {
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| validate_source_script(SOURCE, SourceEnvironment::Desktop))
+            .expect("spawn failed");
+        let manifest = handle.join().expect("thread panicked").unwrap();
+        assert_eq!(manifest.sources[0].key, "kw");
+    }
+
+    #[test]
+    fn deep_recursion_is_reported_instead_of_crashing() {
+        let source = format!(
+            r#"{}
+function recurse(n) {{ return n <= 0 ? 0 : recurse(n - 1) + 1; }}
+recurse(500000);
+"#,
+            SOURCE.split_once("*/").unwrap().0.to_owned() + "*/"
+        );
+
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || validate_source_script(&source, SourceEnvironment::Desktop))
+            .expect("spawn failed");
+        // 栈溢出必须变成可以上报的错误，而不是让进程消失。
+        let result = handle.join().expect("process survived, thread should not panic");
+        assert!(result.is_err(), "deep recursion should not validate");
     }
 }

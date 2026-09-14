@@ -25,9 +25,14 @@ windows-sys = { version = "0.59.0", features = [
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[build-dependencies]
+# 仅用于在 build.rs 中把应用图标（ICO，资源 ID 1）编译进 Windows 可执行文件。
+embed-resource = "3"
 
 [patch.crates-io]
 rquickjs-sys = { path = "../vendor/rquickjs-sys" }

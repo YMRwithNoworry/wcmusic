@@ -177,7 +177,14 @@ mod windows {
             icon_data.uID = TRAY_ICON_ID;
             icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
             icon_data.uCallbackMessage = TRAY_CALLBACK_MESSAGE;
-            icon_data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
+            // 优先读取当前 exe 内嵌的应用图标（资源 ID 1，由 build.rs 写入），
+            // 取不到时退回系统默认图标。
+            let embedded_icon = LoadIconW(instance, 1usize as *const u16);
+            icon_data.hIcon = if embedded_icon.is_null() {
+                LoadIconW(null_mut(), IDI_APPLICATION)
+            } else {
+                embedded_icon
+            };
             let tip = wide_string("WCMusic");
             icon_data.szTip[..tip.len()].copy_from_slice(&tip);
             if Shell_NotifyIconW(NIM_ADD, &icon_data) == 0 {
@@ -322,6 +329,10 @@ mod windows {
         }
     }
 
+    pub fn window_visible(hwnd: isize) -> bool {
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd as HWND) != 0 }
+    }
+
     pub fn show_window(hwnd: isize) {
         unsafe {
             ShowWindow(hwnd as HWND, SW_RESTORE);
@@ -414,6 +425,16 @@ pub fn hide_window(hwnd: isize) {
 
 #[cfg(not(windows))]
 pub fn hide_window(_hwnd: isize) {}
+
+#[cfg(windows)]
+pub fn window_visible(hwnd: isize) -> bool {
+    windows::window_visible(hwnd)
+}
+
+#[cfg(not(windows))]
+pub fn window_visible(_hwnd: isize) -> bool {
+    true
+}
 
 #[cfg(windows)]
 pub fn show_window(hwnd: isize) {
