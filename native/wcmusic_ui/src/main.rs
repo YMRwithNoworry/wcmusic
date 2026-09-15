@@ -2075,16 +2075,30 @@ impl MusicApp {
                     .child(self.now_playing_lyrics(cx)),
             )
             .child(
+                // 右上角返回区：按钮本身 + 一块吸收点击的留白。
+                //
+                // 下面的歌词每一行都是整行可点（点了跳转到该行）；如果这里不把
+                // 点击挡住，点偏几像素就会落到歌词行上执行 seek，表现为歌曲突然
+                // 被打断或跳回开头（看起来像重新播放）。所以这块区域自己带 id，
+                // 命中测试会停在它上面，不再穿透到歌词行。
                 div()
+                    .id("now-playing-exit")
+                    .occlude()
                     .absolute()
                     .top_0()
                     .right_0()
+                    .w(px(76.0))
+                    .h(px(60.0))
+                    .flex()
+                    .justify_end()
+                    .items_start()
+                    .p(px(6.0))
+                    .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
                     .child(
                         Button::new("close-now-playing")
                             .ghost()
-                            .small()
                             .icon(IconName::ChevronDown)
-                            .tooltip("返回")
+                            .tooltip("返回（退出专享模式）")
                             .accessibility_label("返回")
                             .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
                     ),
