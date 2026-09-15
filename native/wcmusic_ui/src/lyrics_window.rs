@@ -21,7 +21,7 @@
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetCursorPos,
         GetWindowLongPtrW, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE,
@@ -162,7 +162,8 @@ mod platform {
     }
 
     /// Toggle the always-on-top state of the lyric window.
-    pub fn set_topmost(hwnd: isize, enabled: bool) {        if hwnd == 0 {
+    pub fn set_topmost(hwnd: isize, enabled: bool) {
+        if hwnd == 0 {
             return;
         }
         unsafe {

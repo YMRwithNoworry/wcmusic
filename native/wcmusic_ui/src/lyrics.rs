@@ -97,6 +97,29 @@ fn ease_in_out(value: f32) -> f32 {
     p * p * p * (p * (p * 6.0 - 15.0) + 10.0)
 }
 
+/// 桌面歌词一次显示多少行就会淡出：与专享模式歌词的 3 行保持一致。
+const LYRIC_FADE_LINES: f32 = 3.0;
+
+/// 行与动画位置的距离 -> 强调度（0 表示完全退到背景）。
+///
+/// 与专享模式歌词一样用 smoothstep：距离线性衰减后再平滑一下，
+/// 邻行的淡出更柔和，而不是「前一行 / 后一行」分档跳变。
+fn lyric_fade(offset: f32) -> f32 {
+    let linear = (1.0 - offset.abs() / LYRIC_FADE_LINES).clamp(0.0, 1.0);
+    linear * linear * (3.0 - 2.0 * linear)
+}
+
+/// 在两个 RGB 颜色之间按强度线性插值，用于普通行 -> 当前行的连续过渡。
+fn mix_rgb(from: u32, to: u32, amount: f32) -> u32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let channel = |shift: u32| -> u32 {
+        let from = ((from >> shift) & 0xFF) as f32;
+        let to = ((to >> shift) & 0xFF) as f32;
+        ((from + (to - from) * amount).round() as u32 & 0xFF) << shift
+    };
+    channel(16) | channel(8) | channel(0)
+}
+
 fn finite_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
     if value.is_finite() {
         value.clamp(min, max)
@@ -1198,6 +1221,7 @@ impl LyricsOverlay {
         index: usize,
         size: f32,
         alpha: f32,
+        emphasis: f32,
         karaoke: bool,
         width: f32,
         padding: f32,
@@ -1208,8 +1232,13 @@ impl LyricsOverlay {
             return (div(), 0.0);
         };
         let is_current = self.current_index == Some(index);
-        let text_color = tint(style.text_color, alpha);
-        let highlight_color = tint(style.highlight_color, alpha);
+        // 与歌曲详情页一致：普通行 -> 当前行的颜色按强调度连续过渡，
+        // 当前行在开启逐字填充时由"未唱"的偏暗色填充到完整高亮色。
+        let text_color = tint(mix_rgb(style.text_color, style.highlight_color, emphasis * 0.45), alpha);
+        let highlight_color = tint(
+            mix_rgb(style.text_color, style.highlight_color, emphasis),
+            alpha,
+        );
         let stroke_color = tint(style.stroke_color, alpha * 0.9);
         let text_width =
             self.measure(window, &line.text, size, style.font_weight, &style.font_family);
@@ -1259,8 +1288,14 @@ impl LyricsOverlay {
                     translation,
                     translation_size,
                     style.font_weight.min(600.0),
-                    tint(style.text_color, alpha * 0.82),
-                    highlight_color,
+                    tint(
+                        mix_rgb(style.text_color, style.highlight_color, emphasis * 0.45),
+                        alpha * 0.82,
+                    ),
+                    tint(
+                        mix_rgb(style.text_color, style.highlight_color, emphasis),
+                        alpha * 0.82,
+                    ),
                     stroke_color,
                     style.stroke_width * 0.7,
                     translation_block_width,
@@ -1328,8 +1363,16 @@ impl LyricsOverlay {
                 } else {
                     1.0
                 };
-                let (row, row_height) =
-                    self.lyric_row(index, size * scale, 1.0, style.karaoke, width, padding, window);
+                let (row, row_height) = self.lyric_row(
+                    index,
+                    size * scale,
+                    1.0,
+                    1.0,
+                    style.karaoke,
+                    width,
+                    padding,
+                    window,
+                );
                 if row_height > 0.0 {
                     layer = layer.child(row.top(px(center_y - row_height / 2.0)));
                 }
@@ -1337,8 +1380,11 @@ impl LyricsOverlay {
             return layer.into_any_element();
         }
 
-        let first = (position.floor() as isize - 2).max(0) as usize;
-        let last = ((position.ceil() as isize + 2).max(0) as usize).min(self.lines.len() - 1);
+        // 与歌曲详情页一致：以动画位置为中心铺开一列歌词，按与它的距离
+        // 连续地淡出/缩小，当前行用高亮色。
+        let fade = LYRIC_FADE_LINES.ceil() as isize;
+        let first = (position.floor() as isize - fade).max(0) as usize;
+        let last = ((position.ceil() as isize + fade).max(0) as usize).min(self.lines.len() - 1);
         for index in first..=last {
             let offset = index as f32 - position;
             let y = center_y + offset * spacing;
@@ -1346,15 +1392,8 @@ impl LyricsOverlay {
                 continue;
             }
             let is_current = index == current;
-            let mut alpha = if is_current {
-                1.0
-            } else if index < current {
-                0.38
-            } else if index == current + 1 {
-                0.6
-            } else {
-                0.32
-            };
+            let emphasis = lyric_fade(offset);
+            let mut alpha = 0.32 + 0.68 * emphasis;
             let edge = ((y / (spacing * 1.15)).min((height - y) / (spacing * 1.15))).clamp(0.0, 1.0);
             alpha *= edge;
             let scale = if is_current && style.animation == LyricsAnimation::Scale {
@@ -1366,8 +1405,9 @@ impl LyricsOverlay {
             };
             let (row, row_height) = self.lyric_row(
                 index,
-                size * scale,
+                size * (0.86 + 0.14 * emphasis) * scale,
                 alpha,
+                emphasis,
                 is_current && style.karaoke,
                 width,
                 padding,
@@ -2051,5 +2091,27 @@ mod tests {
         // 起步与收尾都要轻，保证切行不生硬。
         assert!(ease_in_out(0.1) < 0.05);
         assert!(ease_in_out(0.9) > 0.95);
+    }
+
+    #[test]
+    fn lyric_fade_follows_distance() {
+        // 当前行强调拉满，越远越淡，超过淡出距离后完全退到背景。
+        assert_eq!(lyric_fade(0.0), 1.0);
+        assert!(lyric_fade(1.0) < 1.0 && lyric_fade(1.0) > lyric_fade(2.0));
+        assert!(lyric_fade(2.0) > lyric_fade(3.0));
+        assert_eq!(lyric_fade(3.0), 0.0);
+        assert_eq!(lyric_fade(5.0), 0.0);
+        // 对称：上一行和下一行淡出程度一致。
+        assert_eq!(lyric_fade(-1.5), lyric_fade(1.5));
+    }
+
+    #[test]
+    fn mix_rgb_interpolates_channels() {
+        assert_eq!(mix_rgb(0x000000, 0xFFFFFF, 0.0), 0x000000);
+        assert_eq!(mix_rgb(0x000000, 0xFFFFFF, 1.0), 0xFFFFFF);
+        assert_eq!(mix_rgb(0x000000, 0xFFFFFF, 0.5), 0x808080);
+        // 当前行的高亮色必须落在普通色与高亮色之间，避免跳变。
+        let mixed = mix_rgb(0x808080, 0x00C65B, 0.5);
+        assert!(mixed & 0x00FF00 > 0x80 - 1 && mixed != 0x00C65B);
     }
 }
