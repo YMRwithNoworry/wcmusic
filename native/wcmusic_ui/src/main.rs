@@ -2145,7 +2145,6 @@ impl MusicApp {
         }
 
         let show_translation = self.lyrics.show_translation;
-        let current = self.current_lyric_index().unwrap_or(0);
         // 动画中的小数行号：同时决定面板平移与每行歌词的强调程度。
         let displayed_position = self.displayed_lyric_position();
         let accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
@@ -2156,21 +2155,19 @@ impl MusicApp {
 
         let mut rows = div().relative().w_full().h(px(total));
         for (index, line) in self.lyric_lines.iter().enumerate() {
-            let is_current = index == current;
             // 离动画位置越远越淡、越小：当前行最亮，邻居依次退到背景。
+            // 颜色/字号/不透明度都按强调度连续插值，避免出现"换行瞬间跳色"的硬切。
             let emphasis = lyric_emphasis(index, displayed_position);
             let opacity = LYRIC_MIN_OPACITY + (1.0 - LYRIC_MIN_OPACITY) * emphasis;
             let font_size = LYRIC_BASE_TEXT_SIZE * (0.94 + 0.14 * emphasis);
+            let text_color = mix_hsla(p.muted, accent, emphasis);
             let time_ms = line.time_ms;
-            let mut text = div()
+            let text = div()
                 .whitespace_nowrap()
                 .text_size(px(font_size))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(text_color)
                 .child(line.text.clone());
-            text = if is_current {
-                text.font_weight(gpui::FontWeight::SEMIBOLD).text_color(accent)
-            } else {
-                text.text_color(p.muted)
-            };
             let mut column = div()
                 .flex()
                 .flex_col()
@@ -2189,8 +2186,8 @@ impl MusicApp {
                     column = column.child(
                         div()
                             .text_sm()
-                            .text_color(if is_current { accent } else { p.muted })
-                            .opacity(if is_current { 0.9 } else { 0.7 })
+                            .text_color(mix_hsla(p.muted, accent, emphasis))
+                            .opacity(0.7 + 0.2 * emphasis)
                             .child(SharedString::from(translation.to_owned())),
                     );
                 }
@@ -3722,8 +3719,8 @@ fn setting_row(
 
 /// 专享模式下每行歌词的高度，用来让当前行稳定地停在面板中间。
 const LYRIC_ROW_HEIGHT: f32 = 66.0;
-/// 专享模式歌词行切换的缓出滚动时长（秒），参考 Apple Music 的节奏。
-const LYRIC_SCROLL_SECONDS: f32 = 0.3;
+/// 专享模式歌词行切换的滚动时长（秒）。稍长一点、配合缓入缓出，收尾更从容。
+const LYRIC_SCROLL_SECONDS: f32 = 0.42;
 /// 专享模式歌词行上下淡出的距离（行数）：离动画位置多远后完全淡出。
 const LYRIC_FADE_LINES: f32 = 3.0;
 /// 专享模式歌词的基础字号（像素）。
@@ -3731,13 +3728,16 @@ const LYRIC_BASE_TEXT_SIZE: f32 = 22.0;
 /// 非当前行的最低不透明度，避免远处歌词完全消失。
 const LYRIC_MIN_OPACITY: f32 = 0.25;
 
-/// 缓出曲线（cubic ease-out），让歌词切换时先快后慢地停下。
-fn lyric_ease_out(progress: f32) -> f32 {
-    let progress = progress.clamp(0.0, 1.0);
-    1.0 - (1.0 - progress).powi(3)
+/// 缓入缓出的五次曲线（smootherstep）。
+///
+/// 原来的三次缓出起步就是最高速，视觉上"一激灵"；这条曲线首尾的速度与加速度
+/// 都为 0 —— 起步柔和、收尾有一段很长的滑停，更接近 Apple Music 那种高级感。
+fn lyric_ease(progress: f32) -> f32 {
+    let p = progress.clamp(0.0, 1.0);
+    p * p * p * (p * (p * 6.0 - 15.0) + 10.0)
 }
 
-/// 由真实经过时间换算动画进度，帧率高低都不影响 0.3s 的总时长。
+/// 由真实经过时间换算动画进度，帧率高低都不影响总时长。
 fn lyric_scroll_progress_at(elapsed_seconds: f32, duration_seconds: f32) -> f32 {
     if duration_seconds <= 0.0 {
         return 1.0;
@@ -3745,17 +3745,32 @@ fn lyric_scroll_progress_at(elapsed_seconds: f32, duration_seconds: f32) -> f32 
     (elapsed_seconds / duration_seconds).clamp(0.0, 1.0)
 }
 
+/// 在当前行与普通行之间按强调度插值颜色，让高亮随滚动淡入而不是瞬间跳变。
+fn mix_hsla(from: Hsla, to: Hsla, amount: f32) -> Hsla {
+    let amount = amount.clamp(0.0, 1.0);
+    let mut base = from;
+    // `blend` 按 alpha 做 source-over，这里把 to 的 alpha 当作插值系数。
+    base.a = 1.0;
+    let mut overlay = to;
+    overlay.a = amount;
+    let mut mixed = base.blend(overlay);
+    mixed.a = from.a + (to.a - from.a) * amount;
+    mixed
+}
 
-/// 在起止行号之间按缓出曲线插值，得到屏幕上停留的（可能带小数的）行号。
+
+/// 在起止行号之间按缓动曲线插值，得到屏幕上停留的（可能带小数的）行号。
 /// 进度为 0 时返回起点，为 1 时精确返回终点，保证动画结束后与原位置一致。
 fn lyric_scroll_position(from: f32, to: f32, progress: f32) -> f32 {
-    from + (to - from) * lyric_ease_out(progress)
+    from + (to - from) * lyric_ease(progress)
 }
 
 /// 歌词行离动画位置越远，强调程度越低（1.0 表示完全强调）。
+/// 用 smoothstep 收一下，让边缘的行淡出得更柔和。
 fn lyric_emphasis(index: usize, displayed_position: f32) -> f32 {
     let distance = (index as f32 - displayed_position).abs();
-    (1.0 - distance / LYRIC_FADE_LINES).clamp(0.0, 1.0)
+    let linear = (1.0 - distance / LYRIC_FADE_LINES).clamp(0.0, 1.0);
+    linear * linear * (3.0 - 2.0 * linear)
 }
 
 /// 专享模式的歌曲信息行：灰色标签 + 值。
@@ -4239,10 +4254,16 @@ mod tests {
 
     #[test]
     fn lyric_scroll_progress_follows_elapsed_time() {
-        // 进度只跟真实时间有关：帧率高低都不会把 0.3s 的动画拖长或缩短。
+        // 进度只跟真实时间有关：帧率高低都不会把动画时长拖长或缩短。
         assert_eq!(lyric_scroll_progress_at(0.0, LYRIC_SCROLL_SECONDS), 0.0);
-        assert!((lyric_scroll_progress_at(0.15, LYRIC_SCROLL_SECONDS) - 0.5).abs() < 1e-5);
-        assert_eq!(lyric_scroll_progress_at(0.3, LYRIC_SCROLL_SECONDS), 1.0);
+        assert!(
+            (lyric_scroll_progress_at(LYRIC_SCROLL_SECONDS / 2.0, LYRIC_SCROLL_SECONDS) - 0.5).abs()
+                < 1e-5
+        );
+        assert_eq!(
+            lyric_scroll_progress_at(LYRIC_SCROLL_SECONDS, LYRIC_SCROLL_SECONDS),
+            1.0
+        );
         // 迟到很久的帧直接补到终点，不会继续滚动。
         assert_eq!(lyric_scroll_progress_at(5.0, LYRIC_SCROLL_SECONDS), 1.0);
         // 时长为 0 视为立即完成。
@@ -4250,10 +4271,13 @@ mod tests {
     }
 
     #[test]
-    fn lyric_scroll_position_eases_out_between_lines() {
-        // 缓出曲线：进度过半时已经跑过中点，随后逐渐变慢。
-        let middle = lyric_scroll_position(0.0, 4.0, 0.5);
-        assert!(middle > 2.0 && middle < 4.0);
+    fn lyric_scroll_position_is_gentle_at_both_ends() {
+        // 缓入缓出：起步与收尾都很轻，不会像三次缓出那样"一激灵"。
+        assert_eq!(lyric_ease(0.0), 0.0);
+        assert_eq!(lyric_ease(1.0), 1.0);
+        assert!(lyric_ease(0.1) < 0.05, "起步应该很柔和");
+        assert!((lyric_ease(0.5) - 0.5).abs() < 1e-5, "中点对称");
+        assert!(lyric_ease(0.9) > 0.95, "收尾要留出长长的滑停");
         // 单调不减，避免滚动过程来回抖动。
         let mut previous = f32::NEG_INFINITY;
         let mut progress = 0.0;
@@ -4261,7 +4285,7 @@ mod tests {
             let position = lyric_scroll_position(0.0, 4.0, progress);
             assert!(position >= previous);
             previous = position;
-            progress += 0.1;
+            progress += 0.05;
         }
     }
 
@@ -4273,5 +4297,29 @@ mod tests {
         assert!(lyric_emphasis(4, 3.0) < lyric_emphasis(3, 3.0));
         assert!(lyric_emphasis(5, 3.0) < lyric_emphasis(4, 3.0));
         assert_eq!(lyric_emphasis(0, 10.0), 0.0);
+        // smoothstep 后中点仍然落在中间，边缘过渡更柔。
+        assert!((lyric_emphasis(3, 4.5) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn mix_hsla_hits_both_endpoints() {
+        let from = Hsla {
+            h: 0.0,
+            s: 1.0,
+            l: 0.2,
+            a: 0.25,
+        };
+        let to = Hsla {
+            h: 0.5,
+            s: 0.8,
+            l: 0.6,
+            a: 1.0,
+        };
+        assert_eq!(mix_hsla(from, to, 0.0), from);
+        assert_eq!(mix_hsla(from, to, 1.0), to);
+        // 中间值必须落在两端之间，避免高亮突然跳变。
+        let middle = mix_hsla(from, to, 0.5);
+        assert!(middle.l > from.l && middle.l < to.l);
+        assert!((middle.a - 0.625).abs() < 1e-5);
     }
 }

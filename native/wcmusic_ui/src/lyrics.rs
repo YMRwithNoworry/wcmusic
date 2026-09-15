@@ -34,7 +34,7 @@ const PANEL_HEIGHT: f32 = 208.0;
 /// 工具条占据的区域，从这里按下不会拖动窗口。
 const TOOLBAR_TOP: f32 = 40.0;
 const TOOLBAR_RESERVED_WIDTH: f32 = 344.0;
-const ANIMATION_SECONDS: f32 = 0.32;
+const ANIMATION_SECONDS: f32 = 0.42;
 /// How far the smoothed karaoke position may run ahead of the real playback position.
 const KARAOKE_LEAD_MS: f32 = 320.0;
 
@@ -90,14 +90,11 @@ fn hex_label(rgb: u32) -> SharedString {
     format!("#{:06X}", rgb & 0x00FF_FFFF).into()
 }
 
-/// 缓入缓出，用于歌词切换动画。
+/// 缓入缓出的五次曲线（smootherstep），与专享模式歌词用同一条曲线：
+/// 起步和收尾都很轻，避免原来三次曲线那种"一激灵"的硬起手。
 fn ease_in_out(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value < 0.5 {
-        4.0 * value * value * value
-    } else {
-        1.0 - (-2.0 * value + 2.0).powi(3) / 2.0
-    }
+    let p = value.clamp(0.0, 1.0);
+    p * p * p * (p * (p * 6.0 - 15.0) + 10.0)
 }
 
 fn finite_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
@@ -2048,5 +2045,8 @@ mod tests {
         assert_eq!(ease_in_out(1.0), 1.0);
         let middle = ease_in_out(0.5);
         assert!((middle - 0.5).abs() < 0.001);
+        // 起步与收尾都要轻，保证切行不生硬。
+        assert!(ease_in_out(0.1) < 0.05);
+        assert!(ease_in_out(0.9) > 0.95);
     }
 }
