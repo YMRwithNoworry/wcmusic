@@ -208,6 +208,10 @@ impl AudioPlayer {
 
     pub fn seek(&self, position: Duration) -> Result<(), String> {
         let sink = self.sink.as_ref().ok_or("当前没有已加载的音频")?;
+        // FLAC/Vorbis 的 seek 需要重建解码器再跳到目标位置，可能持续几百毫秒到数秒；
+        // 这段时间 UI 线程持有实体借用，标记 busy 让周期任务跳过轮询，
+        // 避免 GPUI 的实体借用冲突 panic 直接终止进程。
+        let _busy = crate::ui_busy::enter();
         sink.try_seek(position)
             .map_err(|error| format!("调整播放进度失败: {error}"))
     }

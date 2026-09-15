@@ -6,6 +6,7 @@ mod lyrics;
 mod lyrics_window;
 mod settings;
 mod tray;
+mod ui_busy;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -716,36 +717,92 @@ impl MusicApp {
         Ok(warning)
     }
 
+    /// 导入洛雪音源脚本。
+    ///
+    /// 不能在点击回调里直接做阻塞操作：点击回调运行在窗口消息派发的栈帧里并持有
+    /// `MusicApp` 的可变更借用，`pick_file()` 这类阻塞对话框会嵌套消息循环；期间
+    /// 60ms 的快捷键轮询任务去读同一个实体会触发 `already mutably borrowed` panic，
+    /// 而 panic 穿过窗口过程会直接终止进程（表现为点一下就闪退）。
+    /// 所以：对话框放到任务里打开，读文件与 QuickJS 校验放到后台线程，
+    /// UI 线程只负责把结果写回实体。
     fn import_source(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = rfd::FileDialog::new()
-            .set_title("选择音源脚本")
-            .add_filter("音源脚本", &["js", "mjs", "txt", "json"])
-            .add_filter("所有文件", &["*"])
-            .pick_file()
-        else {
-            self.notice = "已取消导入音源".into();
-            cx.notify();
-            return;
-        };
-        self.notice = "正在读取并校验音源...".into();
-        match std::fs::read_to_string(&path) {
-            Ok(script) => match self.install_imported_source(script) {
-                Ok(Some(warning)) => {
-                    let name = self.source_name.clone();
-                    self.notice = format!(
-                        "已导入音源：{name}（初始化校验未通过，播放时将尝试回退：{warning}）"
-                    )
-                    .into();
-                }
-                Ok(None) => {
-                    let name = self.source_name.clone();
-                    self.notice = format!("已导入音源：{name}").into();
-                }
-                Err(error) => self.notice = error.into(),
-            },
-            Err(error) => self.notice = format!("读取音源失败：{error}").into(),
-        }
+        self.notice = "正在选择音源脚本...".into();
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            // 在任务（而不是点击回调）里打开阻塞对话框。
+            let picked = {
+                let _busy = ui_busy::enter();
+                rfd::FileDialog::new()
+                    .set_title("选择音源脚本")
+                    .add_filter("音源脚本", &["js", "mjs", "txt", "json"])
+                    .add_filter("所有文件", &["*"])
+                    .pick_file()
+            };
+            let Some(path) = picked else {
+                let _ = this.update(cx, |this, cx| {
+                    this.notice = "已取消导入音源".into();
+                    cx.notify();
+                });
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.notice = "正在读取并校验音源...".into();
+                cx.notify();
+            });
+            let read = cx
+                .background_executor()
+                .spawn(async move {
+                    std::fs::read_to_string(&path).map_err(|error| format!("读取音源失败：{error}"))
+                })
+                .await;
+            let script = match read {
+                Ok(script) => script,
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.notice = error.into();
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let prepared = cx
+                .background_executor()
+                .spawn(async move {
+                    let metadata = wcmusic_core::parse_script_metadata(&script);
+                    let validation =
+                        wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop);
+                    (script, metadata, validation)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let (script, metadata, validation) = prepared;
+                match metadata {
+                    Ok(metadata) => {
+                        let (name, warning) = match validation {
+                            Ok(manifest) => (manifest.metadata.name, None),
+                            Err(error) => (metadata.name, Some(error.to_string())),
+                        };
+                        let name: SharedString = name.into();
+                        this.imported_sources.push(ImportedSource {
+                            name: name.clone(),
+                            script: script.clone(),
+                        });
+                        this.source_script = Some(script);
+                        this.source_name = name.clone();
+                        this.notice = match warning {
+                            Some(warning) => format!(
+                                "已导入音源：{name}（初始化校验未通过，播放时将尝试回退：{warning}）"
+                            )
+                            .into(),
+                            None => format!("已导入音源：{name}").into(),
+                        };
+                    }
+                    Err(error) => this.notice = format!("音源校验失败：{error}").into(),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn select_source(&mut self, source_index: Option<usize>, cx: &mut Context<Self>) {
@@ -1554,6 +1611,11 @@ impl MusicApp {
                 cx.background_executor()
                     .timer(Duration::from_millis(250))
                     .await;
+                // UI 线程正在跑阻塞操作（打开对话框、音频重定位）时跳过本次，
+                // 否则会撞上 GPUI 的实体借用检查并终止进程。
+                if ui_busy::is_busy() {
+                    continue;
+                }
                 let Ok(keep_running) = this.update(cx, |this, cx| {
                     if !this.is_playing {
                         return false;
@@ -3789,7 +3851,11 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palett
         .child(div().text_sm().text_color(p.muted).child(detail.into()))
 }
 
-/// 崩溃时把 panic 信息写到 `%APPDATA%\wcmusic\panic.log`，方便用户反馈问题时排查。
+/// 崩溃时把 panic 信息追加到 `%APPDATA%\wcmusic\panic.log`，方便用户反馈问题时排查。
+///
+/// 注意要**追加**而不是覆盖：panic 之后的 unwind 一旦穿过 `extern "system"` 的窗口
+/// 过程，会再触发一次 `panic in a function that cannot unwind`，直接覆盖会把真正的
+/// 第一条原因冲掉（之前的崩溃日志就是这样只剩「无法 unwind」）。
 ///
 /// 仍然调用 GPUI 安装的旧 hook，保持它原有的退出行为。
 fn install_panic_log() {
@@ -3806,7 +3872,15 @@ fn install_panic_log() {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(path, text);
+            let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+            if content.len() > 128 * 1024 {
+                content.clear();
+            }
+            if !content.is_empty() {
+                content.push_str("\n\n===== 新的 panic =====\n");
+            }
+            content.push_str(&text);
+            let _ = std::fs::write(path, content);
         }
         previous(info);
     }));
@@ -3873,6 +3947,11 @@ fn main() {
                         cx.background_executor()
                             .timer(Duration::from_millis(60))
                             .await;
+                        // 这个轮询任务在 UI 线程持有实体借用时读取 MusicApp 会 panic
+                        // （并直接终止进程），因此长阻塞操作期间整拍跳过。
+                        if ui_busy::is_busy() {
+                            continue;
+                        }
                         let events = view_for_hotkeys.read_with(cx, |this, _| {
                             this.hotkey_manager
                                 .as_ref()
@@ -3921,6 +4000,10 @@ fn main() {
                         cx.background_executor()
                             .timer(Duration::from_millis(120))
                             .await;
+                        // 与快捷键轮询同理：长阻塞操作期间不要碰实体，事件留在通道里。
+                        if ui_busy::is_busy() {
+                            continue;
+                        }
                         match events.try_recv() {
                             Some(tray::TrayEvent::Show) => {
                                 let _ = window_handle.update(cx, |_, window, _| {
@@ -4076,6 +4159,18 @@ mod tests {
         assert!(app.install_imported_source("1 + 1;".into()).is_err());
         assert!(app.imported_sources.is_empty());
         assert!(app.source_script.is_none());
+    }
+
+    #[test]
+    fn busy_guard_covers_blocking_operations() {
+        // 打开阻塞对话框、音频重定位期间必须让周期任务跳过轮询，
+        // 否则会撞上实体借用检查并把进程直接带崩。
+        assert!(!ui_busy::is_busy());
+        {
+            let _guard = ui_busy::enter();
+            assert!(ui_busy::is_busy());
+        }
+        assert!(!ui_busy::is_busy());
     }
 
     #[test]
