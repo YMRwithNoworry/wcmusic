@@ -1831,6 +1831,9 @@ fn text_swatch_id(index: usize) -> &'static str {
 
 impl Render for LyricsOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 每帧重新确认一次原生状态：样式位万一被别处改掉（或窗口刚恢复显示），
+        // 这里会立刻纠正回来。两个设置函数都会先比较当前状态，未变化时不做系统调用。
+        self.apply_native_state();
         // 行切换动画与逐字卡拉OK都用窗口帧时钟驱动（垂直同步），
         // 不再靠 16ms 定时器，避免 Windows 定时器精度导致的掉帧。
         if self.needs_frames() {

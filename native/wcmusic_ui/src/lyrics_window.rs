@@ -21,12 +21,13 @@
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetCursorPos, GetWindowLongPtrW,
-        HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
-        WM_MOUSEACTIVATE, WM_NCHITTEST, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetCursorPos,
+        GetWindowLongPtrW, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WM_MOUSEACTIVATE,
+        WM_NCHITTEST, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
         WS_EX_TRANSPARENT,
     };
 
@@ -61,13 +62,23 @@ mod platform {
     }
 
     /// Subclass the freshly created lyrics window and hide it from the task bar.
+    ///
+    /// `WS_EX_LAYERED` 是必须的：实测在这扇 `WS_EX_NOREDIRECTIONBITMAP`（DirectComposition）
+    /// 窗口上，只加 `WS_EX_TRANSPARENT` 时 `WindowFromPoint` 仍然命中窗口自己，
+    /// 也就是说点击照样被挡住；加上 `WS_EX_LAYERED` 后命中测试才会跳过它、点击落到
+    /// 下面的其它进程。配套的 `LWA_ALPHA=255` 保证 layered 窗口照常绘制
+    /// （像素级对比：开关该样式前后屏幕内容完全一致）。
     pub fn install_overlay_window(hwnd: isize) {
         let hwnd = hwnd as HWND;
         unsafe {
             let ext_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            let wanted = ext_style | WS_EX_NOACTIVATE as isize | WS_EX_TOOLWINDOW as isize;
+            let wanted = ext_style
+                | WS_EX_NOACTIVATE as isize
+                | WS_EX_TOOLWINDOW as isize
+                | WS_EX_LAYERED as isize;
             if wanted != ext_style {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted);
+                let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
                 SetWindowPos(
                     hwnd,
                     std::ptr::null_mut(),
@@ -97,9 +108,10 @@ mod platform {
     /// `HTTRANSPARENT` alone only forwards the click to windows owned by the
     /// same thread, so a locked overlay still swallowed clicks aimed at other
     /// applications (the desktop lyrics "block the mouse" bug). The window
-    /// therefore also carries `WS_EX_TRANSPARENT` while locked: with that style
-    /// Windows skips the window entirely during mouse hit testing, so the click
-    /// reaches the application underneath, whatever process it belongs to.
+    /// therefore also carries `WS_EX_TRANSPARENT` while locked: together with
+    /// the `WS_EX_LAYERED` set in [`install_overlay_window`] Windows skips the
+    /// window during mouse hit testing, so the click reaches the application
+    /// underneath, whatever process it belongs to.
     pub fn set_click_through(hwnd: isize, enabled: bool) {
         CLICK_THROUGH.store(enabled, Ordering::Relaxed);
         if hwnd == 0 {
@@ -150,10 +162,18 @@ mod platform {
     }
 
     /// Toggle the always-on-top state of the lyric window.
-    pub fn set_topmost(hwnd: isize, enabled: bool) {
+    pub fn set_topmost(hwnd: isize, enabled: bool) {        if hwnd == 0 {
+            return;
+        }
         unsafe {
+            let hwnd = hwnd as HWND;
+            // 状态没变就不要重复 SetWindowPos：`render` 每帧都会重新确认一次原生状态。
+            let is_topmost = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST as isize != 0;
+            if is_topmost == enabled {
+                return;
+            }
             SetWindowPos(
-                hwnd as HWND,
+                hwnd,
                 if enabled { HWND_TOPMOST } else { HWND_NOTOPMOST },
                 0,
                 0,
