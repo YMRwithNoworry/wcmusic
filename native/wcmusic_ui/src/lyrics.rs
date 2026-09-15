@@ -483,7 +483,7 @@ impl Default for LyricsStyle {
     fn default() -> Self {
         Self {
             font_family: FONT_FAMILIES[0].to_owned(),
-            font_size: 36.0,
+            font_size: 28.0,
             font_weight: 700.0,
             text_color: TEXT_COLORS[0],
             highlight_color: HIGHLIGHT_COLORS[0],
@@ -672,6 +672,8 @@ pub struct LyricsOverlay {
     animating: bool,
 
     panel_open: bool,
+    /// 每行文本的排版宽度缓存，避免逐帧重绘时反复做文字排版。
+    measure_cache: std::cell::RefCell<std::collections::HashMap<(String, i32, i32), f32>>,
     hovered: bool,
     /// 正在拖动歌词窗口：记录按下时的光标位置与窗口位置。
     dragging: Option<DragSession>,
@@ -713,6 +715,7 @@ impl LyricsOverlay {
             notice: None,
             notice_generation: 0,
             last_frame_at: None,
+            measure_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             hwnd: None,
             scale_factor: 1.0,
             host: None,
@@ -746,6 +749,8 @@ impl LyricsOverlay {
         self.animation_progress = 1.0;
         self.animating = false;
         self.last_frame_at = None;
+        // 整批歌词换了，之前缓存的排版宽度不再需要。
+        self.measure_cache.borrow_mut().clear();
         self.update_index();
         cx.notify();
     }
@@ -791,6 +796,8 @@ impl LyricsOverlay {
 
     fn apply_style(&mut self, style: LyricsStyle, cx: &mut Context<Self>) {
         self.style = style;
+        // 字体/字号/字重可能变了，排版缓存作废。
+        self.measure_cache.borrow_mut().clear();
         self.apply_native_state();
         cx.notify();
     }
@@ -1082,6 +1089,16 @@ impl LyricsOverlay {
         if sanitized.is_empty() {
             return 0.0;
         }
+        // 逐帧重绘时字号会随强调度连续变化，缓存按 0.5px 取整，
+        // 命中率很高，省掉每帧对每一行的文字排版。
+        let key = (
+            sanitized.clone(),
+            (size * 2.0).round() as i32,
+            (weight * 10.0).round() as i32,
+        );
+        if let Some(width) = self.measure_cache.borrow().get(&key) {
+            return *width;
+        }
         let mut text_font = font(family);
         text_font.weight = FontWeight(weight);
         let run = TextRun {
@@ -1098,7 +1115,14 @@ impl LyricsOverlay {
             &[run],
             None,
         );
-        f32::from(shaped.width())
+        let width = f32::from(shaped.width());
+        let mut cache = self.measure_cache.borrow_mut();
+        // 缓存别无限增长（歌词行数 × 少量字号档位）。
+        if cache.len() > 512 {
+            cache.clear();
+        }
+        cache.insert(key, width);
+        width
     }
 
     fn text_layer(
@@ -1139,7 +1163,14 @@ impl LyricsOverlay {
     ) -> Div {
         let mut block = div().relative().w(px(width)).h(px(size * 1.32)).flex_shrink_0();
         if stroke_width > 0.05 {
-            for (dx, dy) in STROKE_DIRECTIONS {
+            // 描边方向：细描边用 4 个正交方向已经看不出差别，8 方向会让每帧的文本
+            // 绘制量翻倍（桌面歌词逐帧重绘时正是掉帧的主因），只有粗描边才补对角。
+            let directions: &[(f32, f32)] = if stroke_width <= 1.2 {
+                &STROKE_DIRECTIONS[..4]
+            } else {
+                &STROKE_DIRECTIONS
+            };
+            for (dx, dy) in directions {
                 block = block.child(self.text_layer(
                     text,
                     size,
@@ -1167,6 +1198,14 @@ impl LyricsOverlay {
         progress: Option<f32>,
     ) -> Div {
         let mut block = div().relative().w(px(width)).h(px(size * 1.32)).flex_shrink_0();
+        let progress = progress.unwrap_or(0.0).clamp(0.0, 1.0);
+        // 还没唱或已经唱满时不需要叠两层：直接画最终颜色，
+        // 这样每帧的文本绘制量少一半（逐字填充只在行中间真正需要裁剪）。
+        let base_color = if progress >= 0.999 {
+            highlight_color
+        } else {
+            base_color
+        };
         block = block.child(self.text_block(
             text,
             size,
@@ -1176,8 +1215,8 @@ impl LyricsOverlay {
             stroke_width,
             width,
         ));
-        if let Some(progress) = progress.filter(|value| *value > 0.001) {
-            let clipped = (width * progress.clamp(0.0, 1.0)).max(0.0);
+        if progress > 0.001 && progress < 0.999 {
+            let clipped = (width * progress).max(0.0);
             block = block.child(
                 div()
                     .absolute()

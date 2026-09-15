@@ -133,6 +133,11 @@ impl AppSettings {
         if settings.lyrics.font_family.trim() == LEGACY_DEFAULT_LYRICS_FONT {
             settings.lyrics.font_family = crate::lyrics::FONT_FAMILIES[0].to_owned();
         }
+        // 旧版本默认歌词字号 36px 偏大（桌面歌词挡住桌面、可见行数太少），
+        // 现在默认 28px；同样只在用户没主动调过字号时才迁移。
+        if (settings.lyrics.font_size - LEGACY_DEFAULT_LYRICS_FONT_SIZE).abs() < 0.01 {
+            settings.lyrics.font_size = crate::lyrics::LyricsStyle::default().font_size;
+        }
         Some(settings)
     }
 
@@ -157,6 +162,8 @@ impl AppSettings {
 
 /// 旧版本歌词字体的默认值，用于把老设置迁移到内置 MiSans。
 const LEGACY_DEFAULT_LYRICS_FONT: &str = "Microsoft YaHei UI";
+/// 旧版本歌词字号默认值（偏大），迁移到新的默认字号。
+const LEGACY_DEFAULT_LYRICS_FONT_SIZE: f32 = 36.0;
 
 /// 旧版本把歌词设置平铺在设置文件的顶层，这里把它们搬进 `lyrics` 对象，
 /// 让老用户的字号、字体与卡拉OK开关保持不变。
@@ -216,7 +223,7 @@ mod tests {
             ..AppSettings::default()
         };
         settings.lyrics.font_family = "KaiTi".to_owned();
-        settings.lyrics.font_size = 36.0;
+        settings.lyrics.font_size = 30.0;
         settings.lyrics.karaoke = false;
         settings.lyrics.single_line = true;
         settings.lyrics.animation = crate::lyrics::LyricsAnimation::Scale;
@@ -252,6 +259,37 @@ mod tests {
         let loaded = AppSettings::load_from(Some(&path)).unwrap();
 
         assert_eq!(loaded.lyrics.font_family, "KaiTi");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn shrinks_the_legacy_default_lyrics_size() {
+        // 旧的默认 36px 太大，加载时迁移到新的默认字号。
+        let path = temp_path("legacy-size");
+        let mut settings = AppSettings::default();
+        settings.lyrics.font_size = LEGACY_DEFAULT_LYRICS_FONT_SIZE;
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(
+            loaded.lyrics.font_size,
+            crate::lyrics::LyricsStyle::default().font_size
+        );
+        assert!(loaded.lyrics.font_size < LEGACY_DEFAULT_LYRICS_FONT_SIZE);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn keeps_user_chosen_lyrics_size() {
+        let path = temp_path("custom-size");
+        let mut settings = AppSettings::default();
+        settings.lyrics.font_size = 44.0;
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.lyrics.font_size, 44.0);
         let _ = fs::remove_file(path);
     }
 
