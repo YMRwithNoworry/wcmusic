@@ -137,6 +137,36 @@ impl Tab {
     }
 }
 
+/// 设置页左侧的分类。只列出当前确实有内容的分组，避免出现空白页。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    Basic,
+    Playback,
+    DesktopLyrics,
+    Hotkeys,
+    About,
+}
+
+impl SettingsSection {
+    const ALL: [Self; 5] = [
+        Self::Basic,
+        Self::Playback,
+        Self::DesktopLyrics,
+        Self::Hotkeys,
+        Self::About,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Basic => "基本设置",
+            Self::Playback => "播放设置",
+            Self::DesktopLyrics => "桌面歌词设置",
+            Self::Hotkeys => "快捷键设置",
+            Self::About => "关于",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct TrackRow {
     track: Track,
@@ -194,6 +224,8 @@ impl TrackRow {
 
 struct MusicApp {
     active_tab: Tab,
+    /// 设置页当前选中的分类，只在内存中保存。
+    settings_section: SettingsSection,
     current_track: Option<usize>,
     current_online_track: Option<TrackRow>,
     is_playing: bool,
@@ -271,6 +303,7 @@ impl MusicApp {
         let settings = AppSettings::load();
         Self {
             active_tab: Tab::Home,
+            settings_section: SettingsSection::ALL[0],
             current_track: None,
             current_online_track: None,
             is_playing: false,
@@ -2988,316 +3021,407 @@ impl MusicApp {
             )
     }
 
+    /// 切换设置页左侧选中的分类。
+    fn select_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        if self.settings_section == section {
+            return;
+        }
+        self.settings_section = section;
+        cx.notify();
+    }
+
+    /// 右侧内容区的标题：左侧一根强调色竖条 + 标题；`action` 复用原设置页顶部的操作。
+    fn settings_pane_header(
+        &self,
+        title: &'static str,
+        action: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = Palette::new(cx);
+        let bar = div()
+            .flex_shrink_0()
+            .w(px(3.0))
+            .h(px(16.0))
+            .rounded_full()
+            .bg(p.primary);
+        match action {
+            Some(action) => h_flex()
+                .items_center()
+                .gap_3()
+                .child(bar)
+                .child(div().flex_1().child(self.section_title(title, action, cx)))
+                .into_any_element(),
+            None => h_flex()
+                .items_center()
+                .gap_3()
+                .child(bar)
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(p.foreground)
+                        .child(title),
+                )
+                .into_any_element(),
+        }
+    }
+
     fn settings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
-        let mut content = div()
+
+        // 左栏：分类列表，固定宽度，条目多时自己滚动。
+        let mut rail = div()
+            .id("settings-section-rail")
+            .flex_shrink_0()
+            .w(px(180.0))
+            .h_full()
+            .min_h_0()
             .flex()
             .flex_col()
-            .gap_4()
-            .child(self.section_title("设置", "保存于本机", cx))
-            .child(
-                setting_row(
-                    "播放音质",
-                    ["标准 128k", "高品 320k", "无损 FLAC"][self.quality_index],
-                    "整曲解析时优先请求高品质音频",
-                    p,
-                )
-                .id("setting-quality")
-                .on_click(cx.listener(|this, _, _, cx| this.cycle_quality(cx))),
-            )
-            .child(
-                setting_row(
-                    "主题",
-                    if self.dark_theme { "深色" } else { "浅色" },
-                    "支持浅色与深色窗口主题",
-                    p,
-                )
-                .id("setting-theme")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
-            )
-            .child(self.section_title("桌面歌词", "重置歌词位置", cx))
-            .child(
-                setting_row(
-                    "桌面歌词",
-                    if self.lyrics_enabled {
-                        "已开启"
+            .gap_1()
+            .pr(px(12.0))
+            .border_r_1()
+            .border_color(p.border)
+            .overflow_y_scroll();
+        for (index, section) in SettingsSection::ALL.into_iter().enumerate() {
+            let selected = self.settings_section == section;
+            rail = rail.child(
+                div()
+                    .id(("settings-section", index))
+                    .w_full()
+                    .px(px(12.0))
+                    .py(px(9.0))
+                    .rounded_md()
+                    .bg(if selected { p.accent } else { p.background })
+                    .text_color(if selected { p.primary } else { p.foreground })
+                    .text_sm()
+                    .font_weight(if selected {
+                        gpui::FontWeight::SEMIBOLD
                     } else {
-                        "已关闭"
-                    },
-                    "播放时显示始终置顶的歌词窗口",
-                    p,
-                )
-                .id("setting-lyrics")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_lyrics(window, cx))),
-            )
-            .child(
-                setting_row(
-                    "锁定歌词",
-                    if self.lyrics.locked {
-                        "已锁定（鼠标穿透）"
-                    } else {
-                        "可拖动与设置"
-                    },
-                    "锁定后点击会穿透到下层窗口，解锁后可拖动并显示工具条",
-                    p,
-                )
-                .id("setting-lyrics-lock")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| style.locked = !style.locked)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词置顶",
-                    if self.lyrics.always_on_top {
-                        "始终置顶"
-                    } else {
-                        "普通窗口"
-                    },
-                    "关闭后歌词会被其它窗口覆盖",
-                    p,
-                )
-                .id("setting-lyrics-top")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| style.always_on_top = !style.always_on_top)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词字体",
-                    self.lyrics.font_family.clone(),
-                    "点击切换桌面歌词字体",
-                    p,
-                )
-                .id("setting-lyrics-font")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_font_family)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词字号",
-                    format!("{:.0} px", self.lyrics.font_size),
-                    "当前播放的歌词会放大显示，歌词窗口内滚动滚轮也能调整",
-                    p,
-                )
-                .id("setting-lyrics-size")
-                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_size(cx))),
-            )
-            .child(
-                setting_row(
-                    "歌词字重",
-                    format!("{:.0}", self.lyrics.font_weight),
-                    "点击在常规与加粗之间切换",
-                    p,
-                )
-                .id("setting-lyrics-weight")
-                .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_weight(cx))),
-            )
-            .child(
-                setting_row(
-                    "对齐方式",
-                    self.lyrics.alignment.label(),
-                    "控制歌词在窗口中的水平位置",
-                    p,
-                )
-                .id("setting-lyrics-align")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| style.alignment = style.alignment.next())
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词动画",
-                    self.lyrics.animation.label(),
-                    "切换歌词时的过渡效果",
-                    p,
-                )
-                .id("setting-lyrics-animation")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| style.animation = style.animation.next())
-                })),
-            )
-            .child(
-                setting_row(
-                    "单行模式",
-                    if self.lyrics.single_line {
-                        "只显示当前行"
-                    } else {
-                        "显示上下句"
-                    },
-                    "上下句模式会把前后的歌词淡出显示",
-                    p,
-                )
-                .id("setting-lyrics-single")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| style.single_line = !style.single_line)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词翻译",
-                    if self.lyrics.show_translation {
-                        "已开启"
-                    } else {
-                        "已关闭"
-                    },
-                    "网易云与 QQ 音乐提供逐行翻译时随歌词显示",
-                    p,
-                )
-                .id("setting-lyrics-translation")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| {
-                        style.show_translation = !style.show_translation
+                        gpui::FontWeight::NORMAL
                     })
-                })),
-            )
-            .child(
-                setting_row(
-                    "卡拉OK填充",
-                    if self.lyrics.karaoke {
-                        "已开启"
-                    } else {
-                        "已关闭"
-                    },
-                    "当前歌词随播放进度逐字填充高亮色",
-                    p,
-                )
-                .id("setting-lyrics-karaoke")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics_karaoke(cx))),
-            )
-            .child(
-                setting_row(
-                    "歌词文字颜色",
-                    self.lyrics.text_color_label(),
-                    "未播放部分的文字颜色",
-                    p,
-                )
-                .id("setting-lyrics-color")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_text_color)
-                })),
-            )
-            .child(
-                setting_row(
-                    "已播放颜色",
-                    self.lyrics.highlight_color_label(),
-                    "逐字填充与当前行高亮使用的颜色",
-                    p,
-                )
-                .id("setting-lyrics-highlight")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_highlight_color)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词描边",
-                    self.lyrics.stroke_label(),
-                    "给文字加描边，在浅色壁纸上也清晰",
-                    p,
-                )
-                .id("setting-lyrics-stroke")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_stroke_width)
-                })),
-            )
-            .child(
-                setting_row(
-                    "描边颜色",
-                    self.lyrics.stroke_color_label(),
-                    "浅色壁纸用深色描边，深色壁纸用亮色描边",
-                    p,
-                )
-                .id("setting-lyrics-stroke-color")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_stroke_color)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词背景",
-                    self.lyrics.background_label(),
-                    "默认完全透明，也可以加深色底衬",
-                    p,
-                )
-                .id("setting-lyrics-background")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, LyricsStyle::next_background)
-                })),
-            )
-            .child(
-                setting_row(
-                    "歌词偏移",
-                    format!("{:+.1}s", self.lyrics.offset_ms as f32 / 1000.0),
-                    "歌词比人声快时点击延后，慢时点击提前",
-                    p,
-                )
-                .id("setting-lyrics-offset")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    let delta = if this.lyrics.offset_ms >= 1_500 {
-                        -2_000
-                    } else {
-                        500
-                    };
-                    this.nudge_lyrics_offset(delta, cx)
-                })),
-            )
-            .child(
-                setting_row(
-                    "暂停时隐藏",
-                    if self.lyrics.hide_when_paused {
-                        "已开启"
-                    } else {
-                        "已关闭"
-                    },
-                    "暂停播放后自动隐藏歌词文字",
-                    p,
-                )
-                .id("setting-lyrics-pause-hide")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.update_lyrics_style(cx, |style| {
-                        style.hide_when_paused = !style.hide_when_paused
-                    })
-                })),
-            )
-            .child(
-                setting_row(
-                    "网络代理",
-                    if self.use_network_proxy {
-                        "系统代理"
-                    } else {
-                        "关闭"
-                    },
-                    "默认直连，开启后读取 HTTP_PROXY/HTTPS_PROXY",
-                    p,
-                )
-                .id("setting-proxy")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_network_proxy(cx))),
-            )
-            .child(self.section_title("快捷键", "恢复默认", cx))
-            .child(
-                setting_row(
-                    "全局快捷键",
-                    if self.hotkeys.enabled {
-                        "已开启"
-                    } else {
-                        "已关闭"
-                    },
-                    "开启后即使在其它程序里也能用快捷键控制播放",
-                    p,
-                )
-                .id("setting-hotkeys")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_hotkeys(cx))),
+                    .cursor_pointer()
+                    .hover(|style| style.bg(p.surface_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_settings_section(section, cx)
+                    }))
+                    .child(section.label()),
             );
-
-        for action in HotKeyAction::ALL {
-            let binding = self.hotkeys.binding(action).to_owned();
-            let capturing = self.capturing_hotkey == Some(action);
-            content = content.child(self.hotkey_row(action, &binding, capturing, cx));
         }
 
-        content
+        // 右栏：只渲染当前分类的设置行，内容较高时自己滚动。
+        let mut rows = div().flex().flex_col().gap_3().w_full();
+        match self.settings_section {
+            SettingsSection::Basic => {
+                rows = rows
+                    .child(
+                        setting_row(
+                            "主题",
+                            if self.dark_theme { "深色" } else { "浅色" },
+                            "支持浅色与深色窗口主题",
+                            p,
+                        )
+                        .id("setting-theme")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_theme(window, cx)),
+                        ),
+                    )
+                    .child(
+                        setting_toggle_row(
+                            "网络代理",
+                            self.use_network_proxy,
+                            "默认直连，开启后读取 HTTP_PROXY/HTTPS_PROXY",
+                            p,
+                        )
+                        .id("setting-proxy")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_network_proxy(cx))),
+                    );
+            }
+            SettingsSection::Playback => {
+                rows = rows.child(
+                    setting_row(
+                        "播放音质",
+                        ["标准 128k", "高品 320k", "无损 FLAC"][self.quality_index],
+                        "整曲解析时优先请求高品质音频",
+                        p,
+                    )
+                    .id("setting-quality")
+                    .on_click(cx.listener(|this, _, _, cx| this.cycle_quality(cx))),
+                );
+            }
+            SettingsSection::DesktopLyrics => {
+                rows = rows.child(
+                    setting_toggle_row(
+                        "桌面歌词",
+                        self.lyrics_enabled,
+                        "播放时显示始终置顶的歌词窗口",
+                        p,
+                    )
+                    .id("setting-lyrics")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_lyrics(window, cx))),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "锁定歌词",
+                        self.lyrics.locked,
+                        "锁定后点击会穿透到下层窗口，解锁后可拖动并显示工具条",
+                        p,
+                    )
+                    .id("setting-lyrics-lock")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| style.locked = !style.locked)
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "歌词置顶",
+                        self.lyrics.always_on_top,
+                        "关闭后歌词会被其它窗口覆盖",
+                        p,
+                    )
+                    .id("setting-lyrics-top")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| {
+                            style.always_on_top = !style.always_on_top
+                        })
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词字体",
+                        self.lyrics.font_family.clone(),
+                        "点击切换桌面歌词字体",
+                        p,
+                    )
+                    .id("setting-lyrics-font")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_font_family)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词字号",
+                        format!("{:.0} px", self.lyrics.font_size),
+                        "当前播放的歌词会放大显示，歌词窗口内滚动滚轮也能调整",
+                        p,
+                    )
+                    .id("setting-lyrics-size")
+                    .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_size(cx))),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词字重",
+                        format!("{:.0}", self.lyrics.font_weight),
+                        "点击在常规与加粗之间切换",
+                        p,
+                    )
+                    .id("setting-lyrics-weight")
+                    .on_click(cx.listener(|this, _, _, cx| this.cycle_lyrics_font_weight(cx))),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "对齐方式",
+                        self.lyrics.alignment.label(),
+                        "控制歌词在窗口中的水平位置",
+                        p,
+                    )
+                    .id("setting-lyrics-align")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| style.alignment = style.alignment.next())
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词动画",
+                        self.lyrics.animation.label(),
+                        "切换歌词时的过渡效果",
+                        p,
+                    )
+                    .id("setting-lyrics-animation")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| style.animation = style.animation.next())
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "单行模式",
+                        self.lyrics.single_line,
+                        "上下句模式会把前后的歌词淡出显示",
+                        p,
+                    )
+                    .id("setting-lyrics-single")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| style.single_line = !style.single_line)
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "歌词翻译",
+                        self.lyrics.show_translation,
+                        "网易云与 QQ 音乐提供逐行翻译时随歌词显示",
+                        p,
+                    )
+                    .id("setting-lyrics-translation")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| {
+                            style.show_translation = !style.show_translation
+                        })
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "卡拉OK填充",
+                        self.lyrics.karaoke,
+                        "当前歌词随播放进度逐字填充高亮色",
+                        p,
+                    )
+                    .id("setting-lyrics-karaoke")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics_karaoke(cx))),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词文字颜色",
+                        self.lyrics.text_color_label(),
+                        "未播放部分的文字颜色",
+                        p,
+                    )
+                    .id("setting-lyrics-color")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_text_color)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "已播放颜色",
+                        self.lyrics.highlight_color_label(),
+                        "逐字填充与当前行高亮使用的颜色",
+                        p,
+                    )
+                    .id("setting-lyrics-highlight")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_highlight_color)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词描边",
+                        self.lyrics.stroke_label(),
+                        "给文字加描边，在浅色壁纸上也清晰",
+                        p,
+                    )
+                    .id("setting-lyrics-stroke")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_stroke_width)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "描边颜色",
+                        self.lyrics.stroke_color_label(),
+                        "浅色壁纸用深色描边，深色壁纸用亮色描边",
+                        p,
+                    )
+                    .id("setting-lyrics-stroke-color")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_stroke_color)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词背景",
+                        self.lyrics.background_label(),
+                        "默认完全透明，也可以加深色底衬",
+                        p,
+                    )
+                    .id("setting-lyrics-background")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, LyricsStyle::next_background)
+                    })),
+                );
+                rows = rows.child(
+                    setting_row(
+                        "歌词偏移",
+                        format!("{:+.1}s", self.lyrics.offset_ms as f32 / 1000.0),
+                        "歌词比人声快时点击延后，慢时点击提前",
+                        p,
+                    )
+                    .id("setting-lyrics-offset")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let delta = if this.lyrics.offset_ms >= 1_500 {
+                            -2_000
+                        } else {
+                            500
+                        };
+                        this.nudge_lyrics_offset(delta, cx)
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "暂停时隐藏",
+                        self.lyrics.hide_when_paused,
+                        "暂停播放后自动隐藏歌词文字",
+                        p,
+                    )
+                    .id("setting-lyrics-pause-hide")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| {
+                            style.hide_when_paused = !style.hide_when_paused
+                        })
+                    })),
+                );
+            }
+            SettingsSection::Hotkeys => {
+                rows = rows.child(
+                    setting_toggle_row(
+                        "全局快捷键",
+                        self.hotkeys.enabled,
+                        "开启后即使在其它程序里也能用快捷键控制播放",
+                        p,
+                    )
+                    .id("setting-hotkeys")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_hotkeys(cx))),
+                );
+                for action in HotKeyAction::ALL {
+                    let binding = self.hotkeys.binding(action).to_owned();
+                    let capturing = self.capturing_hotkey == Some(action);
+                    rows = rows.child(self.hotkey_row(action, &binding, capturing, cx));
+                }
+            }
+            SettingsSection::About => {
+                rows = rows
+                    .child(setting_info_row(
+                        "当前版本",
+                        env!("CARGO_PKG_VERSION"),
+                        p,
+                    ))
+                    .child(setting_info_row("界面框架", "GPUI KIT · DESKTOP", p));
+            }
+        }
+
+        let action = match self.settings_section {
+            SettingsSection::Basic => Some("保存于本机"),
+            SettingsSection::DesktopLyrics => Some("重置歌词位置"),
+            SettingsSection::Hotkeys => Some("恢复默认"),
+            SettingsSection::Playback | SettingsSection::About => None,
+        };
+        let pane = div()
+            .id("settings-section-content")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .pl(px(24.0))
+                    .child(self.settings_pane_header(self.settings_section.label(), action, cx))
+                    .child(rows),
+            );
+
+        div().size_full().flex().child(rail).child(pane)
     }
 
     /// 一行快捷键设置：点右侧的键位开始录制，点「清除」解绑。
@@ -3713,6 +3837,84 @@ fn setting_row(
                 .text_sm()
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(p.primary)
+                .child(value.into()),
+        )
+}
+
+/// 复选一行：左侧是勾选框（开启时为强调色实心并显示勾，关闭时为灰色描边空框），
+/// 右侧是标题与说明，整行可点击。
+fn setting_toggle_row(
+    title: &'static str,
+    checked: bool,
+    description: &'static str,
+    p: Palette,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .p(px(16.0))
+        .rounded_lg()
+        .bg(p.surface)
+        .border_1()
+        .border_color(p.border)
+        .cursor_pointer()
+        .hover(|style| style.bg(p.surface_hover))
+        .child(
+            div()
+                .flex_shrink_0()
+                .size(px(20.0))
+                .rounded_md()
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(checked, |this| this.bg(p.primary))
+                .when(!checked, |this| this.border_1().border_color(p.muted))
+                .when(checked, |this| {
+                    this.child(
+                        Icon::new(IconName::Check)
+                            .size(px(14.0))
+                            .text_color(p.primary_foreground),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .child(div().text_xs().text_color(p.muted).child(description)),
+        )
+}
+
+/// 只读信息行：左边灰色标签，右边值，不提供点击反馈（用于「关于」这类内容）。
+fn setting_info_row(label: &'static str, value: impl Into<SharedString>, p: Palette) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .p(px(16.0))
+        .rounded_lg()
+        .bg(p.surface)
+        .border_1()
+        .border_color(p.border)
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(p.muted)
                 .child(value.into()),
         )
 }
