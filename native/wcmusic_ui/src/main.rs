@@ -245,8 +245,8 @@ struct MusicApp {
     lyric_scroll_animating: bool,
     /// 上一次已知的当前行索引，用来检测歌词行切换。
     lyric_scroll_index: Option<usize>,
-    /// 专享模式歌词的逐帧刷新任务是否在运行。
-    lyric_scroll_ticking: bool,
+    /// 本次滚动动画的开始时刻；由帧时钟按真实时间算进度。
+    lyric_scroll_started: Option<std::time::Instant>,
     /// 全局快捷键设置，与 `hotkey_manager` 保持一致。
     hotkeys: HotKeySettings,
     hotkey_manager: Option<Arc<HotKeyManager>>,
@@ -313,7 +313,7 @@ impl MusicApp {
             lyric_scroll_progress: 1.0,
             lyric_scroll_animating: false,
             lyric_scroll_index: None,
-            lyric_scroll_ticking: false,
+            lyric_scroll_started: None,
             hotkeys: settings.hotkeys.clone(),
             hotkey_manager: None,
             capturing_hotkey: None,
@@ -1535,11 +1535,33 @@ impl MusicApp {
         self.lyric_scroll_progress = 1.0;
         self.lyric_scroll_animating = false;
         self.lyric_scroll_index = None;
+        self.lyric_scroll_started = None;
+    }
+
+    /// 按真实经过时间推进滚动动画。
+    ///
+    /// 之前用「16ms 定时器 + 每帧固定加 16ms」推进：Windows 定时器精度约 15.6ms，
+    /// 帧间隔抖动会让动画看起来掉帧，而且慢帧会把动画整体拖长。改为由
+    /// `Window::request_animation_frame()` 按垂直同步逐帧驱动，进度直接用
+    /// `Instant` 计算，帧率高低都保持 0.3s 匀速缓出。
+    fn advance_lyric_scroll(&mut self) {
+        if !self.lyric_scroll_animating {
+            return;
+        }
+        let Some(started) = self.lyric_scroll_started else {
+            return;
+        };
+        self.lyric_scroll_progress =
+            lyric_scroll_progress_at(started.elapsed().as_secs_f32(), LYRIC_SCROLL_SECONDS);
+        if self.lyric_scroll_progress >= 1.0 {
+            self.lyric_scroll_animating = false;
+            self.lyric_scroll_started = None;
+        }
     }
 
     /// 检测当前歌词行是否变化；变化时从屏幕上的当前位置缓动到新行。
     /// 首次出现 / 歌词被替换 / 关闭动画时直接对齐，不产生滚动。
-    fn update_lyric_scroll(&mut self, cx: &mut Context<Self>) {
+    fn update_lyric_scroll(&mut self) {
         let target = self.current_lyric_index();
         // 用户把动画关掉时，正在进行中的滚动也立刻停下并对齐到目标行。
         if self.lyric_scroll_animating && self.lyrics.animation == LyricsAnimation::Off {
@@ -1562,52 +1584,14 @@ impl MusicApp {
             self.lyric_scroll_from = from;
             self.lyric_scroll_progress = 0.0;
             self.lyric_scroll_animating = true;
-            self.ensure_lyric_scroll_ticker(cx);
+            // 进度由帧时钟按真实时间推进（见 `advance_lyric_scroll`）。
+            self.lyric_scroll_started = Some(std::time::Instant::now());
         } else {
             self.lyric_scroll_from = self.target_lyric_position();
             self.lyric_scroll_progress = 1.0;
             self.lyric_scroll_animating = false;
+            self.lyric_scroll_started = None;
         }
-    }
-
-    /// 保证专享模式的逐帧刷新任务在运行，直到滚动动画结束。
-    fn ensure_lyric_scroll_ticker(&mut self, cx: &mut Context<Self>) {
-        if self.lyric_scroll_ticking {
-            return;
-        }
-        self.lyric_scroll_ticking = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(LYRIC_SCROLL_FRAME_MILLIS))
-                    .await;
-                let keep_going = this
-                    .update(cx, |this, cx| this.tick_lyric_scroll(cx))
-                    .unwrap_or(false);
-                if !keep_going {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// 推进一帧滚动动画，返回动画是否还要继续。
-    fn tick_lyric_scroll(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.lyric_scroll_animating {
-            self.lyric_scroll_progress = (self.lyric_scroll_progress
-                + LYRIC_SCROLL_FRAME_MILLIS as f32 / 1000.0 / LYRIC_SCROLL_SECONDS)
-                .min(1.0);
-            if self.lyric_scroll_progress >= 1.0 {
-                self.lyric_scroll_animating = false;
-            }
-        }
-        cx.notify();
-        let keep_going = self.lyric_scroll_animating;
-        if !keep_going {
-            self.lyric_scroll_ticking = false;
-        }
-        keep_going
     }
 
     fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
@@ -3573,7 +3557,12 @@ impl Render for MusicApp {
         self.sync_player_sliders(window, cx);
         // 专享模式下检测当前歌词行是否变化，必要时启动缓动滚动动画。
         if self.show_now_playing {
-            self.update_lyric_scroll(cx);
+            self.update_lyric_scroll();
+            // 用窗口帧时钟驱动动画：垂直同步逐帧重绘，不会像 16ms 定时器那样抖动。
+            self.advance_lyric_scroll();
+            if self.lyric_scroll_animating {
+                window.request_animation_frame();
+            }
         }
         let p = Palette::new(cx);
         let page_content = self.content(cx);
@@ -3723,8 +3712,6 @@ fn setting_row(
 const LYRIC_ROW_HEIGHT: f32 = 66.0;
 /// 专享模式歌词行切换的缓出滚动时长（秒），参考 Apple Music 的节奏。
 const LYRIC_SCROLL_SECONDS: f32 = 0.3;
-/// 专享模式歌词滚动动画的帧间隔（毫秒），约 60fps。
-const LYRIC_SCROLL_FRAME_MILLIS: u64 = 16;
 /// 专享模式歌词行上下淡出的距离（行数）：离动画位置多远后完全淡出。
 const LYRIC_FADE_LINES: f32 = 3.0;
 /// 专享模式歌词的基础字号（像素）。
@@ -3737,6 +3724,15 @@ fn lyric_ease_out(progress: f32) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
     1.0 - (1.0 - progress).powi(3)
 }
+
+/// 由真实经过时间换算动画进度，帧率高低都不影响 0.3s 的总时长。
+fn lyric_scroll_progress_at(elapsed_seconds: f32, duration_seconds: f32) -> f32 {
+    if duration_seconds <= 0.0 {
+        return 1.0;
+    }
+    (elapsed_seconds / duration_seconds).clamp(0.0, 1.0)
+}
+
 
 /// 在起止行号之间按缓出曲线插值，得到屏幕上停留的（可能带小数的）行号。
 /// 进度为 0 时返回起点，为 1 时精确返回终点，保证动画结束后与原位置一致。
@@ -3986,6 +3982,7 @@ fn main() {
                 view.update(cx, |this, cx| this.open_lyrics_window(cx));
             }
 
+            
             // 全局快捷键：轮询管理器的事件通道，按当前设置自动切换管理器。
             {
                 let window_handle: AnyWindowHandle = window_handle.into();
@@ -4226,6 +4223,18 @@ mod tests {
         // 动画起点与终点必须精确落回整数行号，保证结束后几何位置不变。
         assert!((lyric_scroll_position(2.0, 5.0, 0.0) - 2.0).abs() < 1e-5);
         assert!((lyric_scroll_position(2.0, 5.0, 1.0) - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn lyric_scroll_progress_follows_elapsed_time() {
+        // 进度只跟真实时间有关：帧率高低都不会把 0.3s 的动画拖长或缩短。
+        assert_eq!(lyric_scroll_progress_at(0.0, LYRIC_SCROLL_SECONDS), 0.0);
+        assert!((lyric_scroll_progress_at(0.15, LYRIC_SCROLL_SECONDS) - 0.5).abs() < 1e-5);
+        assert_eq!(lyric_scroll_progress_at(0.3, LYRIC_SCROLL_SECONDS), 1.0);
+        // 迟到很久的帧直接补到终点，不会继续滚动。
+        assert_eq!(lyric_scroll_progress_at(5.0, LYRIC_SCROLL_SECONDS), 1.0);
+        // 时长为 0 视为立即完成。
+        assert_eq!(lyric_scroll_progress_at(0.0, 0.0), 1.0);
     }
 
     #[test]

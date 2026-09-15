@@ -35,7 +35,6 @@ const PANEL_HEIGHT: f32 = 208.0;
 const TOOLBAR_TOP: f32 = 40.0;
 const TOOLBAR_RESERVED_WIDTH: f32 = 344.0;
 const ANIMATION_SECONDS: f32 = 0.32;
-const FRAME_MILLIS: u64 = 16;
 /// How far the smoothed karaoke position may run ahead of the real playback position.
 const KARAOKE_LEAD_MS: f32 = 320.0;
 
@@ -658,7 +657,8 @@ pub struct LyricsOverlay {
     dragging: Option<DragSession>,
     notice: Option<SharedString>,
     notice_generation: u64,
-    ticking: bool,
+    /// 上一帧的时间基准（由帧时钟驱动，见 `advance_frame`）。
+    last_frame_at: Option<std::time::Instant>,
     hwnd: Option<isize>,
     /// 歌词窗口自身的 DPI 缩放，用于在逻辑像素与物理像素之间换算。
     scale_factor: f32,
@@ -692,7 +692,7 @@ impl LyricsOverlay {
             dragging: None,
             notice: None,
             notice_generation: 0,
-            ticking: false,
+            last_frame_at: None,
             hwnd: None,
             scale_factor: 1.0,
             host: None,
@@ -725,7 +725,8 @@ impl LyricsOverlay {
         self.current_index = None;
         self.animation_progress = 1.0;
         self.animating = false;
-        self.update_index(cx);
+        self.last_frame_at = None;
+        self.update_index();
         cx.notify();
     }
 
@@ -752,8 +753,7 @@ impl LyricsOverlay {
         if self.smooth_position_ms <= 0.0 || self.smooth_position_ms > target + KARAOKE_LEAD_MS {
             self.smooth_position_ms = target;
         }
-        self.update_index(cx);
-        self.ensure_ticker(cx);
+        self.update_index();
         cx.notify();
     }
 
@@ -762,9 +762,8 @@ impl LyricsOverlay {
             return;
         }
         self.playing = playing;
-        if playing {
-            self.ensure_ticker(cx);
-        }
+        // 逐帧推进由 `render` 里的帧时钟负责（见 `advance_frame`）。
+        self.last_frame_at = None;
         // 暂停隐藏时窗口里什么都不画，这时也不能挡住桌面上的其它应用。
         self.apply_native_state();
         cx.notify();
@@ -945,7 +944,7 @@ impl LyricsOverlay {
 
     // ---- 播放进度与动画 ----
 
-    fn update_index(&mut self, cx: &mut Context<Self>) {
+    fn update_index(&mut self) {
         let previous = self.current_index;
         // 先记录切换前屏幕上停留的位置，动画从这里滚动到新的一行。
         let previous_position = self.displayed_position();
@@ -966,9 +965,8 @@ impl LyricsOverlay {
             self.animated_from = previous_position;
             self.animation_progress = 0.0;
             self.animating = previous.is_some() && self.style.animation != LyricsAnimation::Off;
-            if self.animating {
-                self.ensure_ticker(cx);
-            }
+            // 动画开始时对齐帧时钟的时间基准，由 `render` 每帧推进。
+            self.last_frame_at = None;
         }
     }
 
@@ -1017,33 +1015,29 @@ impl LyricsOverlay {
         self.playing && self.style.karaoke && self.current_index.is_some() && !self.lines.is_empty()
     }
 
-    fn ensure_ticker(&mut self, cx: &mut Context<Self>) {
-        if self.ticking {
-            return;
-        }
-        let needed = self.animating || self.karaoke_running();
-        if !needed {
-            return;
-        }
-        self.ticking = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(FRAME_MILLIS))
-                    .await;
-                let keep_going = this.update(cx, |this, cx| this.tick(cx)).unwrap_or(false);
-                if !keep_going {
-                    break;
-                }
-            }
-        })
-        .detach();
+    /// 桌面上是否需要逐帧重绘（行切换动画或逐字卡拉OK推进中）。
+    fn needs_frames(&self) -> bool {
+        self.animating || self.karaoke_running()
     }
 
-    fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+    /// 按真实帧间隔推进动画与卡拉OK平滑。
+    ///
+    /// 之前用「16ms 定时器 + 每帧固定加 16ms」推进：Windows 定时器精度只有约
+    /// 15.6ms，帧间隔抖动会让动画掉帧，而且慢帧会把动画整体拖长。现在改由
+    /// `Window::request_animation_frame()` 按垂直同步逐帧驱动，位移用真实经过
+    /// 时间计算，60Hz/120Hz 屏幕都能保持匀速。
+    fn advance_frame(&mut self) {
+        let now = std::time::Instant::now();
+        let elapsed_ms = match self.last_frame_at.replace(now) {
+            // 第一帧只对齐时间基准，不位移。
+            None => return,
+            Some(previous) => (now - previous).as_secs_f32() * 1000.0,
+        };
+        // 窗口被遮挡/系统卡顿时不要一次性跳很远，最多按 100ms 补。
+        let elapsed_ms = elapsed_ms.clamp(0.0, 100.0);
         if self.animating {
             self.animation_progress =
-                (self.animation_progress + FRAME_MILLIS as f32 / 1000.0 / ANIMATION_SECONDS).min(1.0);
+                (self.animation_progress + elapsed_ms / 1000.0 / ANIMATION_SECONDS).min(1.0);
             if self.animation_progress >= 1.0 {
                 self.animating = false;
             }
@@ -1053,18 +1047,12 @@ impl LyricsOverlay {
             if self.smooth_position_ms < target {
                 self.smooth_position_ms = target;
             } else {
-                self.smooth_position_ms =
-                    (self.smooth_position_ms + FRAME_MILLIS as f32).min(target + KARAOKE_LEAD_MS);
+                self.smooth_position_ms = (self.smooth_position_ms + elapsed_ms)
+                    .min(target + KARAOKE_LEAD_MS);
             }
         } else {
             self.smooth_position_ms = self.position_ms as f32;
         }
-        let keep_going = self.animating || self.karaoke_running();
-        if !keep_going {
-            self.ticking = false;
-        }
-        cx.notify();
-        keep_going
     }
 
     // ---- 绘制 ----
@@ -1846,6 +1834,14 @@ fn text_swatch_id(index: usize) -> &'static str {
 
 impl Render for LyricsOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 行切换动画与逐字卡拉OK都用窗口帧时钟驱动（垂直同步），
+        // 不再靠 16ms 定时器，避免 Windows 定时器精度导致的掉帧。
+        if self.needs_frames() {
+            self.advance_frame();
+            window.request_animation_frame();
+        } else {
+            self.last_frame_at = None;
+        }
         let scale_factor = window.scale_factor();
         if scale_factor.is_finite() && scale_factor > 0.0 {
             self.scale_factor = scale_factor;
