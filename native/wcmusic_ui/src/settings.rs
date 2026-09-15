@@ -128,6 +128,11 @@ impl AppSettings {
         // bounds or render unreadable lyrics.
         settings.quality_index = settings.quality_index.min(2);
         settings.lyrics.clamp();
+        // 旧版本的默认歌词字体是「Microsoft YaHei UI」，现在程序内置 MiSans 作为默认；
+        // 只在用户没有主动改过字体（仍然是旧默认值）时迁移。
+        if settings.lyrics.font_family.trim() == LEGACY_DEFAULT_LYRICS_FONT {
+            settings.lyrics.font_family = crate::lyrics::FONT_FAMILIES[0].to_owned();
+        }
         Some(settings)
     }
 
@@ -149,6 +154,9 @@ impl AppSettings {
         config_dir().map(|dir| dir.join("wcmusic").join("settings.json"))
     }
 }
+
+/// 旧版本歌词字体的默认值，用于把老设置迁移到内置 MiSans。
+const LEGACY_DEFAULT_LYRICS_FONT: &str = "Microsoft YaHei UI";
 
 /// 旧版本把歌词设置平铺在设置文件的顶层，这里把它们搬进 `lyrics` 对象，
 /// 让老用户的字号、字体与卡拉OK开关保持不变。
@@ -217,6 +225,33 @@ mod tests {
         let loaded = AppSettings::load_from(Some(&path)).unwrap();
 
         assert_eq!(loaded, settings);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrates_legacy_default_lyrics_font_to_bundled_misans() {
+        let path = temp_path("legacy-font");
+        let mut settings = AppSettings::default();
+        settings.lyrics.font_family = LEGACY_DEFAULT_LYRICS_FONT.to_owned();
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.lyrics.font_family, crate::lyrics::FONT_FAMILIES[0]);
+        assert_eq!(loaded.lyrics.font_family, "MiSans");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn keeps_user_chosen_lyrics_font() {
+        let path = temp_path("custom-font");
+        let mut settings = AppSettings::default();
+        settings.lyrics.font_family = "KaiTi".to_owned();
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.lyrics.font_family, "KaiTi");
         let _ = fs::remove_file(path);
     }
 

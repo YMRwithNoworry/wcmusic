@@ -699,14 +699,21 @@ impl MusicApp {
         .detach();
     }
 
-    fn install_imported_source(&mut self, script: String) -> Result<Option<String>, String> {
-        let metadata = wcmusic_core::parse_script_metadata(&script)
-            .map_err(|error| format!("音源校验失败：{error}"))?;
-        let (name, warning) =
-            match wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop) {
-                Ok(manifest) => (manifest.metadata.name, None),
-                Err(error) => (metadata.name, Some(error.to_string())),
-            };
+    /// 把已经解析/校验过的音源写入曲库状态，返回初始化校验的警告（如果有）。
+    ///
+    /// 校验本身（QuickJS）必须在后台线程完成，所以这里只负责写回状态，
+    /// 由导入流程的单测与后台任务共用。
+    fn apply_imported_source(
+        &mut self,
+        script: String,
+        metadata: Result<wcmusic_core::SourceScriptMetadata, wcmusic_core::CoreError>,
+        validation: Result<wcmusic_core::SourceManifest, wcmusic_core::CoreError>,
+    ) -> Result<Option<String>, String> {
+        let metadata = metadata.map_err(|error| format!("音源校验失败：{error}"))?;
+        let (name, warning) = match validation {
+            Ok(manifest) => (manifest.metadata.name, None),
+            Err(error) => (metadata.name, Some(error.to_string())),
+        };
         let name: SharedString = name.into();
         self.imported_sources.push(ImportedSource {
             name: name.clone(),
@@ -715,6 +722,15 @@ impl MusicApp {
         self.source_script = Some(script);
         self.source_name = name;
         Ok(warning)
+    }
+
+    /// 同步版导入：解析 + 在调用线程校验 + 写回状态（单测用）。
+    #[cfg(test)]
+    fn install_imported_source(&mut self, script: String) -> Result<Option<String>, String> {
+        let metadata = wcmusic_core::parse_script_metadata(&script);
+        let validation =
+            wcmusic_core::validate_source_script(&script, SourceEnvironment::Desktop);
+        self.apply_imported_source(script, metadata, validation)
     }
 
     /// 导入洛雪音源脚本。
@@ -776,29 +792,15 @@ impl MusicApp {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let (script, metadata, validation) = prepared;
-                match metadata {
-                    Ok(metadata) => {
-                        let (name, warning) = match validation {
-                            Ok(manifest) => (manifest.metadata.name, None),
-                            Err(error) => (metadata.name, Some(error.to_string())),
-                        };
-                        let name: SharedString = name.into();
-                        this.imported_sources.push(ImportedSource {
-                            name: name.clone(),
-                            script: script.clone(),
-                        });
-                        this.source_script = Some(script);
-                        this.source_name = name.clone();
-                        this.notice = match warning {
-                            Some(warning) => format!(
-                                "已导入音源：{name}（初始化校验未通过，播放时将尝试回退：{warning}）"
-                            )
-                            .into(),
-                            None => format!("已导入音源：{name}").into(),
-                        };
-                    }
-                    Err(error) => this.notice = format!("音源校验失败：{error}").into(),
-                }
+                this.notice = match this.apply_imported_source(script, metadata, validation) {
+                    Ok(Some(warning)) => format!(
+                        "已导入音源：{}（初始化校验未通过，播放时将尝试回退：{warning}）",
+                        this.source_name
+                    )
+                    .into(),
+                    Ok(None) => format!("已导入音源：{}", this.source_name).into(),
+                    Err(error) => error.into(),
+                };
                 cx.notify();
             });
         })
@@ -871,6 +873,9 @@ impl MusicApp {
             Some(window),
             cx,
         );
+        // Theme::change 会用主题注册表里的字体覆盖 font_family，切完主题要把 MiSans 装回去。
+        install_ui_font(cx);
+        window.refresh();
         self.notice = if self.dark_theme {
             "主题偏好：深色"
         } else {
@@ -3715,15 +3720,15 @@ fn setting_row(
 }
 
 /// 专享模式下每行歌词的高度，用来让当前行稳定地停在面板中间。
-const LYRIC_ROW_HEIGHT: f32 = 56.0;
+const LYRIC_ROW_HEIGHT: f32 = 66.0;
 /// 专享模式歌词行切换的缓出滚动时长（秒），参考 Apple Music 的节奏。
 const LYRIC_SCROLL_SECONDS: f32 = 0.3;
 /// 专享模式歌词滚动动画的帧间隔（毫秒），约 60fps。
 const LYRIC_SCROLL_FRAME_MILLIS: u64 = 16;
 /// 专享模式歌词行上下淡出的距离（行数）：离动画位置多远后完全淡出。
 const LYRIC_FADE_LINES: f32 = 3.0;
-/// 专享模式歌词的基础字号（像素），与 `text_lg`（1.125rem）对齐。
-const LYRIC_BASE_TEXT_SIZE: f32 = 18.0;
+/// 专享模式歌词的基础字号（像素）。
+const LYRIC_BASE_TEXT_SIZE: f32 = 22.0;
 /// 非当前行的最低不透明度，避免远处歌词完全消失。
 const LYRIC_MIN_OPACITY: f32 = 0.25;
 
@@ -3851,6 +3856,45 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palett
         .child(div().text_sm().text_color(p.muted).child(detail.into()))
 }
 
+/// 内置字体：MiSans（随程序分发，用户系统装没装都不影响）。
+/// 三个字重正好覆盖界面里用到的 NORMAL / MEDIUM / SEMIBOLD。
+const BUNDLED_FONT_FILES: [&[u8]; 3] = [
+    include_bytes!("../../../assets/fonts/MiSans-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/MiSans-Medium.ttf"),
+    include_bytes!("../../../assets/fonts/MiSans-Semibold.ttf"),
+];
+
+/// 首选界面字体名，按顺序取第一个真正可用的。
+const UI_FONT_CANDIDATES: [&str; 1] = ["MiSans"];
+
+/// 注册内置 MiSans 字体，并把主题默认字体切到 MiSans。
+///
+/// `gpui-component` 的 `Root` 会把主题里的 `font_family` 应用到整棵界面树，
+/// 所以改主题字体即可全局生效；注意 `Theme::change` 会用主题注册表里的字体
+/// 覆盖这个字段，切换明暗主题后需要重新调用本函数。
+fn install_ui_font(cx: &mut App) {
+    let text_system = cx.text_system();
+    let fonts = BUNDLED_FONT_FILES
+        .iter()
+        .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
+        .collect::<Vec<_>>();
+    if let Err(error) = text_system.add_fonts(fonts) {
+        eprintln!("加载内置 MiSans 字体失败：{error}");
+    }
+    let available = text_system.all_font_names();
+    let family = UI_FONT_CANDIDATES
+        .iter()
+        .find(|candidate| {
+            available
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(candidate))
+        })
+        .map(|candidate| (*candidate).to_owned())
+        .unwrap_or_else(|| ".SystemUIFont".to_owned());
+    eprintln!("界面字体：{family}");
+    Theme::global_mut(cx).font_family = family.into();
+}
+
 /// 崩溃时把 panic 信息追加到 `%APPDATA%\wcmusic\panic.log`，方便用户反馈问题时排查。
 ///
 /// 注意要**追加**而不是覆盖：panic 之后的 unwind 一旦穿过 `extern "system"` 的窗口
@@ -3892,6 +3936,8 @@ fn main() {
         .run(|cx: &mut App| {
             install_panic_log();
             gpui_kit::init(cx);
+            // 内置 MiSans：注册字体并设为界面默认字体。
+            install_ui_font(cx);
             let tray = tray::TrayController::new().map(Arc::new);
             let keep_in_tray = tray.is_some();
             let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
@@ -3930,6 +3976,8 @@ fn main() {
                             Some(window),
                             cx,
                         );
+                        // 主题切换会覆盖默认字体，这里重新应用内置 MiSans。
+                        install_ui_font(cx);
                         cx.new(|cx| Root::new(view_for_window, window, cx))
                     },
                 )

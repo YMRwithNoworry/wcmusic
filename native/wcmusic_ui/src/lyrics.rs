@@ -39,8 +39,9 @@ const FRAME_MILLIS: u64 = 16;
 /// How far the smoothed karaoke position may run ahead of the real playback position.
 const KARAOKE_LEAD_MS: f32 = 320.0;
 
-/// 可选字体，与主界面设置共用。
-pub const FONT_FAMILIES: [&str; 6] = [
+/// 可选字体，与主界面设置共用。第一项是默认字体（程序内置 MiSans）。
+pub const FONT_FAMILIES: [&str; 7] = [
+    "MiSans",
     "Microsoft YaHei UI",
     "Microsoft YaHei",
     "SimSun",
