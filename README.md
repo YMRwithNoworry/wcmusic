@@ -45,7 +45,7 @@ GPUI 客户端使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等
 - 软件内问题反馈表单，与发布页一致通过邮件送达开发者
 - M3U/M3U8 和常见洛雪备份结构导入
 - 洛雪自定义源脚本导入、QuickJS `inited` 协议校验、持久化与删除
-- 内置“泡椒内部测试音源”，无需额外导入即可解析支持平台的整曲地址
+- 内置“屿溪-终章”音源，无需额外导入即可解析支持平台的整曲地址
 - 深浅主题、有机封面、共享元素转场与 reduced-motion 设置入口
 - Windows Rust DLL 与 Android arm64 Rust `.so` 自动构建接线
 

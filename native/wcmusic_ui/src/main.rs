@@ -37,7 +37,6 @@ use crate::lyrics::{
 };
 use crate::settings::{AppSettings, HotKeySettings};
 
-const BUILT_IN_SOURCE_PATH: &str = r"D:\Downloads\lx-music-source-v5.js";
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 /// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
 const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
@@ -90,10 +89,9 @@ impl Palette {
     }
 }
 
+/// 内置音源脚本：随程序分发，不需要用户导入即可解析支持平台的整曲地址。
 fn built_in_source_script() -> String {
-    std::fs::read_to_string(BUILT_IN_SOURCE_PATH).unwrap_or_else(|_| {
-        include_str!("../../../assets/sources/paojiao_internal_source.js").to_owned()
-    })
+    include_str!("../../../assets/sources/yuxi_final_source.js").to_owned()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -6,7 +6,7 @@ import '../services/source_resolver.dart';
 import '../services/source_storage.dart';
 
 class MemorySourceRepository implements SourceRepository {
-  static const builtInSourceId = 'wcmusic-paojiao-internal-source';
+  static const builtInSourceId = 'wcmusic-built-in-source';
   static const builtInSourceKeys = ['kg', 'kw', 'mg', 'tx', 'wy'];
 
   MemorySourceRepository({

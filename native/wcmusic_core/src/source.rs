@@ -588,7 +588,7 @@ new Promise((resolve) => {{
 
     #[test]
     fn validates_bundled_source_on_mobile() {
-        let script = include_str!("../../../assets/sources/paojiao_internal_source.js");
+        let script = include_str!("../../../assets/sources/yuxi_final_source.js");
         let manifest = validate_source_script(script, SourceEnvironment::Mobile).unwrap();
         assert!(
             manifest.sources.len() >= 5,

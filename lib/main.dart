@@ -17,7 +17,7 @@ Future<void> main() async {
   final windowService = DesktopWindowService();
   await windowService.initialize();
   final builtInSourceScript = await rootBundle.loadString(
-    'assets/sources/paojiao_internal_source.js',
+    'assets/sources/yuxi_final_source.js',
   );
   runApp(
     ChangeNotifierProvider(
@@ -26,7 +26,7 @@ Future<void> main() async {
         sourceRepository: MemorySourceRepository(
           storage: FileSourceStorage(),
           builtInScript: builtInSourceScript,
-          builtInSourceName: '泡椒内部测试音源',
+          builtInSourceName: '屿溪-终章',
         ),
         onlineSearchService: MultiSourceOnlineSearchService(),
         windowLifecycleService: windowService,

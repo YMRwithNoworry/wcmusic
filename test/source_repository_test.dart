@@ -172,13 +172,13 @@ void main() {
     final repository = MemorySourceRepository(
       nativeCore: _FakeNativeCore(),
       builtInScript: _script,
-      builtInSourceName: '泡椒内部测试音源',
+      builtInSourceName: '屿溪-终章',
     );
 
     final source = (await repository.loadSources()).single;
 
     expect(source.id, MemorySourceRepository.builtInSourceId);
-    expect(source.name, '泡椒内部测试音源');
+    expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);
     expect(source.sourceKeys, ['kw']);
     expect(
@@ -189,19 +189,19 @@ void main() {
 
   testWidgets('packages the built-in Paojiao source asset', (_) async {
     final script = await rootBundle.loadString(
-      'assets/sources/paojiao_internal_source.js',
+      'assets/sources/yuxi_final_source.js',
     );
     final repository = MemorySourceRepository(
       nativeCore: _UnavailableNativeCore(),
       builtInScript: script,
-      builtInSourceName: '泡椒内部测试音源',
+      builtInSourceName: '屿溪-终章',
     );
 
     final source = (await repository.loadSources()).single;
 
     expect(script, contains('@version 1.2.0'));
     expect(source.id, MemorySourceRepository.builtInSourceId);
-    expect(source.name, '泡椒内部测试音源');
+    expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);
   });
 
@@ -211,12 +211,12 @@ void main() {
       final repository = MemorySourceRepository(
         nativeCore: _UnavailableNativeCore(),
         builtInScript: _quotedKeysScript,
-        builtInSourceName: '泡椒内部测试音源',
+        builtInSourceName: '屿溪-终章',
       );
 
       final source = (await repository.loadSources()).single;
 
-      expect(source.name, '泡椒内部测试音源');
+      expect(source.name, '屿溪-终章');
       expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
     },
   );
@@ -225,12 +225,12 @@ void main() {
     final repository = MemorySourceRepository(
       nativeCore: _RejectingNativeCore(),
       builtInScript: _quotedKeysScript,
-      builtInSourceName: '泡椒内部测试音源',
+      builtInSourceName: '屿溪-终章',
     );
 
     final source = (await repository.loadSources()).single;
 
-    expect(source.name, '泡椒内部测试音源');
+    expect(source.name, '屿溪-终章');
     expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
   });
 }
