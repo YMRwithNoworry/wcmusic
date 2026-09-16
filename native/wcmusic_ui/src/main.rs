@@ -2868,9 +2868,12 @@ impl MusicApp {
             // 离动画位置越远越淡、越小：当前行最亮，邻居依次退到背景。
             // 颜色/字号/不透明度都按强调度连续插值，避免出现"换行瞬间跳色"的硬切。
             let emphasis = lyric_emphasis(index, displayed_position);
+            // 字号与整体透明度按强调度平滑过渡，但颜色只落在当前行：
+            // 颜色若直接跟着 ±3 行的强调度走，会有好几行同时泛绿。
+            let highlight = crate::lyrics::color_emphasis(emphasis);
             let opacity = LYRIC_MIN_OPACITY + (1.0 - LYRIC_MIN_OPACITY) * emphasis;
             let font_size = LYRIC_BASE_TEXT_SIZE * (0.94 + 0.14 * emphasis);
-            let text_color = mix_hsla(p.muted, accent, emphasis);
+            let text_color = mix_hsla(p.muted, accent, highlight);
             let time_ms = line.time_ms;
             let text = div()
                 .whitespace_nowrap()
@@ -2896,7 +2899,7 @@ impl MusicApp {
                     column = column.child(
                         div()
                             .text_sm()
-                            .text_color(mix_hsla(p.muted, accent, emphasis))
+                            .text_color(mix_hsla(p.muted, accent, highlight))
                             .opacity(0.7 + 0.2 * emphasis)
                             .child(SharedString::from(translation.to_owned())),
                     );
@@ -5521,8 +5524,6 @@ fn setting_info_row(label: &'static str, value: impl Into<SharedString>, p: Pale
 const LYRIC_ROW_HEIGHT: f32 = 66.0;
 /// 专享模式歌词行切换的滚动时长（秒）。稍长一点、配合缓入缓出，收尾更从容。
 const LYRIC_SCROLL_SECONDS: f32 = 0.42;
-/// 专享模式歌词行上下淡出的距离（行数）：离动画位置多远后完全淡出。
-const LYRIC_FADE_LINES: f32 = 3.0;
 /// 专享模式歌词的基础字号（像素）。
 const LYRIC_BASE_TEXT_SIZE: f32 = 22.0;
 /// 非当前行的最低不透明度，避免远处歌词完全消失。
@@ -5566,11 +5567,9 @@ fn lyric_scroll_position(from: f32, to: f32, progress: f32) -> f32 {
 }
 
 /// 歌词行离动画位置越远，强调程度越低（1.0 表示完全强调）。
-/// 用 smoothstep 收一下，让边缘的行淡出得更柔和。
+/// 与桌面歌词共用同一条曲线，避免两处淡出手感不一致。
 fn lyric_emphasis(index: usize, displayed_position: f32) -> f32 {
-    let distance = (index as f32 - displayed_position).abs();
-    let linear = (1.0 - distance / LYRIC_FADE_LINES).clamp(0.0, 1.0);
-    linear * linear * (3.0 - 2.0 * linear)
+    crate::lyrics::line_emphasis(index, displayed_position)
 }
 
 /// 专享模式的歌曲信息行：灰色标签 + 值。

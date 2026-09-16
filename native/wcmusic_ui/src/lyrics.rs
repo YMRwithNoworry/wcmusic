@@ -109,6 +109,19 @@ fn lyric_fade(offset: f32) -> f32 {
     linear * linear * (3.0 - 2.0 * linear)
 }
 
+/// 专享模式歌词：行号与动画位置之间的距离 -> 强调度（与桌面歌词同一套曲线）。
+pub(crate) fn line_emphasis(index: usize, displayed_position: f32) -> f32 {
+    lyric_fade(index as f32 - displayed_position)
+}
+
+/// 颜色强调：只有当前行（或换行瞬间正在过渡的那一行）才染上高亮色。
+///
+/// `lyric_fade` 的取值范围是 ±3 行，直接拿它插值颜色会让好几行一起泛绿；
+/// 字号与整体透明度继续用平滑的 `lyric_fade`，颜色则用这条陡得多的曲线。
+pub(crate) fn color_emphasis(emphasis: f32) -> f32 {
+    ((emphasis - 0.86) / 0.14).clamp(0.0, 1.0)
+}
+
 /// 在两个 RGB 颜色之间按强度线性插值，用于普通行 -> 当前行的连续过渡。
 fn mix_rgb(from: u32, to: u32, amount: f32) -> u32 {
     let amount = amount.clamp(0.0, 1.0);
@@ -1467,7 +1480,7 @@ impl LyricsOverlay {
                 index,
                 size * (0.86 + 0.14 * emphasis) * scale,
                 alpha,
-                emphasis,
+                color_emphasis(emphasis),
                 is_current && style.karaoke,
                 width,
                 padding,
@@ -2163,6 +2176,34 @@ mod tests {
         assert_eq!(lyric_fade(5.0), 0.0);
         // 对称：上一行和下一行淡出程度一致。
         assert_eq!(lyric_fade(-1.5), lyric_fade(1.5));
+    }
+
+    #[test]
+    fn color_emphasis_keeps_only_the_current_line_coloured() {
+        // 静止时：当前行满色，紧邻的上下行完全不上色（此前 ±3 行都会泛绿）。
+        assert!((color_emphasis(lyric_fade(0.0)) - 1.0).abs() < 1e-5);
+        assert_eq!(color_emphasis(lyric_fade(1.0)), 0.0);
+        assert_eq!(color_emphasis(lyric_fade(2.0)), 0.0);
+        assert_eq!(color_emphasis(lyric_fade(3.0)), 0.0);
+        assert_eq!(color_emphasis(0.0), 0.0);
+        // 换行过渡中，正在逼近当前位置的那一行仍会被染色。
+        assert!(color_emphasis(lyric_fade(0.2)) > 0.0);
+    }
+
+    #[test]
+    fn only_the_current_line_is_accented_at_rest() {
+        // 直接按专享模式/桌面歌词的取色路径检查：静止在某一行时，
+        // 只有那一行拿到高亮色，其余行（含紧邻的上下行）保持普通色。
+        let displayed_position = 3.0_f32;
+        for index in 0..8usize {
+            let emphasis = line_emphasis(index, displayed_position);
+            let highlight = color_emphasis(emphasis);
+            if index == 3 {
+                assert!(highlight > 0.99, "当前行应当完全染色，实际 {highlight}");
+            } else {
+                assert_eq!(highlight, 0.0, "第 {index} 行不应被染色");
+            }
+        }
     }
 
     #[test]
