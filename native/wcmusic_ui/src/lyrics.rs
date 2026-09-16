@@ -180,24 +180,80 @@ impl LyricLine {
     }
 }
 
+/// 翻译行与原文行时间戳允许的最大偏差：翻译 LRC 常和原文错开几十毫秒，
+/// 韩语等歌曲甚至整段换行，所以先就近配对、再按行序兜底。
+const TRANSLATION_TOLERANCE_MS: u64 = 500;
+
+/// 一行翻译是否值得展示：空串、纯符号占位（例如 QQ 翻译里的 `//`）都跳过。
+fn usable_translation(text: &str) -> Option<&str> {
+    let text = text.trim();
+    if text.is_empty() || !text.chars().any(char::is_alphanumeric) {
+        return None;
+    }
+    Some(text)
+}
+
 /// 解析歌词，并把逐行翻译合并到对应时间戳的歌词上。
+///
+/// 翻译未必与原文时间戳完全一致，所以：
+/// 1. 先在同一行容差 [`TRANSLATION_TOLERANCE_MS`] 内按最近时间戳配对，差值小者优先
+///    （完全相同的时间戳差值最小，因此一定优先），每个翻译行只会用一次；
+/// 2. 若两边行数相同、仍有剩余行，则按行序一一配对，避免整段错位时全军覆没；
+/// 3. 翻译与原文完全相同、空串或纯符号占位都会被忽略。
 pub fn parse_lrc_with_translation(content: &str, translation: &str) -> Vec<LyricLine> {
     let mut lines = parse_lrc_lines(content);
-    if lines.is_empty() {
+    if lines.is_empty() || translation.trim().is_empty() {
         return lines;
     }
-    if !translation.trim().is_empty() {
-        let mut translated = parse_lrc_lines(translation);
-        translated.sort_by_key(|line| line.time_ms);
-        for line in &mut lines {
-            if let Ok(index) = translated.binary_search_by_key(&line.time_ms, |item| item.time_ms) {
-                let text = translated[index].text.trim();
-                if !text.is_empty() && text != line.text {
-                    line.translation = Some(text.to_owned());
+    let mut translated = parse_lrc_lines(translation);
+    if translated.is_empty() {
+        return lines;
+    }
+    translated.sort_by_key(|line| line.time_ms);
+
+    let mut used = vec![false; translated.len()];
+    let mut paired = vec![false; lines.len()];
+
+    // 就近配对：把容差内所有候选按差值排序后贪心取用，差值最小的先落位。
+    let mut candidates = Vec::new();
+    for (line_index, line) in lines.iter().enumerate() {
+        for (translation_index, candidate) in translated.iter().enumerate() {
+            let diff = candidate.time_ms.abs_diff(line.time_ms);
+            if diff <= TRANSLATION_TOLERANCE_MS {
+                candidates.push((diff, line_index, translation_index));
+            }
+        }
+    }
+    candidates.sort_unstable();
+    for (_, line_index, translation_index) in candidates {
+        if used[translation_index] || paired[line_index] {
+            continue;
+        }
+        used[translation_index] = true;
+        paired[line_index] = true;
+        if let Some(text) = usable_translation(&translated[translation_index].text) {
+            if text != lines[line_index].text.trim() {
+                lines[line_index].translation = Some(text.to_owned());
+            }
+        }
+    }
+
+    // 时间戳整体错位时（两边行数一致）退化为按行序配对。
+    let leftover_lines: Vec<usize> = (0..lines.len()).filter(|index| !paired[*index]).collect();
+    let leftover_translations: Vec<usize> =
+        (0..translated.len()).filter(|index| !used[*index]).collect();
+    if !leftover_lines.is_empty() && leftover_lines.len() == leftover_translations.len() {
+        for (&line_index, &translation_index) in
+            leftover_lines.iter().zip(&leftover_translations)
+        {
+            if let Some(text) = usable_translation(&translated[translation_index].text) {
+                if text != lines[line_index].text.trim() {
+                    lines[line_index].translation = Some(text.to_owned());
                 }
             }
         }
     }
+
     lines.sort_by_key(|line| line.time_ms);
     lines
 }
@@ -338,6 +394,46 @@ fn load_kugou(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String
 }
 
 fn load_qq(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
+    // 旧接口 fcg_query_lyric_new.fcg 现在始终返回空的 trans，翻译只能从
+    // musicu.fcg 拿：crypt=0 时它返回 base64 编码的明文 LRC（正文 + 翻译）。
+    let request = serde_json::json!({
+        "comm": { "ct": 24, "cv": 0 },
+        "lyric": {
+            "method": "GetPlayLyricInfo",
+            "module": "music.musichallSong.PlayLyricInfo",
+            "param": {
+                "songMID": source_id,
+                "format": "json",
+                "nobase64": 1,
+                "profit": 1,
+                "crypt": 0,
+                "qrc": 0,
+                "trans": 1,
+            },
+        },
+    });
+    if let Ok(value) = post_json(
+        "https://u.y.qq.com/cgi-bin/musicu.fcg",
+        &request,
+        "https://y.qq.com/",
+        use_proxy,
+    ) {
+        let data = value.pointer("/lyric/data");
+        let lyrics = data
+            .and_then(|data| decode_qq_lyric(data.get("lyric")))
+            .unwrap_or_default();
+        if !lyrics.trim().is_empty() {
+            let translation = data
+                .and_then(|data| decode_qq_lyric(data.get("trans")))
+                .unwrap_or_default();
+            return Ok(parse_lrc_with_translation(&lyrics, &translation));
+        }
+    }
+    load_qq_legacy(source_id, use_proxy)
+}
+
+/// 旧版 QQ 歌词接口：只有正文、没有 `trans`，作为 musicu 失败时的兜底。
+fn load_qq_legacy(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
     let value = get_json(
         "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg",
         &[
@@ -351,6 +447,25 @@ fn load_qq(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
     let lyrics = text(value.get("lyric")).unwrap_or_default();
     let translation = text(value.get("trans")).unwrap_or_default();
     Ok(parse_lrc_with_translation(&lyrics, &translation))
+}
+
+/// QQ 的 musicu 接口返回 base64 编码的 LRC；若已经是明文则原样返回。
+fn decode_qq_lyric(value: Option<&Value>) -> Option<String> {
+    let raw = match value? {
+        Value::String(value) => value.trim(),
+        _ => return None,
+    };
+    if raw.is_empty() {
+        return None;
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(raw) {
+        if let Ok(decoded) = String::from_utf8(bytes) {
+            if decoded.trim_start().starts_with('[') {
+                return Some(decoded);
+            }
+        }
+    }
+    Some(raw.to_owned())
 }
 
 fn load_netease(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
@@ -397,6 +512,34 @@ fn get_json(
         .set("User-Agent", "WCMusic/1.0")
         .set("Referer", referer)
         .call()
+        .map_err(|error| format!("歌词请求失败：{error}"))?
+        .into_string()
+        .map_err(|error| format!("歌词读取失败：{error}"))?;
+    let body = body.trim_start_matches('\u{feff}');
+    serde_json::from_str(body).map_err(|error| format!("歌词数据解析失败：{error}"))
+}
+
+fn post_json(
+    endpoint: &str,
+    payload: &Value,
+    referer: &str,
+    use_proxy: bool,
+) -> Result<Value, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(15))
+        .timeout_write(Duration::from_secs(15))
+        .try_proxy_from_env(use_proxy)
+        .build();
+    let payload =
+        serde_json::to_string(payload).map_err(|error| format!("歌词请求编码失败：{error}"))?;
+    let body = agent
+        .post(endpoint)
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json")
+        .set("User-Agent", "WCMusic/1.0")
+        .set("Referer", referer)
+        .send_string(&payload)
         .map_err(|error| format!("歌词请求失败：{error}"))?
         .into_string()
         .map_err(|error| format!("歌词读取失败：{error}"))?;
@@ -2146,6 +2289,69 @@ mod tests {
     }
 
     #[test]
+    fn merges_translation_with_slightly_shifted_timestamps() {
+        // 翻译 LRC 常比原文早/晚几十毫秒，容差内应照常合上。
+        let lines = parse_lrc_with_translation(
+            "[00:01.00]第一句\n[00:03.00]第二句\n[00:05.00]第三句",
+            "[00:01.12]First line\n[00:02.86]Second line\n[00:05.31]Third line",
+        );
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].translation.as_deref(), Some("First line"));
+        assert_eq!(lines[1].translation.as_deref(), Some("Second line"));
+        assert_eq!(lines[2].translation.as_deref(), Some("Third line"));
+    }
+
+    #[test]
+    fn merges_only_translation_lines_that_exist() {
+        // 只有部分行有翻译：其余行保持 None，不能顺延错配。
+        let lines = parse_lrc_with_translation(
+            "[00:01.00]第一句\n[00:03.00]第二句\n[00:05.00]第三句",
+            "[00:03.05]Second line",
+        );
+
+        assert_eq!(lines[0].translation, None);
+        assert_eq!(lines[1].translation.as_deref(), Some("Second line"));
+        assert_eq!(lines[2].translation, None);
+    }
+
+    #[test]
+    fn does_not_pair_translations_beyond_tolerance() {
+        // 时间戳超出容差、两边行数又不一致：宁可不配对，也不能按序乱配。
+        let lines = parse_lrc_with_translation(
+            "[00:01.00]第一句\n[00:03.00]第二句",
+            "[00:20.00]Unrelated\n[00:21.00]Also unrelated\n[00:22.00]Still unrelated",
+        );
+
+        assert!(lines.iter().all(|line| line.translation.is_none()));
+    }
+
+    #[test]
+    fn pairs_by_line_order_when_timestamps_are_shifted() {
+        // 整段翻译整体错位（行数一致）时退化为按行序配对。
+        let lines = parse_lrc_with_translation(
+            "[00:01.00]第一句\n[00:03.00]第二句\n[00:05.00]第三句",
+            "[00:11.00]One\n[00:13.00]Two\n[00:15.00]Three",
+        );
+
+        assert_eq!(lines[0].translation.as_deref(), Some("One"));
+        assert_eq!(lines[1].translation.as_deref(), Some("Two"));
+        assert_eq!(lines[2].translation.as_deref(), Some("Three"));
+    }
+
+    #[test]
+    fn skips_placeholder_translations() {
+        // QQ 的翻译会用 `//` 标注没有翻译的行，不应把这些占位符当成翻译展示。
+        let lines = parse_lrc_with_translation(
+            "[00:01.00]Hello\n[00:03.00]World",
+            "[00:01.00]Hello\n[00:03.00]//",
+        );
+
+        assert_eq!(lines[0].translation, None);
+        assert_eq!(lines[1].translation, None);
+    }
+
+    #[test]
     fn style_clamps_corrupted_values() {
         let mut style = LyricsStyle {
             font_family: "   ".into(),
@@ -2295,5 +2501,46 @@ mod tests {
         // 当前行的高亮色必须落在普通色与高亮色之间，避免跳变。
         let mixed = mix_rgb(0x808080, 0x00C65B, 0.5);
         assert!(mixed & 0x00FF00 > 0x80 - 1 && mixed != 0x00C65B);
+    }
+
+    /// 联网探针：用真实曲目验证整条抓取链路。
+    /// 跑法：`cargo test --release -- --ignored --nocapture fetches_translation`
+    #[test]
+    #[ignore = "联网探针：需要真实音乐平台接口"]
+    fn fetches_translation_from_real_platforms() {
+        fn probe(source: TrackSource, source_id: &str, label: &str) {
+            let track = Track {
+                id: source_id.to_owned(),
+                title: String::new(),
+                artist: String::new(),
+                album: String::new(),
+                duration_ms: 0,
+                uri: String::new(),
+                artwork_uri: None,
+                source,
+                source_id: Some(source_id.to_owned()),
+                quality: None,
+            };
+            match fetch_lyrics(&track, false) {
+                Ok(lines) => {
+                    let translated = lines
+                        .iter()
+                        .filter(|line| line.translation.is_some())
+                        .count();
+                    println!("{label}: 原文行数 {} / 带翻译行数 {}", lines.len(), translated);
+                    for line in lines.iter().take(8) {
+                        println!(
+                            "  {:>7}ms  {:?}  ->  {:?}",
+                            line.time_ms, line.text, line.translation
+                        );
+                    }
+                    assert!(!lines.is_empty(), "{label}: 没有拿到歌词");
+                    assert!(translated > 0, "{label}: 没有合并到任何翻译");
+                }
+                Err(error) => panic!("{label}: 抓取失败：{error}"),
+            }
+        }
+        probe(TrackSource::Tx, "000akynZ2Rbro5", "QQ Lemon");
+        probe(TrackSource::Wy, "536622304", "网易 Lemon");
     }
 }
