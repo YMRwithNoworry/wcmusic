@@ -4,10 +4,13 @@ mod audio_player;
 mod hotkey;
 mod lyrics;
 mod lyrics_window;
+mod picker;
 mod settings;
 mod tray;
 mod ui_busy;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,9 +23,10 @@ use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyWindowHandle, App, Bounds, Context, Entity, Hsla, Pixels, Point, Render, SharedString,
-    Subscription, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-    div, img, point, prelude::*, px, size,
+    AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Subscription,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, checkerboard,
+    div, hsla, img, linear_color_stop, linear_gradient, point, prelude::*, px, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -33,13 +37,34 @@ use wcmusic_core::{
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
 use crate::hotkey::{HotKeyAction, HotKeyManager};
 use crate::lyrics::{
-    LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics,
+    LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
 use crate::settings::{AppSettings, HotKeySettings};
 
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 /// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
 const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
+
+/// 侧边栏品牌图标：与应用/窗口图标同一份素材，编译期直接嵌入。
+const BRAND_ICON_PATH: &str = "brand/app_icon.png";
+
+/// GPUI Kit 只提供 Lucide 图标；这里再挂上应用自己的品牌图标。
+struct BrandAssets;
+
+impl gpui::AssetSource for BrandAssets {
+    fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if path == BRAND_ICON_PATH {
+            return Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../../assets/icons/app_icon.png"
+            ))));
+        }
+        gpui_kit::assets::AllAssets.load(path)
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+        gpui_kit::assets::AllAssets.list(path)
+    }
+}
 
 /// A small, copyable projection of the active GPUI Kit theme.
 ///
@@ -167,6 +192,113 @@ impl SettingsSection {
     }
 }
 
+/// 桌面歌词颜色选择器可以编辑的目标。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorTarget {
+    Text,
+    Highlight,
+    Stroke,
+    Background,
+}
+
+impl ColorTarget {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Text => "歌词文字颜色",
+            Self::Highlight => "已播放颜色",
+            Self::Stroke => "描边颜色",
+            Self::Background => "歌词背景",
+        }
+    }
+
+    /// 读取当前目标颜色与不透明度。
+    fn read(self, style: &LyricsStyle) -> (u32, f32) {
+        match self {
+            Self::Text => (style.text_color, style.text_alpha),
+            Self::Highlight => (style.highlight_color, style.highlight_alpha),
+            Self::Stroke => (style.stroke_color, style.stroke_alpha),
+            Self::Background => (style.background_color, style.background_opacity),
+        }
+    }
+
+    /// 写回目标颜色与不透明度。
+    fn write(self, style: &mut LyricsStyle, rgb: u32, alpha: f32) {
+        match self {
+            Self::Text => {
+                style.text_color = rgb & 0x00FF_FFFF;
+                style.text_alpha = alpha;
+            }
+            Self::Highlight => {
+                style.highlight_color = rgb & 0x00FF_FFFF;
+                style.highlight_alpha = alpha;
+            }
+            Self::Stroke => {
+                style.stroke_color = rgb & 0x00FF_FFFF;
+                style.stroke_alpha = alpha;
+            }
+            Self::Background => {
+                style.background_color = rgb & 0x00FF_FFFF;
+                style.background_opacity = alpha;
+            }
+        }
+    }
+
+    /// 重置按钮使用的默认值。
+    fn reset(self) -> (u32, f32) {
+        match self {
+            Self::Text => (crate::lyrics::TEXT_COLORS[0], 1.0),
+            Self::Highlight => (crate::lyrics::HIGHLIGHT_COLORS[0], 1.0),
+            Self::Stroke => (0x000000, 1.0),
+            Self::Background => (0x101014, 0.0),
+        }
+    }
+}
+
+/// 颜色文本输入框当前显示的格式。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorFormat {
+    Hex,
+    Rgba,
+}
+
+/// 颜色选择器当前正在拖动的区域。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorDrag {
+    Sv,
+    Hue,
+    Alpha,
+}
+
+/// 色板尺寸（逻辑像素）：拖动换算与缩略图定位共用。
+const SV_PAD_WIDTH: f32 = 240.0;
+const SV_PAD_HEIGHT: f32 = 180.0;
+const STRIP_WIDTH: f32 = 18.0;
+const STRIP_HEIGHT: f32 = 180.0;
+const THUMB_SIZE: f32 = 14.0;
+
+/// 打开中的颜色选择器状态。
+struct ColorPickerState {
+    target: ColorTarget,
+    hue: f32,
+    sat: f32,
+    val: f32,
+    alpha: f32,
+    input: Option<Entity<InputState>>,
+    format: ColorFormat,
+    drag: Option<ColorDrag>,
+    /// 三个拖动区域在窗口坐标系里的边界，顺序为 [SV 色板, 色相条, 透明度条]。
+    bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+}
+
+/// 设置页当前打开的浮层选择器。
+enum SettingsPicker {
+    Font {
+        query: SharedString,
+        list: Entity<InputState>,
+    },
+    Color(ColorPickerState),
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct TrackRow {
     track: Track,
@@ -261,6 +393,12 @@ struct MusicApp {
     lyrics_overlay: Option<Entity<LyricsOverlay>>,
     lyrics_window: Option<AnyWindowHandle>,
     lyrics_generation: u64,
+    /// 当前打开的设置浮层（字体或颜色选择器），None 表示全部关闭。
+    settings_picker: Option<SettingsPicker>,
+    /// 缓存的操作系统字体列表，第一次打开字体选择器时才读取。
+    font_options: Option<Vec<String>>,
+    /// 浮层打开期间延迟落盘，只在关闭时写一次，避免拖动时频繁写磁盘。
+    persist_lyrics_deferred: bool,
     /// 当前歌曲的歌词，供专享模式显示。
     lyric_lines: Vec<LyricLine>,
     lyric_lines_loading: bool,
@@ -336,6 +474,9 @@ impl MusicApp {
             lyrics_overlay: None,
             lyrics_window: None,
             lyrics_generation: 0,
+            settings_picker: None,
+            font_options: None,
+            persist_lyrics_deferred: false,
             lyric_lines: Vec::new(),
             lyric_lines_loading: false,
             lyric_lines_error: None,
@@ -950,7 +1091,9 @@ impl MusicApp {
             None => {
                 change(&mut self.lyrics);
                 self.lyrics.clamp();
-                self.persist_settings();
+                if !self.persist_lyrics_deferred {
+                    self.persist_settings();
+                }
                 cx.notify();
             }
         }
@@ -964,12 +1107,259 @@ impl MusicApp {
         let store = cx.new(|_| LyricsStyleStore::new(self.lyrics.clone()));
         cx.observe(&store, |this, store, cx| {
             this.lyrics = store.read(cx).style().clone();
-            this.persist_settings();
+            // 拖动颜色/字号时浮层会高频改样式，落盘推迟到关闭浮层时一次完成。
+            if !this.persist_lyrics_deferred {
+                this.persist_settings();
+            }
             cx.notify();
         })
         .detach();
         self.lyrics_store = Some(store.clone());
         store
+    }
+
+    /// 打开字体选择器：系统字体列表第一次打开时读取、排序并缓存。
+    fn open_font_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.font_options.is_none() {
+            let mut names = cx.text_system().all_font_names();
+            names.sort_by_key(|name| name.to_lowercase());
+            names.dedup_by(|a, b| a.eq_ignore_ascii_case(b.as_str()));
+            self.font_options = Some(names);
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索字体"));
+        cx.subscribe_in(&input, window, |this, input, event, _, cx| {
+            if let InputEvent::Change = event {
+                let value = input.read(cx).value();
+                if let Some(SettingsPicker::Font { query, .. }) = &mut this.settings_picker {
+                    *query = value;
+                }
+                cx.notify();
+            }
+        })
+        .detach();
+        self.persist_lyrics_deferred = true;
+        self.settings_picker = Some(SettingsPicker::Font {
+            query: "".into(),
+            list: input.clone(),
+        });
+        input.update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    /// 打开某个歌词颜色的选择器，并把当前颜色换算成 HSV 作为初始状态。
+    fn open_color_picker(
+        &mut self,
+        target: ColorTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (rgb, alpha) = target.read(&self.lyrics);
+        let (hue, sat, val) = picker::rgb_to_hsv(rgb);
+        let text = picker::format_rgba(rgb, alpha);
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("颜色值"));
+        input.update(cx, |state, cx| state.set_value(text, window, cx));
+        cx.subscribe_in(&input, window, |this, input, event, _window, cx| match event {
+            InputEvent::Change => {
+                let value = input.read(cx).value();
+                let Some((rgb, alpha)) = picker::parse_color(value.as_str()) else {
+                    return;
+                };
+                // 输入框里能解析出颜色时才跟随，避免打断正在输入的半成品。
+                let (hue, sat, val) = picker::rgb_to_hsv(rgb);
+                if let Some(state) = this.color_picker_state_mut() {
+                    state.hue = hue;
+                    state.sat = sat;
+                    state.val = val;
+                    state.alpha = alpha;
+                }
+                let Some(target) = this.color_picker_target() else {
+                    return;
+                };
+                this.update_lyrics_style(cx, move |style| target.write(style, rgb, alpha));
+                cx.notify();
+            }
+            InputEvent::PressEnter { .. } | InputEvent::Focus | InputEvent::Blur => {}
+        })
+        .detach();
+        self.persist_lyrics_deferred = true;
+        self.settings_picker = Some(SettingsPicker::Color(ColorPickerState {
+            target,
+            hue,
+            sat,
+            val,
+            alpha,
+            input: Some(input.clone()),
+            format: ColorFormat::Rgba,
+            drag: None,
+            bounds: Rc::new(RefCell::new(Vec::new())),
+        }));
+        input.update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    fn color_picker_target(&self) -> Option<ColorTarget> {
+        self.color_picker_state().map(|state| state.target)
+    }
+
+    fn color_picker_state(&self) -> Option<&ColorPickerState> {
+        match &self.settings_picker {
+            Some(SettingsPicker::Color(state)) => Some(state),
+            _ => None,
+        }
+    }
+
+    fn color_picker_state_mut(&mut self) -> Option<&mut ColorPickerState> {
+        match &mut self.settings_picker {
+            Some(SettingsPicker::Color(state)) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// 把当前 HSV/alpha 写回歌词样式，是拖动时的高频入口。
+    fn apply_color_picker(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.color_picker_state() else {
+            return;
+        };
+        let target = state.target;
+        let rgb = picker::hsv_to_rgb(state.hue, state.sat, state.val);
+        let alpha = state.alpha;
+        self.update_lyrics_style(cx, move |style| target.write(style, rgb, alpha));
+    }
+
+    /// 用当前格式重写颜色输入框（`set_value` 不会触发 Change 事件）。
+    fn sync_color_picker_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.color_picker_state() else {
+            return;
+        };
+        let Some(input) = state.input.clone() else {
+            return;
+        };
+        let rgb = picker::hsv_to_rgb(state.hue, state.sat, state.val);
+        let text = match state.format {
+            ColorFormat::Hex => picker::format_hex_alpha(rgb, state.alpha),
+            ColorFormat::Rgba => picker::format_rgba(rgb, state.alpha),
+        };
+        input.update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
+    fn begin_color_drag(
+        &mut self,
+        drag: ColorDrag,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(state) = self.color_picker_state_mut() {
+            state.drag = Some(drag);
+        }
+        self.update_color_drag(position, window, cx);
+    }
+
+    /// 把鼠标位置换算成拖动区域内的 0..1 值并实时应用。
+    fn update_color_drag(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.color_picker_state().and_then(|state| state.drag) else {
+            return;
+        };
+        let (x, y) = {
+            let Some(state) = self.color_picker_state() else {
+                return;
+            };
+            // 先克隆 Rc 再借用，避免和下面修改状态时的可变借用冲突。
+            let bounds = state.bounds.clone();
+            let bounds = bounds.borrow();
+            let index = match drag {
+                ColorDrag::Sv => 0,
+                ColorDrag::Hue => 1,
+                ColorDrag::Alpha => 2,
+            };
+            let Some(region) = bounds.get(index) else {
+                return;
+            };
+            (
+                region_fraction(
+                    f32::from(position.x),
+                    f32::from(region.origin.x),
+                    f32::from(region.size.width),
+                ),
+                region_fraction(
+                    f32::from(position.y),
+                    f32::from(region.origin.y),
+                    f32::from(region.size.height),
+                ),
+            )
+        };
+        if let Some(state) = self.color_picker_state_mut() {
+            match drag {
+                ColorDrag::Sv => {
+                    state.sat = x;
+                    state.val = 1.0 - y;
+                }
+                ColorDrag::Hue => {
+                    // 停在 359.999 而不是 360，避免和 0 度之间来回跳变。
+                    state.hue = (y * 360.0).min(359.999);
+                }
+                ColorDrag::Alpha => state.alpha = y,
+            }
+        } else {
+            return;
+        }
+        self.apply_color_picker(cx);
+        self.sync_color_picker_input(window, cx);
+        cx.notify();
+    }
+
+    fn end_color_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.color_picker_state_mut() {
+            if state.drag.take().is_some() {
+                cx.notify();
+            }
+        }
+    }
+
+    fn set_color_format(
+        &mut self,
+        format: ColorFormat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(state) = self.color_picker_state_mut() {
+            state.format = format;
+        }
+        self.sync_color_picker_input(window, cx);
+        cx.notify();
+    }
+
+    fn reset_color_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.color_picker_target() else {
+            return;
+        };
+        let (rgb, alpha) = target.reset();
+        let (hue, sat, val) = picker::rgb_to_hsv(rgb);
+        if let Some(state) = self.color_picker_state_mut() {
+            state.hue = hue;
+            state.sat = sat;
+            state.val = val;
+            state.alpha = alpha;
+        }
+        self.update_lyrics_style(cx, move |style| target.write(style, rgb, alpha));
+        self.sync_color_picker_input(window, cx);
+        cx.notify();
+    }
+
+    /// 关闭浮层：恢复落盘并只写一次磁盘。
+    fn close_settings_picker(&mut self, cx: &mut Context<Self>) {
+        if self.settings_picker.is_none() {
+            return;
+        }
+        self.settings_picker = None;
+        self.persist_lyrics_deferred = false;
+        self.persist_settings();
+        cx.notify();
     }
 
     fn open_lyrics_window(&mut self, cx: &mut Context<Self>) {
@@ -1983,15 +2373,8 @@ impl MusicApp {
                         div()
                             .size(px(42.0))
                             .rounded_lg()
-                            .bg(p.primary)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                Icon::new(IconName::GalleryVerticalEnd)
-                                    .size(px(22.0))
-                                    .text_color(p.primary_foreground),
-                            ),
+                            .overflow_hidden()
+                            .child(img(BRAND_ICON_PATH).size(px(42.0))),
                     )
                     .child(
                         div()
@@ -3066,6 +3449,357 @@ impl MusicApp {
         }
     }
 
+    /// 设置页的浮层：字体选择器或颜色选择器。返回 None 表示没有打开。
+    fn settings_picker_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let picker = self.settings_picker.as_ref()?;
+        let p = Palette::new(cx);
+
+        let card: AnyElement = match picker {
+            SettingsPicker::Font { query, list } => self.font_picker_card(query, list, p, cx),
+            SettingsPicker::Color(state) => self.color_picker_card(state, p, cx),
+        };
+
+        let backdrop = div()
+            .id("settings-picker-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0.0, 0.0, 0.0, 0.45))
+            // 挡住后面整页的点击，避免点浮层时误触设置行。
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_settings_picker(cx)),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                // 拖动时鼠标经常滑出色板，监听挂在覆盖全窗口的背景上。
+                this.update_color_drag(event.position, window, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_color_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_color_drag(cx)),
+            );
+
+        Some(backdrop.child(card).into_any_element())
+    }
+
+    /// 字体选择卡片：搜索框 + 可滚动的系统字体列表，每行用它自己的字体绘制。
+    fn font_picker_card(
+        &self,
+        query: &SharedString,
+        list: &Entity<InputState>,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let needle = query.trim().to_lowercase();
+        let mut rows = div().flex().flex_col().gap_1().w_full();
+        let mut matches = 0usize;
+        if let Some(fonts) = &self.font_options {
+            for family in fonts {
+                if !needle.is_empty() && !family.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                matches += 1;
+                let current = family.as_str() == self.lyrics.font_family.as_str();
+                let family_for_click = family.clone();
+                rows = rows.child(
+                    div()
+                        .id(format!("picker-font-{family}"))
+                        .w_full()
+                        .px(px(12.0))
+                        .py(px(8.0))
+                        .rounded_md()
+                        .text_sm()
+                        .font_family(family.clone())
+                        .text_color(if current { p.primary } else { p.foreground })
+                        .font_weight(if current {
+                            gpui::FontWeight::SEMIBOLD
+                        } else {
+                            gpui::FontWeight::NORMAL
+                        })
+                        .when(current, |this| this.bg(p.accent))
+                        .when(!current, |this| {
+                            this.hover(|style| style.bg(p.surface_hover))
+                        })
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let family = family_for_click.clone();
+                            this.update_lyrics_style(cx, move |style| {
+                                style.font_family = family;
+                            });
+                            this.close_settings_picker(cx);
+                        }))
+                        .child(family.clone()),
+                );
+            }
+        }
+        if matches == 0 {
+            rows = rows.child(
+                div()
+                    .w_full()
+                    .px(px(12.0))
+                    .py(px(12.0))
+                    .text_sm()
+                    .text_color(p.muted)
+                    .child("没有匹配的字体"),
+            );
+        }
+
+        let header = h_flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child("选择歌词字体"),
+            )
+            .child(
+                Button::new("picker-font-close")
+                    .small()
+                    .label("关闭")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_settings_picker(cx))),
+            );
+
+        v_flex()
+            .id("settings-picker-font")
+            .w(px(380.0))
+            .p(px(16.0))
+            .gap_3()
+            .bg(p.surface)
+            .rounded_lg()
+            .border_1()
+            .border_color(p.border)
+            // 卡片上的空白处只吞掉点击，不触发背景的关闭。
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if is_escape(event) {
+                    this.close_settings_picker(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(header)
+            .child(
+                Input::new(list)
+                    .id("picker-font-search")
+                    .w_full()
+                    .cleanable(true)
+                    .prefix(Icon::new(IconName::Search).text_color(p.muted)),
+            )
+            .child(
+                div()
+                    .id("picker-font-list")
+                    .w_full()
+                    .max_h(px(320.0))
+                    .overflow_y_scroll()
+                    .child(rows),
+            )
+            .into_any_element()
+    }
+
+    /// 颜色选择卡片：SV 色板 + 色相条 + 透明度条 + 文本输入与格式按钮。
+    fn color_picker_card(
+        &self,
+        state: &ColorPickerState,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rgb = picker::hsv_to_rgb(state.hue, state.sat, state.val);
+        let hue_color = tint(picker::hsv_to_rgb(state.hue, 1.0, 1.0), 1.0);
+        let current = tint(rgb, state.alpha);
+        let bounds = state.bounds.clone();
+
+        let sv_pad = div()
+            .id("picker-sv")
+            .relative()
+            .w(px(SV_PAD_WIDTH))
+            .h(px(SV_PAD_HEIGHT))
+            .rounded_md()
+            .overflow_hidden()
+            .bg(hue_color)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.begin_color_drag(ColorDrag::Sv, event.position, window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                div().absolute().inset_0().bg(linear_gradient(
+                    90.0,
+                    linear_color_stop(hsla(0.0, 0.0, 1.0, 1.0), 0.0),
+                    linear_color_stop(hsla(0.0, 0.0, 1.0, 0.0), 1.0),
+                )),
+            )
+            .child(
+                div().absolute().inset_0().bg(linear_gradient(
+                    180.0,
+                    linear_color_stop(hsla(0.0, 0.0, 0.0, 0.0), 0.0),
+                    linear_color_stop(hsla(0.0, 0.0, 0.0, 1.0), 1.0),
+                )),
+            )
+            .child(color_thumb(
+                state.sat * SV_PAD_WIDTH - THUMB_SIZE / 2.0,
+                (1.0 - state.val) * SV_PAD_HEIGHT - THUMB_SIZE / 2.0,
+                current,
+            ));
+
+        let mut hue_strip = div()
+            .id("picker-hue")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(px(STRIP_WIDTH))
+            .h(px(STRIP_HEIGHT))
+            .rounded_md()
+            .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.begin_color_drag(ColorDrag::Hue, event.position, window, cx);
+                    cx.stop_propagation();
+                }),
+            );
+        for index in 0..6 {
+            let from = tint(picker::hsv_to_rgb(index as f32 * 60.0, 1.0, 1.0), 1.0);
+            let to = tint(picker::hsv_to_rgb((index + 1) as f32 * 60.0, 1.0, 1.0), 1.0);
+            hue_strip = hue_strip.child(
+                div().w_full().flex_1().bg(linear_gradient(
+                    180.0,
+                    linear_color_stop(from, 0.0),
+                    linear_color_stop(to, 1.0),
+                )),
+            );
+        }
+        hue_strip = hue_strip.child(color_thumb(
+            (STRIP_WIDTH - THUMB_SIZE) / 2.0,
+            state.hue / 360.0 * STRIP_HEIGHT - THUMB_SIZE / 2.0,
+            hue_color,
+        ));
+
+        let alpha_strip = div()
+            .id("picker-alpha")
+            .relative()
+            .w(px(STRIP_WIDTH))
+            .h(px(STRIP_HEIGHT))
+            .rounded_md()
+            .overflow_hidden()
+            .bg(checkerboard(hsla(0.0, 0.0, 0.92, 1.0), 6.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.begin_color_drag(ColorDrag::Alpha, event.position, window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(div().absolute().inset_0().bg(linear_gradient(
+                180.0,
+                linear_color_stop(tint(rgb, 0.0), 0.0),
+                linear_color_stop(tint(rgb, 1.0), 1.0),
+            )))
+            .child(color_thumb(
+                (STRIP_WIDTH - THUMB_SIZE) / 2.0,
+                state.alpha * STRIP_HEIGHT - THUMB_SIZE / 2.0,
+                current,
+            ));
+
+        let regions = div()
+            .flex()
+            .gap_3()
+            // 记录三个拖动区域的位置；这里不 notify，避免重绘死循环。
+            .on_children_prepainted(move |children: Vec<Bounds<Pixels>>, _, _| {
+                *bounds.borrow_mut() = children;
+            })
+            .child(sv_pad)
+            .child(hue_strip)
+            .child(alpha_strip);
+
+        let input_element = match state.input.as_ref() {
+            Some(input) => Input::new(input).w_full().into_any_element(),
+            None => div().into_any_element(),
+        };
+        let footer = h_flex()
+            .items_center()
+            .gap_2()
+            .child(div().flex_1().min_w_0().child(input_element))
+            .child(
+                Button::new("picker-format-hex")
+                    .small()
+                    .label("HEXA")
+                    .when(state.format == ColorFormat::Hex, |this| this.primary())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_color_format(ColorFormat::Hex, window, cx)
+                    })),
+            )
+            .child(
+                Button::new("picker-format-rgba")
+                    .small()
+                    .label("RGBA")
+                    .when(state.format == ColorFormat::Rgba, |this| this.primary())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_color_format(ColorFormat::Rgba, window, cx)
+                    })),
+            )
+            .child(
+                Button::new("picker-reset")
+                    .small()
+                    .danger()
+                    .label("重置")
+                    .on_click(cx.listener(|this, _, window, cx| this.reset_color_picker(window, cx))),
+            );
+
+        let header = h_flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child(state.target.title()),
+            )
+            .child(
+                Button::new("picker-color-close")
+                    .small()
+                    .label("关闭")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_settings_picker(cx))),
+            );
+
+        v_flex()
+            .id("settings-picker-color")
+            .w(px(460.0))
+            .p(px(16.0))
+            .gap_3()
+            .bg(p.surface)
+            .rounded_lg()
+            .border_1()
+            .border_color(p.border)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if is_escape(event) {
+                    this.close_settings_picker(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(header)
+            .child(regions)
+            .child(footer)
+            .into_any_element()
+    }
+
     fn settings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
 
@@ -3194,8 +3928,8 @@ impl MusicApp {
                         p,
                     )
                     .id("setting-lyrics-font")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, LyricsStyle::next_font_family)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_font_picker(window, cx)
                     })),
                 );
                 rows = rows.child(
@@ -3279,27 +4013,29 @@ impl MusicApp {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_lyrics_karaoke(cx))),
                 );
                 rows = rows.child(
-                    setting_row(
+                    setting_color_row(
                         "歌词文字颜色",
                         self.lyrics.text_color_label(),
+                        tint(self.lyrics.text_color, self.lyrics.text_alpha),
                         "未播放部分的文字颜色",
                         p,
                     )
                     .id("setting-lyrics-color")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, LyricsStyle::next_text_color)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_color_picker(ColorTarget::Text, window, cx)
                     })),
                 );
                 rows = rows.child(
-                    setting_row(
+                    setting_color_row(
                         "已播放颜色",
                         self.lyrics.highlight_color_label(),
+                        tint(self.lyrics.highlight_color, self.lyrics.highlight_alpha),
                         "逐字填充与当前行高亮使用的颜色",
                         p,
                     )
                     .id("setting-lyrics-highlight")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, LyricsStyle::next_highlight_color)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_color_picker(ColorTarget::Highlight, window, cx)
                     })),
                 );
                 rows = rows.child(
@@ -3315,27 +4051,29 @@ impl MusicApp {
                     })),
                 );
                 rows = rows.child(
-                    setting_row(
+                    setting_color_row(
                         "描边颜色",
                         self.lyrics.stroke_color_label(),
+                        tint(self.lyrics.stroke_color, self.lyrics.stroke_alpha),
                         "浅色壁纸用深色描边，深色壁纸用亮色描边",
                         p,
                     )
                     .id("setting-lyrics-stroke-color")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, LyricsStyle::next_stroke_color)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_color_picker(ColorTarget::Stroke, window, cx)
                     })),
                 );
                 rows = rows.child(
-                    setting_row(
+                    setting_color_row(
                         "歌词背景",
                         self.lyrics.background_label(),
+                        tint(self.lyrics.background_color, self.lyrics.background_opacity),
                         "默认完全透明，也可以加深色底衬",
                         p,
                     )
                     .id("setting-lyrics-background")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, LyricsStyle::next_background)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_color_picker(ColorTarget::Background, window, cx)
                     })),
                 );
                 rows = rows.child(
@@ -3705,7 +4443,7 @@ impl Render for MusicApp {
         } else {
             library_scroll.overflow_y_scroll().child(page_content)
         };
-        let root = div()
+        let content = div()
             .size_full()
             .flex()
             .bg(p.background)
@@ -3722,7 +4460,13 @@ impl Render for MusicApp {
                     .child(library_scroll)
                     .child(self.player_bar(cx)),
             );
-        root
+        // 设置页的选择器浮层盖在整页之上，不打开时渲染成空。
+        let overlay = self.settings_picker_overlay(cx);
+        div()
+            .relative()
+            .size_full()
+            .child(content)
+            .children(overlay)
     }
 }
 
@@ -3800,6 +4544,87 @@ fn track_artwork_sized(row: &TrackRow, size: f32, p: Palette) -> gpui::AnyElemen
 
 fn empty_artwork(p: Palette) -> gpui::AnyElement {
     artwork_placeholder(40.0, p)
+}
+
+/// 把窗口坐标换算成区域内的 `0..1` 比例，并夹在边界内。
+fn region_fraction(value: f32, origin: f32, extent: f32) -> f32 {
+    if !extent.is_finite() || extent.abs() <= f32::EPSILON {
+        return 0.0;
+    }
+    ((value - origin) / extent).clamp(0.0, 1.0)
+}
+
+/// 颜色选择器里的圆形拖动指示点（白色描边环）。
+fn color_thumb(left: f32, top: f32, color: Hsla) -> gpui::Div {
+    div()
+        .absolute()
+        .left(px(left))
+        .top(px(top))
+        .size(px(THUMB_SIZE))
+        .rounded_full()
+        .border_2()
+        .border_color(hsla(0.0, 0.0, 1.0, 0.95))
+        .bg(color)
+}
+
+fn is_escape(event: &KeyDownEvent) -> bool {
+    let key = event.keystroke.key.as_str();
+    key == "escape" || key == "esc"
+}
+
+/// 带颜色色块的一行：用于歌词的几个颜色设置。
+fn setting_color_row(
+    title: &'static str,
+    value: impl Into<SharedString>,
+    swatch: Hsla,
+    description: &'static str,
+    p: Palette,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .p(px(16.0))
+        .rounded_lg()
+        .bg(p.surface)
+        .border_1()
+        .border_color(p.border)
+        .cursor_pointer()
+        .hover(|style| style.bg(p.surface_hover))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .child(div().text_xs().text_color(p.muted).child(description)),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .size(px(16.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(p.border)
+                        .bg(swatch),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(p.primary)
+                        .child(value.into()),
+                ),
+        )
 }
 
 fn setting_row(
@@ -4157,7 +4982,7 @@ fn install_panic_log() {
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::AllAssets)
+        .with_assets(BrandAssets)
         .run(|cx: &mut App| {
             install_panic_log();
             gpui_kit::init(cx);

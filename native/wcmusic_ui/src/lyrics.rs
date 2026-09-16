@@ -452,9 +452,15 @@ pub struct LyricsStyle {
     pub font_weight: f32,
     /// 未播放文本颜色。
     pub text_color: u32,
+    /// 未播放文本颜色的不透明度。
+    pub text_alpha: f32,
     /// 已播放（逐字填充）颜色。
     pub highlight_color: u32,
+    /// 已播放颜色的不透明度。
+    pub highlight_alpha: f32,
     pub stroke_color: u32,
+    /// 描边颜色的不透明度。
+    pub stroke_alpha: f32,
     pub stroke_width: f32,
     /// 整体不透明度。
     pub opacity: f32,
@@ -486,8 +492,11 @@ impl Default for LyricsStyle {
             font_size: 28.0,
             font_weight: 700.0,
             text_color: TEXT_COLORS[0],
+            text_alpha: 1.0,
             highlight_color: HIGHLIGHT_COLORS[0],
+            highlight_alpha: 1.0,
             stroke_color: 0x000000,
+            stroke_alpha: 1.0,
             stroke_width: 1.0,
             opacity: 1.0,
             background_color: 0x101014,
@@ -517,6 +526,9 @@ impl LyricsStyle {
         }
         self.font_size = finite_or(self.font_size, 16.0, 96.0, 36.0);
         self.font_weight = finite_or(self.font_weight, 300.0, 900.0, 700.0);
+        self.text_alpha = finite_or(self.text_alpha, 0.0, 1.0, 1.0);
+        self.highlight_alpha = finite_or(self.highlight_alpha, 0.0, 1.0, 1.0);
+        self.stroke_alpha = finite_or(self.stroke_alpha, 0.0, 1.0, 1.0);
         self.stroke_width = finite_or(self.stroke_width, 0.0, 4.0, 1.0);
         self.opacity = finite_or(self.opacity, 0.25, 1.0, 1.0);
         self.background_opacity = finite_or(self.background_opacity, 0.0, 1.0, 0.0);
@@ -559,10 +571,14 @@ impl LyricsStyle {
         hex_label(self.stroke_color)
     }
 
+    /// 保留旧版「点击循环」入口，歌词工具条/托盘等旧调用点仍在用。
+    #[allow(dead_code)]
     pub fn next_text_color(&mut self) {
         self.text_color = next_palette_color(&TEXT_COLORS, self.text_color);
     }
 
+    /// 保留旧版「点击循环」入口，歌词工具条/托盘等旧调用点仍在用。
+    #[allow(dead_code)]
     pub fn next_highlight_color(&mut self) {
         self.highlight_color = next_palette_color(&HIGHLIGHT_COLORS, self.highlight_color);
     }
@@ -587,6 +603,8 @@ impl LyricsStyle {
         self.background_opacity = BACKGROUND_PRESETS[(index + 1) % BACKGROUND_PRESETS.len()].0;
     }
 
+    /// 保留旧版「点击循环」入口，主设置页已改用字体选择器。
+    #[allow(dead_code)]
     pub fn next_font_family(&mut self) {
         let index = FONT_FAMILIES
             .iter()
@@ -1273,12 +1291,15 @@ impl LyricsOverlay {
         let is_current = self.current_index == Some(index);
         // 与歌曲详情页一致：普通行 -> 当前行的颜色按强调度连续过渡，
         // 当前行在开启逐字填充时由"未唱"的偏暗色填充到完整高亮色。
-        let text_color = tint(mix_rgb(style.text_color, style.highlight_color, emphasis * 0.45), alpha);
+        let text_color = tint(
+            mix_rgb(style.text_color, style.highlight_color, emphasis * 0.45),
+            alpha * style.text_alpha,
+        );
         let highlight_color = tint(
             mix_rgb(style.text_color, style.highlight_color, emphasis),
-            alpha,
+            alpha * style.highlight_alpha,
         );
-        let stroke_color = tint(style.stroke_color, alpha * 0.9);
+        let stroke_color = tint(style.stroke_color, alpha * 0.9 * style.stroke_alpha);
         let text_width =
             self.measure(window, &line.text, size, style.font_weight, &style.font_family);
         let block_width = (text_width + style.stroke_width * 2.0 + 4.0)
@@ -1329,11 +1350,11 @@ impl LyricsOverlay {
                     style.font_weight.min(600.0),
                     tint(
                         mix_rgb(style.text_color, style.highlight_color, emphasis * 0.45),
-                        alpha * 0.82,
+                        alpha * 0.82 * style.text_alpha,
                     ),
                     tint(
                         mix_rgb(style.text_color, style.highlight_color, emphasis),
-                        alpha * 0.82,
+                        alpha * 0.82 * style.highlight_alpha,
                     ),
                     stroke_color,
                     style.stroke_width * 0.7,
