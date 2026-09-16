@@ -1299,22 +1299,6 @@ impl MusicApp {
         }
     }
 
-    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search_generation += 1;
-        self.query = "".into();
-        self.search_results.clear();
-        self.search_error = None;
-        self.search_in_progress = false;
-        self.notice = "搜索已清除".into();
-        if let Some(input) = &self.search_input {
-            input.update(cx, |input, cx| {
-                input.set_value("", window, cx);
-                input.focus(window, cx);
-            });
-        }
-        cx.notify();
-    }
-
     fn cycle_quality(&mut self, cx: &mut Context<Self>) {
         self.quality_index = (self.quality_index + 1) % 3;
         let label = ["标准 128k", "高品 320k", "无损 FLAC"][self.quality_index];
@@ -3501,11 +3485,6 @@ impl MusicApp {
                                     Icon::new(IconName::Search)
                                         .text_color(cx.theme().muted_foreground),
                                 ),
-                        ),
-                    )
-                    .child(
-                        Button::new("clear-search").label("清除").on_click(
-                            cx.listener(|this, _, window, cx| this.clear_search(window, cx)),
                         ),
                     )
                     .child(
