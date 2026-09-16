@@ -29,9 +29,9 @@ use gpui_kit::{
     div, hsla, img, linear_color_stop, linear_gradient, point, prelude::*, px, size,
 };
 use wcmusic_core::{
-    OnlineSearchChannel, PlatformRanking, SourceEnvironment, Track, TrackSource,
-    load_ranking_tracks_with_proxy, load_rankings_with_proxy, resolve_source_url_with_proxy,
-    search_online_with_proxy,
+    OnlineSearchChannel, PlatformPlaylist, PlatformRanking, SourceEnvironment, Track, TrackSource,
+    load_playlist_tracks_with_proxy, load_playlists_with_proxy, load_ranking_tracks_with_proxy,
+    load_rankings_with_proxy, resolve_source_url_with_proxy, search_online_with_proxy,
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
@@ -39,9 +39,13 @@ use crate::hotkey::{HotKeyAction, HotKeyManager};
 use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
-use crate::settings::{AppSettings, HotKeySettings};
+use crate::settings::{AppSettings, HotKeySettings, SavedPlaylist};
 
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
+/// 此刻页「平台热门歌单」里每张卡片的宽度与封面高度（逻辑像素）。
+const PLAYLIST_CARD_WIDTH: f32 = 200.0;
+const PLAYLIST_COVER_WIDTH: f32 = 180.0;
+const PLAYLIST_COVER_HEIGHT: f32 = 140.0;
 /// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
 const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
 
@@ -434,6 +438,22 @@ struct MusicApp {
     rankings_generation: u64,
     ranking_tracks_generation: u64,
     selected_playlist: usize,
+    /// 此刻页「平台热门歌单」：当前渠道与列表状态。
+    home_playlists_channel: OnlineSearchChannel,
+    home_playlists: Vec<PlatformPlaylist>,
+    home_playlists_loading: bool,
+    home_playlists_error: Option<SharedString>,
+    home_playlists_generation: u64,
+    /// 是否已经触发过首次加载（进入此刻页时懒加载，只加载一次）。
+    home_playlists_requested: bool,
+    /// 当前打开的歌单详情；None 表示显示歌单网格。
+    playlist_detail: Option<PlatformPlaylist>,
+    playlist_tracks: Vec<TrackRow>,
+    playlist_tracks_loading: bool,
+    playlist_tracks_error: Option<SharedString>,
+    playlist_tracks_generation: u64,
+    /// 收藏的平台歌单，与 settings.json 保持同步。
+    saved_playlists: Vec<SavedPlaylist>,
 }
 
 impl MusicApp {
@@ -502,6 +522,18 @@ impl MusicApp {
             rankings_generation: 0,
             ranking_tracks_generation: 0,
             selected_playlist: 1,
+            home_playlists_channel: OnlineSearchChannel::Kuwo,
+            home_playlists: Vec::new(),
+            home_playlists_loading: false,
+            home_playlists_error: None,
+            home_playlists_generation: 0,
+            home_playlists_requested: false,
+            playlist_detail: None,
+            playlist_tracks: Vec::new(),
+            playlist_tracks_loading: false,
+            playlist_tracks_error: None,
+            playlist_tracks_generation: 0,
+            saved_playlists: settings.saved_playlists.clone(),
         }
     }
 
@@ -513,6 +545,7 @@ impl MusicApp {
             lyrics: self.lyrics.clone(),
             hotkeys: self.hotkeys.clone(),
             use_network_proxy: self.use_network_proxy,
+            saved_playlists: self.saved_playlists.clone(),
         }
     }
 
@@ -639,6 +672,173 @@ impl MusicApp {
 
     fn refresh_rankings(&mut self, cx: &mut Context<Self>) {
         self.load_rankings(cx);
+    }
+
+    /// 拉取当前渠道的热门歌单。与榜单一样在后台线程执行，用代数号丢弃过期结果。
+    fn load_home_playlists(&mut self, cx: &mut Context<Self>) {
+        self.home_playlists_requested = true;
+        self.home_playlists_generation += 1;
+        let generation = self.home_playlists_generation;
+        let channel = self.home_playlists_channel;
+        let use_proxy = self.use_network_proxy;
+        self.home_playlists_loading = true;
+        self.home_playlists_error = None;
+        self.home_playlists.clear();
+        self.notice = format!("正在加载{}热门歌单…", channel.label()).into();
+        cx.notify();
+
+        let task = cx.background_spawn(async move {
+            load_playlists_with_proxy(channel, use_proxy).map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.home_playlists_generation {
+                    return;
+                }
+                this.home_playlists_loading = false;
+                match result {
+                    Ok(playlists) => {
+                        this.notice =
+                            format!("{}歌单已更新 {} 个", channel.label(), playlists.len()).into();
+                        this.home_playlists = playlists;
+                    }
+                    Err(error) => {
+                        this.home_playlists.clear();
+                        this.home_playlists_error = Some(error.into());
+                        this.notice = "歌单加载失败".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 切换「此刻」页歌单渠道：换渠道立即重新拉取。
+    fn select_home_playlists_channel(
+        &mut self,
+        channel: OnlineSearchChannel,
+        cx: &mut Context<Self>,
+    ) {
+        if channel == self.home_playlists_channel && !self.home_playlists.is_empty() {
+            return;
+        }
+        self.home_playlists_channel = channel;
+        self.load_home_playlists(cx);
+    }
+
+    fn refresh_home_playlists(&mut self, cx: &mut Context<Self>) {
+        self.load_home_playlists(cx);
+    }
+
+    /// 打开歌单详情：就地替换网格，并实时拉取歌单歌曲。
+    fn open_playlist_detail(&mut self, playlist: PlatformPlaylist, cx: &mut Context<Self>) {
+        self.playlist_detail = Some(playlist.clone());
+        self.playlist_tracks_generation += 1;
+        let generation = self.playlist_tracks_generation;
+        let use_proxy = self.use_network_proxy;
+        self.playlist_tracks_loading = true;
+        self.playlist_tracks_error = None;
+        self.playlist_tracks.clear();
+        self.notice = format!("正在加载{} · {}", playlist.channel.label(), playlist.name).into();
+        cx.notify();
+
+        let task = cx.background_spawn(async move {
+            let tracks = load_playlist_tracks_with_proxy(&playlist, use_proxy)
+                .map_err(|error| error.to_string())?;
+            let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
+            if !rows.is_empty() {
+                let worker_count = rows.len().min(8).max(1);
+                let chunk_size = rows.len().div_ceil(worker_count);
+                std::thread::scope(|scope| {
+                    for chunk in rows.chunks_mut(chunk_size) {
+                        scope.spawn(move || {
+                            for row in chunk {
+                                let Some(uri) = row.track.artwork_uri.clone() else {
+                                    continue;
+                                };
+                                let id = row.track.id.clone();
+                                if let Ok(path) = download_artwork(&uri, &id, use_proxy) {
+                                    row.artwork_path = Some(path.into());
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+            Ok::<Vec<TrackRow>, String>(rows)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if generation != this.playlist_tracks_generation {
+                    return;
+                }
+                this.playlist_tracks_loading = false;
+                match result {
+                    Ok(tracks) => {
+                        this.notice = format!("歌单已载入 {} 首歌曲", tracks.len()).into();
+                        this.playlist_tracks = tracks;
+                    }
+                    Err(error) => {
+                        this.playlist_tracks.clear();
+                        this.playlist_tracks_error = Some(error.into());
+                        this.notice = "歌单歌曲加载失败".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 从歌单详情返回网格。
+    fn close_playlist_detail(&mut self, cx: &mut Context<Self>) {
+        self.playlist_tracks_generation += 1;
+        self.playlist_detail = None;
+        self.playlist_tracks.clear();
+        self.playlist_tracks_loading = false;
+        self.playlist_tracks_error = None;
+        self.notice = "已返回歌单列表".into();
+        cx.notify();
+    }
+
+    /// 「播放全部」：歌单没有在线播放队列，这里从第一首开始，随后可用上一首/下一首切换。
+    fn play_all_playlist_tracks(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.playlist_tracks.first().cloned() else {
+            self.notice = "歌单里还没有歌曲".into();
+            cx.notify();
+            return;
+        };
+        self.current_online_track = Some(row.clone());
+        self.current_track = None;
+        self.start_playback(row, true, cx);
+    }
+
+    fn is_playlist_saved(&self, playlist: &PlatformPlaylist) -> bool {
+        self.saved_playlists
+            .iter()
+            .any(|saved| saved.matches(playlist))
+    }
+
+    /// 收藏 / 取消收藏并立即落盘。
+    fn toggle_saved_playlist(&mut self, playlist: PlatformPlaylist, cx: &mut Context<Self>) {
+        if let Some(position) = self
+            .saved_playlists
+            .iter()
+            .position(|saved| saved.matches(&playlist))
+        {
+            self.saved_playlists.remove(position);
+            self.notice = format!("已取消收藏：{}", playlist.name).into();
+        } else {
+            self.notice = format!("已收藏：{}", playlist.name).into();
+            self.saved_playlists.push(SavedPlaylist::new(playlist));
+        }
+        self.persist_settings();
+        cx.notify();
     }
 
     fn select_playlist(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -2079,6 +2279,27 @@ impl MusicApp {
             self.start_playback(row, true, cx);
             return;
         }
+        // 歌单详情打开且当前播放的正是歌单里的歌：在歌单内切换上一首/下一首。
+        if self.playlist_detail.is_some()
+            && !self.playlist_tracks.is_empty()
+            && self
+                .current_online_track
+                .as_ref()
+                .is_some_and(|current| self.playlist_tracks.iter().any(|row| row == current))
+        {
+            let len = self.playlist_tracks.len() as isize;
+            let current_index = self
+                .current_online_track
+                .as_ref()
+                .and_then(|current| self.playlist_tracks.iter().position(|row| row == current))
+                .unwrap_or(0) as isize;
+            let index = (current_index + offset).rem_euclid(len) as usize;
+            let row = self.playlist_tracks[index].clone();
+            self.current_online_track = Some(row.clone());
+            self.current_track = None;
+            self.start_playback(row, true, cx);
+            return;
+        }
         if let Some(current) = &self.current_online_track
             && !self.search_results.is_empty()
         {
@@ -2672,6 +2893,383 @@ impl MusicApp {
                         .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Rankings, cx))),
                 ),
         )
+        .child(self.home_playlists_section(cx))
+    }
+
+    /// 此刻页的平台歌单区域：未打开详情时是渠道 + 网格，打开后是详情。
+    fn home_playlists_section(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        match &self.playlist_detail {
+            Some(playlist) => self
+                .playlist_detail_view(playlist.clone(), cx)
+                .into_any_element(),
+            None => self.home_playlist_grid(cx).into_any_element(),
+        }
+    }
+
+    fn home_playlist_grid(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let p = Palette::new(cx);
+        let header = h_flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child("平台热门歌单"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child("收藏喜欢的歌单，下次直接从「我的收藏」进入"),
+                    ),
+            )
+            .child(
+                Button::new("home-playlists-refresh")
+                    .secondary()
+                    .small()
+                    .icon(IconName::RotateCw)
+                    .label("刷新")
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_home_playlists(cx))),
+            );
+
+        let mut chips = h_flex().items_center().gap_1();
+        for (index, channel) in OnlineSearchChannel::ALL.into_iter().enumerate() {
+            let selected = channel == self.home_playlists_channel;
+            let button = Button::new(("home-playlist-channel", index))
+                .label(channel.label())
+                .small();
+            let button = if selected {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            chips = chips.child(button.on_click(cx.listener(
+                move |this, _, _, cx| this.select_home_playlists_channel(channel, cx),
+            )));
+        }
+
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p(px(18.0))
+            .rounded_lg()
+            .bg(p.surface)
+            .border_1()
+            .border_color(p.border)
+            .child(header);
+
+        if !self.saved_playlists.is_empty() {
+            section = section.child(self.saved_playlists_row(cx));
+        }
+
+        section = section.child(chips);
+
+        if self.home_playlists_loading && self.home_playlists.is_empty() {
+            section = section.child(search_status(
+                "正在加载热门歌单",
+                format!("正在连接{}…", self.home_playlists_channel.label()),
+                p,
+            ));
+        } else if let Some(error) = &self.home_playlists_error {
+            section = section.child(search_status("歌单暂时不可用", error.clone(), p));
+        } else if self.home_playlists.is_empty() {
+            section = section.child(search_status(
+                "还没有歌单",
+                "点击右上角刷新，从平台获取热门歌单。",
+                p,
+            ));
+        } else {
+            let mut grid = div().flex().flex_wrap().gap_4();
+            for (index, playlist) in self.home_playlists.iter().cloned().enumerate() {
+                grid = grid.child(self.playlist_card("home-playlist", index, playlist, cx));
+            }
+            section = section.child(grid);
+        }
+
+        section
+    }
+
+    /// 「我的收藏」：与网格卡片一致，可直接打开详情，也可在这里取消收藏。
+    fn saved_playlists_row(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let p = Palette::new(cx);
+        let mut grid = div().flex().flex_wrap().gap_4();
+        for (index, saved) in self.saved_playlists.iter().enumerate() {
+            grid = grid.child(self.playlist_card(
+                "saved-playlist",
+                index,
+                saved.playlist.clone(),
+                cx,
+            ));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(IconName::Heart).size(px(14.0)).text_color(p.primary))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child("我的收藏"),
+                    ),
+            )
+            .child(grid)
+    }
+
+    fn playlist_card(
+        &self,
+        prefix: &'static str,
+        index: usize,
+        playlist: PlatformPlaylist,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = Palette::new(cx);
+        let saved = self.is_playlist_saved(&playlist);
+        let open_target = playlist.clone();
+        let favourite_target = playlist.clone();
+        let name = playlist_display_name(&playlist);
+        let author = if playlist.author.trim().is_empty() {
+            playlist.channel.label().to_owned()
+        } else {
+            playlist.author.clone()
+        };
+        let meta = playlist_meta_line(&playlist);
+        div()
+            .id(format!("{prefix}-card-{index}"))
+            .w(px(PLAYLIST_CARD_WIDTH))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p(px(10.0))
+            .rounded_lg()
+            .bg(p.surface)
+            .border_1()
+            .border_color(p.border)
+            .cursor_pointer()
+            .hover(|style| style.bg(p.surface_hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_playlist_detail(open_target.clone(), cx);
+            }))
+            .child(playlist_cover(
+                &playlist,
+                PLAYLIST_COVER_WIDTH,
+                PLAYLIST_COVER_HEIGHT,
+                p,
+            ))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child(name),
+            )
+            .child(div().text_xs().text_color(p.muted).child(author))
+            .child(div().text_xs().text_color(p.muted).child(meta))
+            .child(
+                h_flex().w_full().justify_end().child(
+                    div()
+                        .id(format!("{prefix}-fav-{index}"))
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1()
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded_md()
+                        .bg(if saved { p.primary.opacity(0.16) } else { p.track })
+                        .cursor_pointer()
+                        .hover(|style| style.bg(p.accent))
+                        // 收藏是卡片里的独立按钮：吞掉按下事件，避免同时打开歌单详情。
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_saved_playlist(favourite_target.clone(), cx);
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            Icon::new(if saved {
+                                IconName::Heart
+                            } else {
+                                IconName::HeartOff
+                            })
+                            .size(px(13.0))
+                            .text_color(if saved { p.primary } else { p.muted }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if saved { p.primary } else { p.muted })
+                                .child(if saved { "已收藏" } else { "收藏" }),
+                        ),
+                ),
+            )
+    }
+
+    /// 歌单详情：就地替换网格，展示封面/信息/操作按钮与歌曲列表。
+    fn playlist_detail_view(
+        &self,
+        playlist: PlatformPlaylist,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let p = Palette::new(cx);
+        let saved = self.is_playlist_saved(&playlist);
+        let title = playlist_display_name(&playlist);
+        let author = if playlist.author.trim().is_empty() {
+            playlist.channel.label().to_owned()
+        } else {
+            playlist.author.clone()
+        };
+        let description = playlist
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let meta = playlist_meta_line(&playlist);
+        let favourite_target = playlist.clone();
+
+        let header = h_flex()
+            .items_center()
+            .gap_3()
+            .child(
+                Button::new("playlist-detail-back")
+                    .secondary()
+                    .small()
+                    .icon(IconName::ArrowLeft)
+                    .label("返回")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_playlist_detail(cx))),
+            )
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child("歌单详情"),
+            );
+
+        let favourite_button = Button::new("playlist-detail-favourite").small();
+        let favourite_button = if saved {
+            favourite_button.primary()
+        } else {
+            favourite_button.secondary()
+        };
+        let favourite_button = favourite_button
+            .icon(if saved {
+                IconName::Heart
+            } else {
+                IconName::HeartOff
+            })
+            .label(if saved { "已收藏" } else { "收藏" })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_saved_playlist(favourite_target.clone(), cx);
+            }));
+
+        let actions = h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new("playlist-detail-play-all")
+                    .primary()
+                    .small()
+                    .icon(IconName::Play)
+                    .label("播放全部")
+                    .on_click(cx.listener(|this, _, _, cx| this.play_all_playlist_tracks(cx))),
+            )
+            .child(favourite_button);
+
+        let info = h_flex()
+            .items_start()
+            .gap_5()
+            .p(px(18.0))
+            .rounded_lg()
+            .bg(p.surface)
+            .border_1()
+            .border_color(p.border)
+            .child(div().flex_shrink_0().child(playlist_cover(
+                &playlist,
+                160.0,
+                160.0,
+                p,
+            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child(title),
+                    )
+                    .child(div().text_sm().text_color(p.muted).child(author))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px(px(8.0))
+                                    .py(px(2.0))
+                                    .rounded_md()
+                                    .bg(p.track)
+                                    .text_xs()
+                                    .text_color(p.primary)
+                                    .child(playlist.channel.label()),
+                            )
+                            .child(div().text_xs().text_color(p.muted).child(meta)),
+                    )
+                    .when_some(description, |this, description| {
+                        this.child(div().text_sm().text_color(p.muted).child(description))
+                    })
+                    .child(actions),
+            );
+
+        let mut tracks_panel = div().flex().flex_col().gap_2();
+        if self.playlist_tracks_loading {
+            tracks_panel = tracks_panel.child(search_status(
+                "正在加载歌单歌曲",
+                "正在读取平台歌单…",
+                p,
+            ));
+        } else if let Some(error) = &self.playlist_tracks_error {
+            tracks_panel = tracks_panel.child(search_status("歌单歌曲加载失败", error.clone(), p));
+        } else if self.playlist_tracks.is_empty() {
+            tracks_panel = tracks_panel.child(search_status(
+                "歌单里没有歌曲",
+                "这个歌单暂时没有可播放的歌曲。",
+                p,
+            ));
+        } else {
+            tracks_panel =
+                tracks_panel.child(self.playlist_track_list(cx, self.playlist_tracks.clone()));
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(header)
+            .child(info)
+            .child(tracks_panel)
     }
 
     fn search_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4435,6 +5033,10 @@ impl Render for MusicApp {
                 window.request_animation_frame();
             }
         }
+        // 此刻页第一次显示时懒加载平台热门歌单（后台线程，不阻塞 UI）。
+        if matches!(self.active_tab, Tab::Home) && !self.home_playlists_requested {
+            self.load_home_playlists(cx);
+        }
         let p = Palette::new(cx);
         let page_content = self.content(cx);
         let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
@@ -4544,6 +5146,89 @@ fn track_artwork_sized(row: &TrackRow, size: f32, p: Palette) -> gpui::AnyElemen
 
 fn empty_artwork(p: Palette) -> gpui::AnyElement {
     artwork_placeholder(40.0, p)
+}
+
+/// 平台歌单的封面：核心层已把地址归一化，这里再兜底一次协议相对/明文地址。
+fn normalized_playlist_artwork(playlist: &PlatformPlaylist) -> Option<String> {
+    let value = playlist.artwork_uri.as_deref()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix("//") {
+        return Some(format!("https://{rest}"));
+    }
+    if let Some(rest) = value.strip_prefix("http://") {
+        return Some(format!("https://{rest}"));
+    }
+    Some(value.to_owned())
+}
+
+fn playlist_cover_placeholder(width: f32, height: f32, p: Palette) -> gpui::AnyElement {
+    div()
+        .w(px(width))
+        .h(px(height))
+        .rounded_md()
+        .bg(p.track)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(p.primary)
+        .child(Icon::new(IconName::GalleryVerticalEnd).size(px(width.min(height) * 0.4)))
+        .into_any_element()
+}
+
+fn playlist_cover(
+    playlist: &PlatformPlaylist,
+    width: f32,
+    height: f32,
+    p: Palette,
+) -> gpui::AnyElement {
+    match normalized_playlist_artwork(playlist) {
+        Some(uri) => img(SharedString::from(uri))
+            .w(px(width))
+            .h(px(height))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Cover)
+            .with_fallback(move || playlist_cover_placeholder(width, height, p))
+            .into_any_element(),
+        None => playlist_cover_placeholder(width, height, p),
+    }
+}
+
+fn playlist_display_name(playlist: &PlatformPlaylist) -> String {
+    let name = playlist.name.trim();
+    if name.is_empty() {
+        "未命名歌单".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// 卡片/详情里的次要信息：曲目数与播放量，缺失时退回平台名。
+fn playlist_meta_line(playlist: &PlatformPlaylist) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(count) = playlist.track_count {
+        parts.push(format!("{count} 首"));
+    }
+    if let Some(plays) = playlist.play_count {
+        parts.push(format!("{} 播放", format_play_count(plays)));
+    }
+    if parts.is_empty() {
+        playlist.channel.label().to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// 播放量按中文习惯缩写：1.2万 / 3.4亿。
+fn format_play_count(count: u64) -> String {
+    if count >= 100_000_000 {
+        format!("{:.1}亿", count as f64 / 100_000_000.0)
+    } else if count >= 10_000 {
+        format!("{:.1}万", count as f64 / 10_000.0)
+    } else {
+        count.to_string()
+    }
 }
 
 /// 把窗口坐标换算成区域内的 `0..1` 比例，并夹在边界内。
@@ -5348,5 +6033,35 @@ mod tests {
         let middle = mix_hsla(from, to, 0.5);
         assert!(middle.l > from.l && middle.l < to.l);
         assert!((middle.a - 0.625).abs() < 1e-5);
+    }
+
+    #[test]
+    fn abbreviates_playlist_play_counts() {
+        assert_eq!(format_play_count(0), "0");
+        assert_eq!(format_play_count(999), "999");
+        assert_eq!(format_play_count(9_999), "9999");
+        assert_eq!(format_play_count(12_000), "1.2万");
+        assert_eq!(format_play_count(123_456), "12.3万");
+        assert_eq!(format_play_count(99_999_999), "10000.0万");
+        assert_eq!(format_play_count(100_000_000), "1.0亿");
+    }
+
+    #[test]
+    fn playlist_meta_line_falls_back_to_channel() {
+        let mut playlist = PlatformPlaylist {
+            channel: OnlineSearchChannel::Kugou,
+            id: "p".to_owned(),
+            name: "歌单".to_owned(),
+            author: String::new(),
+            artwork_uri: None,
+            track_count: None,
+            play_count: None,
+            description: None,
+            url: None,
+        };
+        assert_eq!(playlist_meta_line(&playlist), "酷狗音乐");
+        playlist.track_count = Some(30);
+        playlist.play_count = Some(12_000);
+        assert_eq!(playlist_meta_line(&playlist), "30 首 · 1.2万 播放");
     }
 }

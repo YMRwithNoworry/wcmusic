@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use wcmusic_core::PlatformPlaylist;
+
 use crate::hotkey::HotKeyAction;
 use crate::lyrics::LyricsStyle;
 
@@ -86,6 +88,24 @@ impl HotKeySettings {
     }
 }
 
+/// 收藏的平台歌单：保存歌单摘要（平台 + id + 名称等），
+/// 让重启后的「此刻」页仍能展示并再次打开收藏的歌单。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedPlaylist {
+    pub playlist: PlatformPlaylist,
+}
+
+impl SavedPlaylist {
+    pub fn new(playlist: PlatformPlaylist) -> Self {
+        Self { playlist }
+    }
+
+    /// 同一个平台的歌单用 `channel + id` 唯一标识。
+    pub fn matches(&self, playlist: &PlatformPlaylist) -> bool {
+        self.playlist.channel == playlist.channel && self.playlist.id == playlist.id
+    }
+}
+
 /// User preferences persisted under the platform's per-user configuration directory.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -98,6 +118,8 @@ pub struct AppSettings {
     /// 全局快捷键。
     pub hotkeys: HotKeySettings,
     pub use_network_proxy: bool,
+    /// 收藏的平台歌单（此刻页的「平台热门歌单」）。
+    pub saved_playlists: Vec<SavedPlaylist>,
 }
 
 impl Default for AppSettings {
@@ -109,6 +131,7 @@ impl Default for AppSettings {
             lyrics: LyricsStyle::default(),
             hotkeys: HotKeySettings::default(),
             use_network_proxy: false,
+            saved_playlists: Vec::new(),
         }
     }
 }
@@ -212,6 +235,20 @@ mod tests {
         std::env::temp_dir().join(format!("wcmusic-settings-{name}-{}.json", std::process::id()))
     }
 
+    fn sample_playlist() -> wcmusic_core::PlatformPlaylist {
+        wcmusic_core::PlatformPlaylist {
+            channel: wcmusic_core::OnlineSearchChannel::Kuwo,
+            id: "playlist-1".to_owned(),
+            name: "深夜电台".to_owned(),
+            author: "某位用户".to_owned(),
+            artwork_uri: Some("https://img.example/cover.jpg".to_owned()),
+            track_count: Some(30),
+            play_count: Some(123456),
+            description: Some("适合睡前的歌".to_owned()),
+            url: Some("https://www.kuwo.cn/playlist/1".to_owned()),
+        }
+    }
+
     #[test]
     fn round_trips_settings() {
         let path = temp_path("round-trip");
@@ -232,6 +269,36 @@ mod tests {
         let loaded = AppSettings::load_from(Some(&path)).unwrap();
 
         assert_eq!(loaded, settings);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn round_trips_saved_playlists() {
+        let path = temp_path("saved-playlists");
+        let mut settings = AppSettings::default();
+        settings
+            .saved_playlists
+            .push(SavedPlaylist::new(sample_playlist()));
+
+        settings.save_to(&path).unwrap();
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.saved_playlists, settings.saved_playlists);
+        // 平台 + id 相同即视为同一个歌单，用于收藏/取消收藏的判定。
+        assert!(loaded.saved_playlists[0].matches(&settings.saved_playlists[0].playlist));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn old_settings_without_saved_playlists_still_load() {
+        // 旧版 settings.json 里没有 saved_playlists 字段，加载后应为空列表。
+        let path = temp_path("no-saved-playlists");
+        fs::write(&path, r#"{"dark_theme":true}"#).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert!(loaded.dark_theme);
+        assert!(loaded.saved_playlists.is_empty());
         let _ = fs::remove_file(path);
     }
 
