@@ -454,6 +454,13 @@ struct MusicApp {
     playlist_tracks_generation: u64,
     /// 收藏的平台歌单，与 settings.json 保持同步。
     saved_playlists: Vec<SavedPlaylist>,
+    /// 歌单封面本地缓存：`渠道:id` -> 已下载到本地的图片路径。
+    ///
+    /// GPUI 的 `img()` 只能渲染本地文件或资源（应用没有配置 http client），
+    /// 所以远程封面必须先由应用自己的下载器落到本地再交给 `img()`。
+    playlist_cover_paths: std::collections::HashMap<String, std::path::PathBuf>,
+    /// 已经发起过下载的封面 key，避免每帧重复请求。
+    playlist_cover_requested: std::collections::HashSet<String>,
 }
 
 impl MusicApp {
@@ -534,6 +541,8 @@ impl MusicApp {
             playlist_tracks_error: None,
             playlist_tracks_generation: 0,
             saved_playlists: settings.saved_playlists.clone(),
+            playlist_cover_paths: std::collections::HashMap::new(),
+            playlist_cover_requested: std::collections::HashSet::new(),
         }
     }
 
@@ -839,6 +848,86 @@ impl MusicApp {
         }
         self.persist_settings();
         cx.notify();
+    }
+
+    /// 已经下载好的歌单封面路径（没有就返回 None，由调用方回退）。
+    fn playlist_cover_path(&self, playlist: &PlatformPlaylist) -> Option<std::path::PathBuf> {
+        self.playlist_cover_paths
+            .get(&playlist_cover_key(playlist))
+            .cloned()
+    }
+
+    /// 为当前需要显示的歌单（热门列表 + 收藏）补齐封面。
+    ///
+    /// 远程封面先经过应用自己的下载器（带浏览器 UA，走同一个代理开关）落到
+    /// 本地缓存，然后 `img()` 才能渲染出来 —— 这正是曲目封面一直在用的做法。
+    fn ensure_playlist_covers(&mut self, cx: &mut Context<Self>) {
+        let use_proxy = self.use_network_proxy;
+        let mut pending: Vec<(String, String)> = Vec::new();
+        {
+            let mut collect = |playlist: &PlatformPlaylist| {
+                let Some(uri) = normalized_playlist_artwork(playlist) else {
+                    return;
+                };
+                let key = playlist_cover_key(playlist);
+                if self.playlist_cover_paths.contains_key(&key)
+                    || self.playlist_cover_requested.contains(&key)
+                {
+                    return;
+                }
+                pending.push((key, uri));
+            };
+            for playlist in &self.home_playlists {
+                collect(playlist);
+            }
+            for saved in &self.saved_playlists {
+                collect(&saved.playlist);
+            }
+            if let Some(detail) = &self.playlist_detail {
+                collect(detail);
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        for (key, _) in &pending {
+            self.playlist_cover_requested.insert(key.clone());
+        }
+
+        let task = cx.background_spawn(async move {
+            let worker_count = pending.len().min(6).max(1);
+            let mut done: Vec<(String, std::path::PathBuf)> = Vec::new();
+            std::thread::scope(|scope| {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                for chunk in pending.chunks(pending.len().div_ceil(worker_count)) {
+                    let sender = sender.clone();
+                    scope.spawn(move || {
+                        for (key, uri) in chunk {
+                            if let Ok(path) = download_artwork(uri, key, use_proxy) {
+                                let _ = sender.send((key.clone(), std::path::PathBuf::from(path)));
+                            }
+                        }
+                    });
+                }
+                drop(sender);
+                done.extend(receiver.iter());
+            });
+            done
+        });
+        cx.spawn(async move |this, cx| {
+            let done = task.await;
+            if done.is_empty() {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                for (key, path) in done {
+                    this.playlist_cover_paths.insert(key, path);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn select_playlist(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -3065,6 +3154,7 @@ impl MusicApp {
             }))
             .child(playlist_cover(
                 &playlist,
+                self.playlist_cover_path(&playlist),
                 PLAYLIST_COVER_WIDTH,
                 PLAYLIST_COVER_HEIGHT,
                 p,
@@ -3202,6 +3292,7 @@ impl MusicApp {
             .border_color(p.border)
             .child(div().flex_shrink_0().child(playlist_cover(
                 &playlist,
+                self.playlist_cover_path(&playlist),
                 160.0,
                 160.0,
                 p,
@@ -5024,6 +5115,8 @@ impl Render for MusicApp {
         self.initialize_search_input(window, cx);
         self.ensure_player_sliders(window, cx);
         self.sync_player_sliders(window, cx);
+        // 歌单封面要先下载到本地才能渲染（GPUI 没有 http client）。
+        self.ensure_playlist_covers(cx);
         // 专享模式下检测当前歌词行是否变化，必要时启动缓动滚动动画。
         if self.show_now_playing {
             self.update_lyric_scroll();
@@ -5177,12 +5270,28 @@ fn playlist_cover_placeholder(width: f32, height: f32, p: Palette) -> gpui::AnyE
         .into_any_element()
 }
 
+/// 歌单封面缓存用的 key：渠道 + 平台 id。
+fn playlist_cover_key(playlist: &PlatformPlaylist) -> String {
+    format!("{:?}:{}", playlist.channel, playlist.id)
+}
+
 fn playlist_cover(
     playlist: &PlatformPlaylist,
+    local: Option<std::path::PathBuf>,
     width: f32,
     height: f32,
     p: Palette,
 ) -> gpui::AnyElement {
+    // 已下载到本地的封面优先；GPUI 的 img() 渲染不了远程地址。
+    if let Some(path) = local {
+        return img(path)
+            .w(px(width))
+            .h(px(height))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Cover)
+            .with_fallback(move || playlist_cover_placeholder(width, height, p))
+            .into_any_element();
+    }
     match normalized_playlist_artwork(playlist) {
         Some(uri) => img(SharedString::from(uri))
             .w(px(width))
