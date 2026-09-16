@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wcmusic_core::PlatformPlaylist;
+use wcmusic_core::{PlatformPlaylist, Track};
 
 use crate::hotkey::HotKeyAction;
 use crate::lyrics::LyricsStyle;
@@ -106,6 +106,34 @@ impl SavedPlaylist {
     }
 }
 
+/// 收藏到「试听列表 / 我的收藏 / 最近播放 / 通勤」四个文件夹的歌曲。
+///
+/// 和 [`SavedPlaylist`] 一样只保存平台返回的歌曲摘要，重启后「爱听的」页
+/// 仍能按文件夹展示这些歌，并复用现有的播放流程再次点播。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedTrack {
+    /// 所在的文件夹，取值为 `PLAYLIST_FOLDERS` 之一。
+    pub folder: String,
+    pub track: Track,
+}
+
+impl SavedTrack {
+    pub fn new(folder: impl Into<String>, track: Track) -> Self {
+        Self {
+            folder: folder.into(),
+            track,
+        }
+    }
+
+    /// 同一个文件夹里，来源 + 歌曲 id 相同的歌曲视为同一首（去重依据）。
+    ///
+    /// 平台歌曲的 `id` 在渠道内唯一，配合 `source` 才能避免「酷我 123」
+    /// 和「酷狗 123」被误判成同一首。
+    pub fn matches(&self, folder: &str, track: &Track) -> bool {
+        self.folder == folder && self.track.id == track.id && self.track.source == track.source
+    }
+}
+
 /// User preferences persisted under the platform's per-user configuration directory.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -120,6 +148,11 @@ pub struct AppSettings {
     pub use_network_proxy: bool,
     /// 收藏的平台歌单（此刻页的「平台热门歌单」）。
     pub saved_playlists: Vec<SavedPlaylist>,
+    /// 收藏到「爱听的」各文件夹的歌曲。
+    /// `#[serde(default)]`（叠加结构体上的同名属性）保证旧 settings.json
+    /// 没有这个字段时仍能加载，加载后对应一个空列表。
+    #[serde(default)]
+    pub saved_tracks: Vec<SavedTrack>,
 }
 
 impl Default for AppSettings {
@@ -132,6 +165,7 @@ impl Default for AppSettings {
             hotkeys: HotKeySettings::default(),
             use_network_proxy: false,
             saved_playlists: Vec::new(),
+            saved_tracks: Vec::new(),
         }
     }
 }
@@ -310,6 +344,53 @@ mod tests {
 
         assert!(loaded.dark_theme);
         assert!(loaded.saved_playlists.is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    fn sample_track() -> wcmusic_core::Track {
+        let mut track = wcmusic_core::Track::local("t-1", "夜航", "file:///night.mp3");
+        track.artist = "苏打绿".to_owned();
+        track.album = "秋：故事".to_owned();
+        track.source = wcmusic_core::TrackSource::Kw;
+        track.source_id = Some("12345".to_owned());
+        track
+    }
+
+    #[test]
+    fn round_trips_saved_tracks() {
+        let path = temp_path("saved-tracks");
+        let mut settings = AppSettings::default();
+        settings
+            .saved_tracks
+            .push(SavedTrack::new("我的收藏", sample_track()));
+        settings
+            .saved_tracks
+            .push(SavedTrack::new("通勤", sample_track()));
+
+        settings.save_to(&path).unwrap();
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.saved_tracks, settings.saved_tracks);
+        // 同一个文件夹 + 同来源同 id 视为已有；换一个文件夹则不算重复。
+        assert!(loaded.saved_tracks[0].matches("我的收藏", &sample_track()));
+        assert!(!loaded.saved_tracks[0].matches("通勤", &sample_track()));
+        // 不同来源的同 id 歌曲不能互相去重。
+        let mut other_source = sample_track();
+        other_source.source = wcmusic_core::TrackSource::Kg;
+        assert!(!loaded.saved_tracks[0].matches("我的收藏", &other_source));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn old_settings_without_saved_tracks_still_load() {
+        // 旧版 settings.json 里没有 saved_tracks 字段，加载后应为空列表。
+        let path = temp_path("no-saved-tracks");
+        fs::write(&path, r#"{"dark_theme":true}"#).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert!(loaded.dark_theme);
+        assert!(loaded.saved_tracks.is_empty());
         let _ = fs::remove_file(path);
     }
 

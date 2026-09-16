@@ -40,7 +40,7 @@ use crate::hotkey::{HotKeyAction, HotKeyManager};
 use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
-use crate::settings::{AppSettings, HotKeySettings, SavedPlaylist};
+use crate::settings::{AppSettings, HotKeySettings, SavedPlaylist, SavedTrack};
 use crate::smooth_scroll::{
     SmoothScrollDiv, SmoothScrollState, advance_smooth_scroll,
 };
@@ -402,7 +402,42 @@ struct FetchingTrack {
     row: TrackRow,
     /// 平台名称，例如「酷我」。
     source: SharedString,
+    /// 这次「获取中」是播放前解析还是右键下载。
+    purpose: FetchPurpose,
 }
+
+/// 复用同一套「获取中」状态位的两种用途。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FetchPurpose {
+    /// 播放前解析整曲地址。
+    Playback,
+    /// 轨道行右键菜单里的下载保存。
+    Download,
+}
+
+/// 打开中的轨道行右键菜单。
+struct TrackMenuState {
+    /// 右键命中的那一行。
+    row: TrackRow,
+    /// 菜单左上角的锚点（窗口坐标，来自右键按下位置并收拢进窗口）。
+    anchor: Point<Pixels>,
+}
+
+/// 右键菜单卡片的宽度与高度估算值（逻辑像素）：用于把菜单收进窗口内。
+const TRACK_MENU_WIDTH: f32 = 240.0;
+const TRACK_MENU_HEIGHT: f32 = 330.0;
+/// 菜单与窗口边缘之间至少保留的间距。
+const TRACK_MENU_MARGIN: f32 = 8.0;
+
+/// 右键菜单里的三档下载音质：(显示文案, 解析用的 quality 字符串)。
+const TRACK_MENU_QUALITIES: [(&str, &str); 3] = [
+    ("标准 128k", "128k"),
+    ("高品 320k", "320k"),
+    ("无损 FLAC", "flac"),
+];
+
+/// 默认下载文件名的最大字符数（不含扩展名），避免超出文件系统限制。
+const DOWNLOAD_NAME_MAX_CHARS: usize = 120;
 
 impl TrackRow {
     fn from_core(track: Track) -> Self {
@@ -531,6 +566,10 @@ struct MusicApp {
     playlist_tracks_generation: u64,
     /// 收藏的平台歌单，与 settings.json 保持同步。
     saved_playlists: Vec<SavedPlaylist>,
+    /// 「爱听的」各文件夹里收藏的歌曲，与 settings.json 保持同步。
+    saved_tracks: Vec<SavedTrack>,
+    /// 当前打开的轨道行右键菜单；None 表示关闭。
+    track_menu: Option<TrackMenuState>,
     /// 歌单封面本地缓存：`渠道:id` -> 已下载到本地的图片路径。
     ///
     /// GPUI 的 `img()` 只能渲染本地文件或资源（应用没有配置 http client），
@@ -622,6 +661,8 @@ impl MusicApp {
             playlist_tracks_error: None,
             playlist_tracks_generation: 0,
             saved_playlists: settings.saved_playlists.clone(),
+            saved_tracks: settings.saved_tracks.clone(),
+            track_menu: None,
             playlist_cover_paths: std::collections::HashMap::new(),
             playlist_cover_requested: std::collections::HashSet::new(),
             smooth_scrolls: SmoothScrolls::new(),
@@ -638,6 +679,7 @@ impl MusicApp {
             hotkeys: self.hotkeys.clone(),
             use_network_proxy: self.use_network_proxy,
             saved_playlists: self.saved_playlists.clone(),
+            saved_tracks: self.saved_tracks.clone(),
         }
     }
 
@@ -1023,11 +1065,208 @@ impl MusicApp {
     }
 
     fn selected_playlist_tracks(&self) -> Vec<TrackRow> {
-        match self.selected_playlist {
+        // 试听列表 / 最近播放保留原有内容（本地曲库 / 当前歌曲），右键菜单
+        // 收藏进来的歌曲追加在后面；我的收藏 / 通勤只展示收藏的歌曲。
+        let mut rows = match self.selected_playlist {
             0 => self.rows.clone(),
             2 => self.current_row().cloned().into_iter().collect(),
             _ => Vec::new(),
+        };
+        let folder = PLAYLIST_FOLDERS[self.selected_playlist.min(PLAYLIST_FOLDERS.len() - 1)];
+        for saved in self.saved_tracks.iter().filter(|saved| saved.folder == folder) {
+            let row = TrackRow::from_core(saved.track.clone());
+            let duplicate = rows.iter().any(|existing| {
+                existing.track.id == row.track.id && existing.track.source == row.track.source
+            });
+            if !duplicate {
+                rows.push(row);
+            }
         }
+        rows
+    }
+
+    /// 右键轨道行：在鼠标位置附近打开菜单。
+    fn open_track_menu(
+        &mut self,
+        row: TrackRow,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 右键位置就是锚点；靠近右/下边缘时往回收，避免菜单被窗口裁掉。
+        let bounds = window.bounds();
+        let max_x = (f32::from(bounds.size.width) - TRACK_MENU_WIDTH - TRACK_MENU_MARGIN)
+            .max(TRACK_MENU_MARGIN);
+        let max_y = (f32::from(bounds.size.height) - TRACK_MENU_HEIGHT - TRACK_MENU_MARGIN)
+            .max(TRACK_MENU_MARGIN);
+        let anchor = point(
+            px(f32::from(position.x).clamp(TRACK_MENU_MARGIN, max_x)),
+            px(f32::from(position.y).clamp(TRACK_MENU_MARGIN, max_y)),
+        );
+        self.track_menu = Some(TrackMenuState { row, anchor });
+        cx.notify();
+    }
+
+    fn close_track_menu(&mut self, cx: &mut Context<Self>) {
+        if self.track_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// 右键菜单：把菜单里的歌曲加入指定文件夹，重复添加只提示不重复写入。
+    fn add_menu_track_to_folder(&mut self, folder_index: usize, cx: &mut Context<Self>) {
+        let track = match self.track_menu.as_ref() {
+            Some(menu) => menu.row.track.clone(),
+            None => return,
+        };
+        self.close_track_menu(cx);
+        let Some(folder) = PLAYLIST_FOLDERS.get(folder_index).copied() else {
+            return;
+        };
+        if self
+            .saved_tracks
+            .iter()
+            .any(|saved| saved.matches(folder, &track))
+        {
+            self.notice = format!("「{}」已在{folder}", track.title).into();
+        } else {
+            self.saved_tracks.push(SavedTrack::new(folder, track.clone()));
+            self.persist_settings();
+            self.notice = format!("已添加到{folder}：{}", track.title).into();
+        }
+        cx.notify();
+    }
+
+    /// 右键菜单里的下载：后台解析直链并下载，然后在任务里弹出保存对话框。
+    ///
+    /// 不能在点击回调里直接弹阻塞对话框：点击回调运行在窗口消息派发的栈帧里并
+    /// 持有 `MusicApp` 的可变借用，对话框会嵌套消息循环，周期任务撞上实体借用
+    /// 检查会直接终止进程（见 `import_source` 的说明）。所以解析/下载放后台线程，
+    /// 对话框在 `cx.spawn` 的任务里打开并用 `ui_busy::enter()` 标记。
+    fn download_menu_track(&mut self, quality_index: usize, cx: &mut Context<Self>) {
+        let row = match self.track_menu.as_ref() {
+            Some(menu) => menu.row.clone(),
+            None => return,
+        };
+        self.close_track_menu(cx);
+
+        // 复用「获取中」状态位：有获取任务在跑时不允许再开一个下载。
+        if self.fetching.is_some() {
+            self.notice = "正在获取中，请稍候再试".into();
+            cx.notify();
+            return;
+        }
+        let track = row.track.clone();
+        let source_key = match track.source {
+            TrackSource::Kw => "kw",
+            TrackSource::Kg => "kg",
+            TrackSource::Tx => "tx",
+            TrackSource::Wy => "wy",
+            _ => {
+                self.notice = "这首歌曲暂不支持下载（只有在线歌曲能解析直链）".into();
+                cx.notify();
+                return;
+            }
+        };
+        let Some(source_id) = track.source_id.clone() else {
+            self.notice = "这首歌曲缺少平台 ID，无法下载".into();
+            cx.notify();
+            return;
+        };
+
+        let (label, quality) = TRACK_MENU_QUALITIES
+            .get(quality_index)
+            .copied()
+            .unwrap_or(TRACK_MENU_QUALITIES[0]);
+        self.fetching = Some(FetchingTrack {
+            row: row.clone(),
+            source: label.into(),
+            purpose: FetchPurpose::Download,
+        });
+        self.notice = format!("正在下载 {label}：{} - {}…", row.artist, row.title).into();
+        cx.notify();
+
+        let use_proxy = self.use_network_proxy;
+        let script = self
+            .source_script
+            .clone()
+            .unwrap_or_else(built_in_source_script);
+        let task = cx.background_spawn(async move {
+            let url = resolve_source_url_with_proxy(
+                &script,
+                SourceEnvironment::Desktop,
+                source_key,
+                &source_id,
+                quality,
+                use_proxy,
+            )
+            .map_err(|error| error.to_string())?;
+            let bytes = download_audio_with_proxy(&url, use_proxy)?;
+            Ok::<_, String>((url, bytes))
+        });
+        cx.spawn(async move |this, cx| {
+            let (url, bytes) = match task.await {
+                Ok(result) => result,
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.finish_track_download(&row, format!("下载失败：{error}"), cx);
+                    });
+                    return;
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.notice = "下载完成，正在选择保存位置…".into();
+                cx.notify();
+            });
+            let file_name = download_file_name(&track.artist, &track.title, &url, quality);
+            let extension = download_extension(&url, quality);
+            // 阻塞对话框必须在任务里打开，并用 busy 标记让周期任务跳过轮询。
+            let picked = {
+                let _busy = ui_busy::enter();
+                rfd::FileDialog::new()
+                    .set_title("保存歌曲")
+                    .set_file_name(&file_name)
+                    .add_filter("音频文件", &[extension])
+                    .add_filter("所有文件", &["*"])
+                    .save_file()
+            };
+            let Some(path) = picked else {
+                let _ = this.update(cx, |this, cx| {
+                    this.finish_track_download(&row, "已取消下载".into(), cx);
+                });
+                return;
+            };
+            // 落盘放后台线程：整首音频可能有几十 MB，不能卡住 UI 线程。
+            let write = cx
+                .background_executor()
+                .spawn({
+                    let path = path.clone();
+                    async move {
+                        std::fs::write(&path, &bytes)
+                            .map_err(|error| format!("写入文件失败：{error}"))
+                    }
+                })
+                .await;
+            let message = match write {
+                Ok(()) => format!("已保存到 {}", path.display()),
+                Err(error) => error,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.finish_track_download(&row, message, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// 下载流程收尾：清掉仍属于本次下载的「获取中」标记并写入结果提示。
+    fn finish_track_download(&mut self, row: &TrackRow, message: String, cx: &mut Context<Self>) {
+        if self.fetching.as_ref().is_some_and(|fetching| {
+            fetching.purpose == FetchPurpose::Download && &fetching.row == row
+        }) {
+            self.fetching = None;
+        }
+        self.notice = message.into();
+        cx.notify();
     }
 
     fn toggle_playlist_track(&mut self, row: TrackRow, cx: &mut Context<Self>) {
@@ -2090,6 +2329,7 @@ impl MusicApp {
         self.fetching = Some(FetchingTrack {
             row: row.clone(),
             source: source_label.into(),
+            purpose: FetchPurpose::Playback,
         });
         self.notice = if online {
             format!("获取中：正在通过{source_label}解析整曲地址…")
@@ -3554,6 +3794,7 @@ impl MusicApp {
                 let selected = self.current_online_track.as_ref() == Some(&row);
                 let playing = selected && self.is_playing;
                 let fetching = self.is_fetching_row(&row);
+                let row_for_menu = row.clone();
                 results = results.child(
                     div()
                         .id(("online-track", index))
@@ -3567,6 +3808,12 @@ impl MusicApp {
                         .cursor_pointer()
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.toggle_online_track(index, cx)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                this.open_track_menu(row_for_menu.clone(), event.position, window, cx);
+                            }),
                         )
                         .child(
                             div()
@@ -3913,6 +4160,7 @@ impl MusicApp {
             let selected = self.current_online_track.as_ref() == Some(&row);
             let playing = selected && self.is_playing;
             let fetching = self.is_fetching_row(&row);
+            let row_for_menu = row.clone();
             list = list.child(
                 div()
                     .id(("ranking-track", index))
@@ -3926,6 +4174,12 @@ impl MusicApp {
                     .cursor_pointer()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.toggle_ranking_track(index, cx)),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.open_track_menu(row_for_menu.clone(), event.position, window, cx);
+                        }),
                     )
                     .child(
                         div()
@@ -4059,7 +4313,7 @@ impl MusicApp {
         if playlist_tracks.is_empty() {
             songs_panel = songs_panel.child(search_status(
                 "这里还没有歌曲",
-                "从榜单或搜索中选择歌曲后，可将它们加入此文件夹。",
+                "右键任意歌曲，选择「添加到歌单文件夹」即可收藏到这里。",
                 p,
             ));
         } else {
@@ -4102,6 +4356,7 @@ impl MusicApp {
             let playing = selected && self.is_playing;
             let fetching = self.is_fetching_row(&row);
             let row_for_click = row.clone();
+            let row_for_menu = row.clone();
             list = list.child(
                 div()
                     .id(("playlist-track", index))
@@ -4116,6 +4371,12 @@ impl MusicApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_playlist_track(row_for_click.clone(), cx)
                     }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.open_track_menu(row_for_menu.clone(), event.position, window, cx);
+                        }),
+                    )
                     .child(
                         div()
                             .w(px(28.0))
@@ -4322,6 +4583,108 @@ impl MusicApp {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_color_drag(cx)),
+            );
+
+        Some(backdrop.child(card).into_any_element())
+    }
+
+    /// 轨道行右键菜单浮层：全屏透明遮罩 + 贴着右键锚点的卡片。
+    ///
+    /// 沿用设置页浮层的做法（遮罩 `.occlude()` 吞掉背景点击、卡片自己
+    /// `stop_propagation`），菜单不会盖住后仍误触下面的列表行。
+    fn track_menu_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.track_menu.as_ref()?;
+        let p = Palette::new(cx);
+        let track = &menu.row.track;
+
+        let mut folder_items = v_flex().flex_col().gap_1();
+        for (index, folder) in PLAYLIST_FOLDERS.iter().enumerate() {
+            let added = self
+                .saved_tracks
+                .iter()
+                .any(|saved| saved.matches(folder, track));
+            folder_items = folder_items.child(
+                div()
+                    .id(("track-menu-folder", index))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px(px(10.0))
+                    .py(px(7.0))
+                    .rounded_md()
+                    .text_sm()
+                    .text_color(if added { p.primary } else { p.foreground })
+                    .cursor_pointer()
+                    .hover(|style| style.bg(p.surface_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.add_menu_track_to_folder(index, cx)
+                    }))
+                    .child(div().child(*folder))
+                    .when(added, |this| {
+                        this.child(div().text_xs().text_color(p.primary).child("已添加"))
+                    }),
+            );
+        }
+
+        let mut quality_items = v_flex().flex_col().gap_1();
+        for (index, (label, _)) in TRACK_MENU_QUALITIES.iter().enumerate() {
+            quality_items = quality_items.child(
+                div()
+                    .id(("track-menu-quality", index))
+                    .w_full()
+                    .px(px(10.0))
+                    .py(px(7.0))
+                    .rounded_md()
+                    .text_sm()
+                    .text_color(p.foreground)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(p.surface_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.download_menu_track(index, cx)
+                    }))
+                    .child(*label),
+            );
+        }
+
+        let card = v_flex()
+            .id("track-menu-card")
+            .absolute()
+            .left(px(f32::from(menu.anchor.x)))
+            .top(px(f32::from(menu.anchor.y)))
+            .w(px(TRACK_MENU_WIDTH))
+            .p(px(8.0))
+            .gap_1()
+            .bg(p.surface)
+            .rounded_lg()
+            .border_1()
+            .border_color(p.border)
+            // 卡片上的空白处只吞掉点击，不触发遮罩的关闭。
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if is_escape(event) {
+                    this.close_track_menu(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(track_menu_heading("添加到歌单文件夹", p))
+            .child(folder_items)
+            .child(div().h(px(1.0)).w_full().bg(p.border).my(px(4.0)))
+            .child(track_menu_heading("下载", p))
+            .child(quality_items);
+
+        let backdrop = div()
+            .id("track-menu-backdrop")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_track_menu(cx)),
             );
 
         Some(backdrop.child(card).into_any_element())
@@ -5126,7 +5489,13 @@ impl MusicApp {
             .map(|row| track_artwork_sized(row, 48.0, p))
             .unwrap_or_else(|| empty_artwork(p));
         let playing = self.is_playing;
-        let fetching = self.fetching.clone();
+        // 只有「播放前解析」才接管底栏的播放键与副标题；右键下载走行内提示与
+        // 侧栏 notice，不打断当前的播放控制。
+        let fetching = self
+            .fetching
+            .as_ref()
+            .filter(|fetching| fetching.purpose == FetchPurpose::Playback)
+            .cloned();
         // 左侧副标题优先显示当前歌词行；没有歌词时退回艺术家名。
         let current_lyric = self
             .current_lyric_index()
@@ -5385,11 +5754,14 @@ impl Render for MusicApp {
             );
         // 设置页的选择器浮层盖在整页之上，不打开时渲染成空。
         let overlay = self.settings_picker_overlay(cx);
+        // 轨道行右键菜单叠在最上层。
+        let track_menu = self.track_menu_overlay(cx);
         div()
             .relative()
             .size_full()
             .child(content)
             .children(overlay)
+            .children(track_menu)
     }
 }
 
@@ -5880,6 +6252,86 @@ fn track_finished(elapsed_ms: u64, duration_ms: u64) -> bool {
 fn format_playback_time(ms: u64) -> String {
     let seconds = ms / 1000;
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// 轨道行右键菜单里的分组标题。
+fn track_menu_heading(label: &'static str, p: Palette) -> gpui::Div {
+    div()
+        .px(px(10.0))
+        .py(px(4.0))
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(p.muted)
+        .child(label)
+}
+
+/// 清洗默认下载文件名的单个组成部分（艺术家 / 歌名）。
+///
+/// Windows 下 `< > : " / \ | ? *` 与控制字符不能出现在文件名里，统一换成
+/// `_`；首尾空白与点会被系统忽略，这里一并去掉，清洗后为空则兜底成「未命名」。
+fn sanitize_file_component(input: &str) -> String {
+    let mut cleaned = String::with_capacity(input.len());
+    for ch in input.chars() {
+        let invalid = ch.is_control()
+            || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*');
+        cleaned.push(if invalid { '_' } else { ch });
+    }
+    let trimmed = cleaned.trim().trim_matches('.').trim();
+    if trimmed.is_empty() {
+        "未命名".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// 从直链或音质推断下载文件的扩展名（纯函数，便于单测）。
+///
+/// 直链带 query / fragment 时先剥掉，只认最后一段路径里真正的扩展名；
+/// 认不出来（例如 `/stream`、`.php`）就按音质兜底：无损给 flac，其余给 mp3。
+fn download_extension(url: &str, quality: &str) -> &'static str {
+    let path = url.split(|ch| ch == '?' || ch == '#').next().unwrap_or(url);
+    let candidate = path.rsplit('/').next().unwrap_or("");
+    if let Some((_, ext)) = candidate.rsplit_once('.') {
+        match ext.to_ascii_lowercase().as_str() {
+            "mp3" => return "mp3",
+            "flac" => return "flac",
+            "m4a" => return "m4a",
+            "aac" => return "aac",
+            "wav" => return "wav",
+            "ogg" => return "ogg",
+            "ape" => return "ape",
+            _ => {}
+        }
+    }
+    if quality.eq_ignore_ascii_case("flac") {
+        "flac"
+    } else {
+        "mp3"
+    }
+}
+
+/// 生成默认下载文件名 `{艺术家} - {歌名}.{扩展名}`（纯函数，便于单测）。
+///
+/// 非法字符替换、超长截断（截断主体、保留扩展名）都在这里处理。
+fn download_file_name(artist: &str, title: &str, url: &str, quality: &str) -> String {
+    let artist = if artist.trim().is_empty() {
+        "未知艺术家".to_owned()
+    } else {
+        sanitize_file_component(artist)
+    };
+    let title = sanitize_file_component(title);
+    let mut stem = format!("{artist} - {title}");
+    if stem.chars().count() > DOWNLOAD_NAME_MAX_CHARS {
+        stem = stem.chars().take(DOWNLOAD_NAME_MAX_CHARS).collect();
+        // 截断后别把空白 / 点 / 连字符留在结尾。
+        stem = stem
+            .trim_end_matches(|ch: char| ch == ' ' || ch == '.' || ch == '-')
+            .to_owned();
+        if stem.is_empty() {
+            stem = "未命名".to_owned();
+        }
+    }
+    format!("{stem}.{}", download_extension(url, quality))
 }
 
 /// 列表行里的「获取中」文字提示。
@@ -6434,5 +6886,59 @@ mod tests {
         assert!(!track_finished(0, 0));
         assert!(!track_finished(123_456, 0));
         assert!(!track_finished(u64::MAX, 0));
+    }
+
+    #[test]
+    fn sanitizes_download_file_components() {
+        // Windows 非法字符统一替换成 `_`。
+        assert_eq!(
+            sanitize_file_component("A/B:C*D?E\"F<G>H|I\\J"),
+            "A_B_C_D_E_F_G_H_I_J"
+        );
+        // 首尾空白与点被去掉。
+        assert_eq!(sanitize_file_component("  ..夜航..  "), "夜航");
+        // 清洗后为空时兜底。
+        assert_eq!(sanitize_file_component("   "), "未命名");
+        assert_eq!(sanitize_file_component("..."), "未命名");
+    }
+
+    #[test]
+    fn infers_download_extension_from_url_then_quality() {
+        // 直链里的扩展名优先，且大小写不敏感、query 不影响判断。
+        assert_eq!(download_extension("https://x/song.MP3?token=1", "flac"), "mp3");
+        assert_eq!(download_extension("https://x/song.flac#frag", "128k"), "flac");
+        // 认不出来的路径或伪扩展名按音质兜底。
+        assert_eq!(download_extension("https://x/stream", "flac"), "flac");
+        assert_eq!(download_extension("https://x/stream", "320k"), "mp3");
+        assert_eq!(download_extension("https://x/song.php", "320k"), "mp3");
+        // 主机名里的点不能被当成扩展名。
+        assert_eq!(download_extension("https://a.b.com/path", "128k"), "mp3");
+    }
+
+    #[test]
+    fn builds_safe_download_file_name() {
+        assert_eq!(
+            download_file_name("周杰伦", "晴天", "https://x/song.mp3", "320k"),
+            "周杰伦 - 晴天.mp3"
+        );
+        // 非法字符替换 + 无扩展名时按音质兜底。
+        assert_eq!(
+            download_file_name("A/B", "C:D", "https://x/stream", "flac"),
+            "A_B - C_D.flac"
+        );
+        // 空艺术家走兜底，空歌名走「未命名」。
+        assert_eq!(
+            download_file_name("  ", "", "https://x/song.mp3", "128k"),
+            "未知艺术家 - 未命名.mp3"
+        );
+    }
+
+    #[test]
+    fn truncates_overlong_download_file_name() {
+        let artist = "啊".repeat(200);
+        let name = download_file_name(&artist, "歌", "https://x/song.mp3", "320k");
+        assert!(name.ends_with(".mp3"));
+        let stem = name.strip_suffix(".mp3").unwrap();
+        assert_eq!(stem.chars().count(), DOWNLOAD_NAME_MAX_CHARS);
     }
 }
