@@ -39,6 +39,23 @@ mod platform {
     /// The window procedure GPUI installed before this module subclassed it.
     static ORIGINAL_PROC: AtomicIsize = AtomicIsize::new(0);
 
+    /// 诊断开关：`WCMUSIC_LYRICS_NO_LAYERED=1` 时不加 `WS_EX_LAYERED`。
+    ///
+    /// 这是为了验证「桌面歌词掉帧是不是 layered 窗口拖慢 DWM 合成」——
+    /// 去掉之后鼠标穿透会退化（见 [`install_overlay_window`] 的注释），
+    /// 所以只作为测量用，默认关闭。
+    fn layered_style_disabled() -> bool {
+        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("WCMUSIC_LYRICS_NO_LAYERED")
+                .map(|value| {
+                    let value = value.trim();
+                    value == "1" || value.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false)
+        })
+    }
+
     extern "system" fn overlay_window_proc(
         hwnd: HWND,
         message: u32,
@@ -75,13 +92,16 @@ mod platform {
         let hwnd = hwnd as HWND;
         unsafe {
             let ext_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            let wanted = ext_style
-                | WS_EX_NOACTIVATE as isize
-                | WS_EX_TOOLWINDOW as isize
-                | WS_EX_LAYERED as isize;
+            let mut wanted =
+                ext_style | WS_EX_NOACTIVATE as isize | WS_EX_TOOLWINDOW as isize;
+            if !layered_style_disabled() {
+                wanted |= WS_EX_LAYERED as isize;
+            }
             if wanted != ext_style {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted);
-                let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                if !layered_style_disabled() {
+                    let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                }
                 SetWindowPos(
                     hwnd,
                     std::ptr::null_mut(),

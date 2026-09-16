@@ -27,6 +27,232 @@ use wcmusic_core::{Track, TrackSource};
 use crate::MusicApp;
 use crate::lyrics_window;
 
+/// 桌面歌词的帧探针，由环境变量 `WCMUSIC_FRAME_PROBE=1` 打开。
+///
+/// 打开后，`LyricsOverlay::render` 会在每个「需要逐帧重绘」的帧上记录
+/// 「与上一帧的间隔」以及「本帧 `render` 构建元素树的耗时」，每 60 帧追加写入
+/// `%TEMP%\wcmusic-overlay-frames.csv`（列：`frame,interval_ms,render_ms`），
+/// 同时把累计的 p50/p95/p99/max、「间隔 > 17ms 的帧数」与 render 耗时分位数写到
+/// `%TEMP%\wcmusic-overlay-frames-summary.txt`。`advance_frame` 驱动的空闲帧
+/// （不满足 `needs_frames()`）不计入统计。
+///
+/// 这是一个给「桌面歌词掉帧」回归用的诊断开关：关闭时每帧只做一次 `OnceLock`
+/// 读取（等价于一次原子 bool 判断），没有任何 I/O。
+mod frame_probe {
+    use std::io::Write as _;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static STATE: OnceLock<Mutex<ProbeState>> = OnceLock::new();
+
+    /// 每累积这么多帧落一次盘，避免每帧都做 I/O。
+    const FLUSH_EVERY: usize = 60;
+    /// 一帧间隔超过这个值就算一次掉帧（60fps 的理论间隔约 16.67ms）。
+    const STUTTER_MS: f32 = 17.0;
+
+    struct ProbeState {
+        last_render_at: Option<Instant>,
+        /// 当前这一帧相对上一帧的间隔，渲染结束时和耗时一起入库。
+        current_interval_ms: Option<f32>,
+        samples: Vec<(f32, f32)>,
+        pending: Vec<(f32, f32)>,
+        recorded: u64,
+        csv: Option<std::fs::File>,
+        csv_path: PathBuf,
+        summary_path: PathBuf,
+    }
+
+    fn enabled() -> bool {
+        *ENABLED.get_or_init(|| {
+            std::env::var("WCMUSIC_FRAME_PROBE")
+                .map(|value| {
+                    let value = value.trim();
+                    value == "1" || value.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    static SIMULATION: OnceLock<bool> = OnceLock::new();
+    static SIMULATION_STROKE: OnceLock<Option<f32>> = OnceLock::new();
+
+    /// 诊断开关：`WCMUSIC_LYRICS_SIM=1` 时歌词浮窗自己合成一段卡拉OK、逐帧
+    /// 重绘，这样即使播放器 / 主窗口不可用也能单独测量浮窗的渲染成本。
+    pub fn simulation_enabled() -> bool {
+        *SIMULATION.get_or_init(|| {
+            std::env::var("WCMUSIC_LYRICS_SIM")
+                .map(|value| {
+                    let value = value.trim();
+                    value == "1" || value.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    /// 合成模式下强制使用的描边宽度：`WCMUSIC_LYRICS_SIM_STROKE=2`。
+    /// 不设置就沿用用户当前设置（默认无描边）。
+    pub fn simulation_stroke_width() -> Option<f32> {
+        *SIMULATION_STROKE.get_or_init(|| {
+            std::env::var("WCMUSIC_LYRICS_SIM_STROKE")
+                .ok()
+                .and_then(|value| value.trim().parse::<f32>().ok())
+                .filter(|value| value.is_finite())
+        })
+    }
+
+    static SIMULATION_BLANK: OnceLock<bool> = OnceLock::new();
+
+    /// 诊断开关：`WCMUSIC_LYRICS_FRAME_DRIVER=notify` 时改用 `cx.notify()`
+    /// 保持窗口 dirty、由平台 vsync 失效驱动下一帧，而不是
+    /// `window.request_animation_frame()`。用来验证 GPUI 对「非激活窗口」的
+    /// `inactive_frame_interval`（33ms）节流是不是桌面歌词掉帧的真正原因。
+    pub fn notify_frame_driver() -> bool {
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("WCMUSIC_LYRICS_FRAME_DRIVER")
+                .map(|value| value.trim().eq_ignore_ascii_case("notify"))
+                .unwrap_or(false)
+        })
+    }
+
+    /// 诊断开关：`WCMUSIC_LYRICS_SIM_BLANK=1` 时仍逐帧请求重绘，但只画一个
+    /// 4×4 的小方块。用来把「每帧固定成本（排版/合成/present）」和「歌词内容
+    /// 成本」分开。
+    pub fn simulation_blank() -> bool {
+        *SIMULATION_BLANK.get_or_init(|| {
+            std::env::var("WCMUSIC_LYRICS_SIM_BLANK")
+                .map(|value| {
+                    let value = value.trim();
+                    value == "1" || value.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::var_os("TEMP")
+            .or_else(|| std::env::var_os("TMP"))
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(name)
+    }
+
+    fn state() -> &'static Mutex<ProbeState> {
+        STATE.get_or_init(|| {
+            Mutex::new(ProbeState {
+                last_render_at: None,
+                current_interval_ms: None,
+                samples: Vec::new(),
+                pending: Vec::new(),
+                recorded: 0,
+                csv: None,
+                csv_path: temp_path("wcmusic-overlay-frames.csv"),
+                summary_path: temp_path("wcmusic-overlay-frames-summary.txt"),
+            })
+        })
+    }
+
+    /// 在 `render` 开头调用。`active` 为真时本帧计入统计，返回一个起点供
+    /// [`frame_end`] 计算 render 耗时；否则返回 `None`，并重置帧间隔基准，
+    /// 这样暂停 / 隐藏后的一段空档不会被当成一次巨大的掉帧。
+    pub fn frame_start(active: bool) -> Option<Instant> {
+        if !enabled() {
+            return None;
+        }
+        let mut state = state().lock().unwrap_or_else(|error| error.into_inner());
+        if !active {
+            state.last_render_at = None;
+            state.current_interval_ms = None;
+            return None;
+        }
+        let now = Instant::now();
+        state.current_interval_ms =
+            state.last_render_at.map(|previous| (now - previous).as_secs_f32() * 1000.0);
+        state.last_render_at = Some(now);
+        Some(now)
+    }
+
+    pub fn frame_end(start: Option<Instant>) {
+        let Some(start) = start else {
+            return;
+        };
+        let render_ms = start.elapsed().as_secs_f32() * 1000.0;
+        let mut state = state().lock().unwrap_or_else(|error| error.into_inner());
+        let Some(interval_ms) = state.current_interval_ms.take() else {
+            // 一段连续帧的第一帧没有可比较的间隔，记录下来即可。
+            return;
+        };
+        state.pending.push((interval_ms, render_ms));
+        if state.pending.len() >= FLUSH_EVERY {
+            flush(&mut state);
+        }
+    }
+
+    fn flush(state: &mut ProbeState) {
+        if !state.pending.is_empty() {
+            if state.csv.is_none() {
+                state.csv = std::fs::File::create(&state.csv_path).ok();
+            }
+            if let Some(file) = state.csv.as_mut() {
+                let base = state.recorded;
+                let mut buffer = String::new();
+                for (offset, (interval, render)) in state.pending.iter().enumerate() {
+                    buffer.push_str(&format!(
+                        "{},{:.4},{:.4}\n",
+                        base + offset as u64,
+                        interval,
+                        render
+                    ));
+                }
+                let _ = file.write_all(buffer.as_bytes());
+                let _ = file.flush();
+            }
+            state.recorded += state.pending.len() as u64;
+            state.samples.append(&mut state.pending);
+        }
+        write_summary(state);
+    }
+
+    fn percentile(sorted: &[f32], fraction: f32) -> f32 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let index = ((sorted.len() - 1) as f32 * fraction).round() as usize;
+        sorted[index.min(sorted.len() - 1)]
+    }
+
+    fn write_summary(state: &ProbeState) {
+        if state.samples.is_empty() {
+            return;
+        }
+        let mut intervals: Vec<f32> = state.samples.iter().map(|sample| sample.0).collect();
+        let mut renders: Vec<f32> = state.samples.iter().map(|sample| sample.1).collect();
+        intervals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        renders.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let stutter = intervals
+            .iter()
+            .filter(|interval| **interval > STUTTER_MS)
+            .count();
+        let text = format!(
+            "frames={}\ninterval_p50={:.2}\ninterval_p95={:.2}\ninterval_p99={:.2}\ninterval_max={:.2}\nstutter_over_17ms={}\nrender_p50={:.3}\nrender_p95={:.3}\nrender_max={:.3}\n",
+            intervals.len(),
+            percentile(&intervals, 0.5),
+            percentile(&intervals, 0.95),
+            percentile(&intervals, 0.99),
+            intervals.last().copied().unwrap_or(0.0),
+            stutter,
+            percentile(&renders, 0.5),
+            percentile(&renders, 0.95),
+            renders.last().copied().unwrap_or(0.0),
+        );
+        // 每 60 帧刷新一次汇总文件，这样即使进程被 taskkill 掉也能拿到最新数字。
+        let _ = std::fs::write(&state.summary_path, text.as_bytes());
+        eprintln!("[frame-probe] {}", text.replace('\n', " ").trim());
+    }
+}
+
 const PANEL_WIDTH: f32 = 392.0;
 const PANEL_TOP: f32 = 42.0;
 const PANEL_LEFT: f32 = 14.0;
@@ -178,6 +404,32 @@ impl LyricLine {
             translation,
         }
     }
+}
+
+/// 诊断用合成歌词（`WCMUSIC_LYRICS_SIM=1`）：长度接近真实中文歌词，
+/// 每行都带翻译，行距 2s，循环播放。
+fn simulation_lines() -> Vec<LyricLine> {
+    const LINES: [(&str, &str); 8] = [
+        ("夜色渐浓 灯火照亮了归途", "Night falls, the lights light up the way home"),
+        ("我在人海里寻找你的影子", "I search the crowd for your shadow"),
+        ("回忆像潮水一遍遍涌来", "Memories surge again and again like the tide"),
+        ("那些说不出口的话都藏在歌里", "The words I cannot say are hidden in the song"),
+        ("如果时间可以慢一点", "If only time could slow down a little"),
+        ("我想再多看你一眼", "I want to look at you one more time"),
+        ("风把故事吹散在街角", "The wind scatters our story on the street corner"),
+        ("而我还站在原地等你", "And I am still standing here waiting for you"),
+    ];
+    LINES
+        .iter()
+        .enumerate()
+        .map(|(index, (text, translation))| {
+            LyricLine::new(
+                index as u64 * 2_000,
+                (*text).to_owned(),
+                Some((*translation).to_owned()),
+            )
+        })
+        .collect()
 }
 
 /// 翻译行与原文行时间戳允许的最大偏差：翻译 LRC 常和原文错开几十毫秒，
@@ -881,6 +1133,8 @@ pub struct LyricsOverlay {
     notice_generation: u64,
     /// 上一帧的时间基准（由帧时钟驱动，见 `advance_frame`）。
     last_frame_at: Option<std::time::Instant>,
+    /// 诊断用自驱动（`WCMUSIC_LYRICS_SIM=1`）的起始时间，见 `apply_simulation`。
+    sim_started: Option<std::time::Instant>,
     hwnd: Option<isize>,
     /// 歌词窗口自身的 DPI 缩放，用于在逻辑像素与物理像素之间换算。
     scale_factor: f32,
@@ -915,6 +1169,7 @@ impl LyricsOverlay {
             notice: None,
             notice_generation: 0,
             last_frame_at: None,
+            sim_started: None,
             measure_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             hwnd: None,
             scale_factor: 1.0,
@@ -1284,6 +1539,32 @@ impl LyricsOverlay {
 
     // ---- 绘制 ----
 
+    /// 诊断用自驱动：`WCMUSIC_LYRICS_SIM=1` 时不用播放器，也能让歌词浮窗
+    /// 一直有「正在卡拉OK」的状态并逐帧重绘，用来单独测量浮窗的渲染成本。
+    ///
+    /// 位置按真实经过时间在几行合成歌词间循环推进（每行 2s），因此既覆盖
+    /// 稳定的逐字填充帧，也覆盖行切换的缩放/滚动动画帧。默认关闭。
+    fn apply_simulation(&mut self) {
+        if !frame_probe::simulation_enabled() {
+            return;
+        }
+        if self.lines.is_empty() {
+            self.lines = simulation_lines();
+            self.message = None;
+            self.measure_cache.borrow_mut().clear();
+        }
+        self.playing = true;
+        self.style.karaoke = true;
+        if let Some(stroke_width) = frame_probe::simulation_stroke_width() {
+            self.style.stroke_width = stroke_width;
+        }
+        let started = *self.sim_started.get_or_insert_with(std::time::Instant::now);
+        let total: u64 = 2_000 * self.lines.len() as u64;
+        let elapsed = started.elapsed().as_millis() as u64;
+        self.position_ms = if total == 0 { 0 } else { elapsed % total };
+        self.update_index();
+    }
+
     fn measure(&self, window: &Window, text: &str, size: f32, weight: f32, family: &str) -> f32 {
         let sanitized = text.replace(['\n', '\r'], " ");
         if sanitized.is_empty() {
@@ -1559,6 +1840,17 @@ impl LyricsOverlay {
     }
 
     fn lyrics_layer(&self, width: f32, height: f32, window: &Window) -> AnyElement {
+        // 诊断：只画一个 4×4 小方块，但外层照常逐帧请求重绘。
+        if frame_probe::simulation_blank() {
+            return div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .w(px(4.0))
+                .h(px(4.0))
+                .bg(tint(0xFF00FF, 1.0))
+                .into_any_element();
+        }
         let style = &self.style;
         if let Some(message) = &self.message {
             return div()
@@ -2130,14 +2422,24 @@ fn text_swatch_id(index: usize) -> &'static str {
 
 impl Render for LyricsOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 诊断用自驱动：WCMUSIC_LYRICS_SIM=1 时合成播放状态，默认关闭。
+        self.apply_simulation();
+        // 诊断用帧探针：WCMUSIC_FRAME_PROBE=1 时统计「逐帧重绘」的帧间隔与
+        // render 构建耗时；关闭时 frame_start 只读一次 OnceLock 就返回 None。
+        let animate = self.needs_frames();
+        let probe_start = frame_probe::frame_start(animate);
         // 每帧重新确认一次原生状态：样式位万一被别处改掉（或窗口刚恢复显示），
         // 这里会立刻纠正回来。两个设置函数都会先比较当前状态，未变化时不做系统调用。
         self.apply_native_state();
         // 行切换动画与逐字卡拉OK都用窗口帧时钟驱动（垂直同步），
         // 不再靠 16ms 定时器，避免 Windows 定时器精度导致的掉帧。
-        if self.needs_frames() {
+        if animate {
             self.advance_frame();
-            window.request_animation_frame();
+            if frame_probe::notify_frame_driver() {
+                cx.notify();
+            } else {
+                window.request_animation_frame();
+            }
         } else {
             self.last_frame_at = None;
         }
@@ -2239,6 +2541,7 @@ impl Render for LyricsOverlay {
         if let Some(notice) = self.notice_layer() {
             root = root.child(notice);
         }
+        frame_probe::frame_end(probe_start);
         root
     }
 }

@@ -6,6 +6,7 @@ mod lyrics;
 mod lyrics_window;
 mod picker;
 mod settings;
+mod smooth_scroll;
 mod tray;
 mod ui_busy;
 
@@ -40,6 +41,82 @@ use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
 use crate::settings::{AppSettings, HotKeySettings, SavedPlaylist};
+use crate::smooth_scroll::{
+    SmoothScrollDiv, SmoothScrollState, advance_smooth_scroll,
+};
+
+/// Shorthand for the per-container scroll animation state shared with the
+/// element tree: the app mutates it from the wheel handler and the frame clock,
+/// the element tree reads the offset it produces.
+type SharedScroll = Rc<RefCell<SmoothScrollState>>;
+
+/// Smooth-scroll state for every scroll container in the window.
+///
+/// One entry per container, keyed by the same stable id the container's div
+/// uses. Keeping them together makes the frame-clock pump in `Render::render`
+/// a single call and keeps every container's easing independent.
+///
+/// The container list itself is behind a `RefCell` so that `register` only
+/// needs `&self`: element builders run on `&self` and often wrap two containers
+/// in one expression, where an outer `borrow_mut()` would live to the end of
+/// the statement and a second one would panic.
+struct SmoothScrolls {
+    containers: RefCell<Vec<(&'static str, SharedScroll)>>,
+}
+
+impl SmoothScrolls {
+    fn new() -> Self {
+        Self {
+            containers: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Register a container and return its shared state.
+    ///
+    /// The `RefCell` borrow is confined to this call, so it is safe to call
+    /// several times within one expression. Ids are stable strings so they
+    /// never collide with each other or with a rebuilt frame.
+    fn register(&self, id: &'static str) -> SharedScroll {
+        let mut containers = self.containers.borrow_mut();
+        if let Some((_, state)) = containers.iter().find(|(key, _)| *key == id) {
+            return state.clone();
+        }
+        let state = Rc::new(RefCell::new(SmoothScrollState::new()));
+        containers.push((id, state.clone()));
+        state
+    }
+
+    /// Snapshot of every container, used by the frame-clock pump.
+    fn states(&self) -> Vec<SharedScroll> {
+        self.containers
+            .borrow()
+            .iter()
+            .map(|(_, state)| state.clone())
+            .collect()
+    }
+
+    /// Consume the pending frame requests and report whether the frame clock
+    /// has to keep running (a wheel just arrived, or an animation is ongoing).
+    fn take_frame_request(&self) -> bool {
+        self.containers
+            .borrow()
+            .iter()
+            .any(|(_, state)| state.borrow_mut().take_frame_request())
+    }
+}
+
+/// Wrap an already-styled scroll container with eased wheel input.
+///
+/// Call it at the end of the container's builder chain:
+/// `div().id(id).overflow_y_scroll()` -> `smooth(&scrolls, id, div)`.
+fn smooth(
+    scrolls: &SmoothScrolls,
+    id: &'static str,
+    element: gpui::Stateful<gpui::Div>,
+) -> SmoothScrollDiv {
+    let state = scrolls.register(id);
+    SmoothScrollDiv::new(element, &state)
+}
 
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 /// 此刻页「平台热门歌单」里每张卡片的宽度与封面高度（逻辑像素）。
@@ -461,6 +538,10 @@ struct MusicApp {
     playlist_cover_paths: std::collections::HashMap<String, std::path::PathBuf>,
     /// 已经发起过下载的封面 key，避免每帧重复请求。
     playlist_cover_requested: std::collections::HashSet<String>,
+    /// 各滚动容器的滚轮缓动状态，按稳定 id 注册，跨帧复用。
+    smooth_scrolls: SmoothScrolls,
+    /// 上一帧的时间戳，用来按真实帧间隔推进滚轮缓动。
+    smooth_scroll_last_frame: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 impl MusicApp {
@@ -543,6 +624,8 @@ impl MusicApp {
             saved_playlists: settings.saved_playlists.clone(),
             playlist_cover_paths: std::collections::HashMap::new(),
             playlist_cover_requested: std::collections::HashSet::new(),
+            smooth_scrolls: SmoothScrolls::new(),
+            smooth_scroll_last_frame: std::cell::Cell::new(None),
         }
     }
 
@@ -2322,6 +2405,22 @@ impl MusicApp {
         }
     }
 
+    /// 用窗口帧时钟推进所有滚动容器的缓动，返回是否还有动画在跑。
+    ///
+    /// 和歌词滚动一样按 `Instant` 的真实帧间隔推进，帧率高低都不会改变
+    /// 手感；只要还有容器没到位，就再要一帧继续推。空闲时（没有动画）
+    /// 这个函数不做任何事，也不会请求重绘。
+    fn pump_smooth_scroll(&self, now: std::time::Instant) -> bool {
+        let previous = self.smooth_scroll_last_frame.replace(Some(now));
+        let Some(previous) = previous else {
+            // 第一帧只记录时间戳，没有可以推进的间隔。
+            return false;
+        };
+        let dt = now.duration_since(previous).as_secs_f32();
+        let states = self.smooth_scrolls.states();
+        advance_smooth_scroll(&states, dt)
+    }
+
     fn schedule_progress_timer(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -3772,14 +3871,16 @@ impl MusicApp {
                     p,
                 ));
             } else {
-                tracks_panel = tracks_panel.child(
+                tracks_panel = tracks_panel.child(smooth(
+                    &self.smooth_scrolls,
+                    "ranking-track-list-scroll",
                     div()
                         .id("ranking-track-list-scroll")
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
                         .child(self.ranking_track_list(cx)),
-                );
+                ));
             }
         } else {
             tracks_panel = tracks_panel.child(search_status(
@@ -3796,7 +3897,11 @@ impl MusicApp {
                 .flex_1()
                 .min_h_0()
                 .gap_4()
-                .child(ranking_nav)
+                .child(smooth(
+                    &self.smooth_scrolls,
+                    "ranking-navigation-scroll",
+                    ranking_nav,
+                ))
                 .child(tracks_panel),
         )
     }
@@ -3958,14 +4063,16 @@ impl MusicApp {
                 p,
             ));
         } else {
-            songs_panel = songs_panel.child(
+            songs_panel = songs_panel.child(smooth(
+                &self.smooth_scrolls,
+                "playlist-track-list-scroll",
                 div()
                     .id("playlist-track-list-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(self.playlist_track_list(cx, playlist_tracks)),
-            );
+            ));
         }
 
         div()
@@ -3975,7 +4082,11 @@ impl MusicApp {
             .flex_1()
             .min_h_0()
             .gap_4()
-            .child(folder_nav)
+            .child(smooth(
+                &self.smooth_scrolls,
+                "playlist-folder-scroll",
+                folder_nav,
+            ))
             .child(songs_panel)
     }
 
@@ -4323,14 +4434,16 @@ impl MusicApp {
                     .cleanable(true)
                     .prefix(Icon::new(IconName::Search).text_color(p.muted)),
             )
-            .child(
+            .child(smooth(
+                &self.smooth_scrolls,
+                "picker-font-list",
                 div()
                     .id("picker-font-list")
                     .w_full()
                     .max_h(px(320.0))
                     .overflow_y_scroll()
                     .child(rows),
-            )
+            ))
             .into_any_element()
     }
 
@@ -4900,7 +5013,19 @@ impl MusicApp {
                     .child(rows),
             );
 
-        div().size_full().flex().child(rail).child(pane)
+        div()
+            .size_full()
+            .flex()
+            .child(smooth(
+                &self.smooth_scrolls,
+                "settings-section-rail",
+                rail,
+            ))
+            .child(smooth(
+                &self.smooth_scrolls,
+                "settings-section-content",
+                pane,
+            ))
     }
 
     /// 一行快捷键设置：点右侧的键位开始录制，点「清除」解绑。
@@ -5215,14 +5340,32 @@ impl Render for MusicApp {
         if matches!(self.active_tab, Tab::Home) && !self.home_playlists_requested {
             self.load_home_playlists(cx);
         }
+        // 滚轮缓动：占用缓动状态里的帧请求标记，推进一帧，需要时再要一帧。
+        // 帧请求必须在这里（而不是滚轮监听器里）发出：监听器在平台滚轮分发
+        // 期间执行，此时没有当前视图上下文，`request_animation_frame` 会 panic。
+        let smooth_scroll_wants_frame = self.smooth_scrolls.take_frame_request();
+        if self.pump_smooth_scroll(std::time::Instant::now()) || smooth_scroll_wants_frame {
+            window.request_animation_frame();
+        }
         let p = Palette::new(cx);
         let page_content = self.content(cx);
-        let library_scroll = div().id("library-scroll").flex_1().min_h_0().w_full();
-        let library_scroll = if matches!(self.active_tab, Tab::Rankings | Tab::Playlists) {
-            library_scroll.overflow_hidden().child(page_content)
-        } else {
-            library_scroll.overflow_y_scroll().child(page_content)
-        };
+        // 榜单/歌单页是「左栏导航 + 右栏全高列表」的双栏结构，外层不再滚动，
+        // 由各自的列表容器自己缓动；其余页面保留整页滚动容器。
+        let library_scroll = smooth(
+            &self.smooth_scrolls,
+            "library-scroll",
+            div()
+                .id("library-scroll")
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .overflow_y_scroll()
+                .child(page_content),
+        )
+        .when(matches!(self.active_tab, Tab::Rankings | Tab::Playlists), |this| {
+            // 双栏页由内层列表滚动，外层只负责裁剪。
+            this.overflow_hidden()
+        });
         let content = div()
             .size_full()
             .flex()
