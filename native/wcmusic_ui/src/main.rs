@@ -1700,7 +1700,31 @@ impl MusicApp {
     /// 歌词窗口的初始位置：优先用上次拖动保存的位置，否则屏幕底部居中。
     fn lyrics_window_bounds(&self, cx: &mut Context<Self>) -> Bounds<Pixels> {
         let origin = match (self.lyrics.window_x, self.lyrics.window_y) {
-            (Some(x), Some(y)) => point(px(x), px(y)),
+            (Some(x), Some(y)) => {
+                // 关掉「允许移出屏幕」时，把上次保存的位置也拉回屏幕内，
+                // 免得换了分辨率或拔掉外接屏之后歌词窗口停在看不见的地方。
+                let (x, y) = if self.lyrics.allow_offscreen {
+                    (x, y)
+                } else {
+                    match cx.primary_display() {
+                        Some(display) => {
+                            let bounds = display.bounds();
+                            crate::lyrics::clamp_window_position(
+                                x,
+                                y,
+                                self.lyrics.window_width,
+                                self.lyrics.window_height,
+                                f32::from(bounds.origin.x),
+                                f32::from(bounds.origin.y),
+                                f32::from(bounds.size.width),
+                                f32::from(bounds.size.height),
+                            )
+                        }
+                        None => (x, y),
+                    }
+                };
+                point(px(x), px(y))
+            }
             _ => self.default_lyrics_origin(cx),
         };
         Bounds::new(
@@ -2782,26 +2806,48 @@ impl MusicApp {
                     .h_full()
                     .child(self.now_playing_lyrics(cx)),
             )
-            .child(
-                // 右上角返回区：按钮本身 + 一块吸收点击的留白。
-                //
-                // 下面的歌词每一行都是整行可点（点了跳转到该行）；如果这里不把
-                // 点击挡住，点偏几像素就会落到歌词行上执行 seek，表现为歌曲突然
-                // 被打断或跳回开头（看起来像重新播放）。所以这块区域自己带 id，
-                // 命中测试会停在它上面，不再穿透到歌词行。
+            .child({
+                // 「翻译」快捷开关：和设置页、桌面歌词工具条共用同一份设置，
+                // 任何一处切换都会立刻同步到另一处并落盘。
+                let translation_button = Button::new("now-playing-translation")
+                    .small()
+                    .label("翻译")
+                    .tooltip(if self.lyrics.show_translation {
+                        "隐藏歌词翻译"
+                    } else {
+                        "显示歌词翻译"
+                    })
+                    .accessibility_label("歌词翻译");
+                let translation_button = if self.lyrics.show_translation {
+                    translation_button.primary()
+                } else {
+                    translation_button.ghost()
+                };
                 div()
+                    // 右上角返回区：两个按钮 + 一块吸收点击的留白。
+                    //
+                    // 下面的歌词每一行都是整行可点（点了跳转到该行）；如果这里不把
+                    // 点击挡住，点偏几像素就会落到歌词行上执行 seek，表现为歌曲突然
+                    // 被打断或跳回开头（看起来像重新播放）。所以这块区域自己带 id，
+                    // 命中测试会停在它上面，不再穿透到歌词行。
                     .id("now-playing-exit")
                     .occlude()
                     .absolute()
                     .top_0()
                     .right_0()
-                    .w(px(76.0))
+                    .w(px(146.0))
                     .h(px(60.0))
                     .flex()
                     .justify_end()
                     .items_start()
+                    .gap_1()
                     .p(px(6.0))
                     .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
+                    .child(translation_button.on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| {
+                            style.show_translation = !style.show_translation
+                        })
+                    })))
                     .child(
                         Button::new("close-now-playing")
                             .ghost()
@@ -2809,8 +2855,8 @@ impl MusicApp {
                             .tooltip("返回（退出专享模式）")
                             .accessibility_label("返回")
                             .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
-                    ),
-            )
+                    )
+            })
             .into_any_element()
     }
 
@@ -4588,6 +4634,20 @@ impl MusicApp {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.update_lyrics_style(cx, |style| {
                             style.always_on_top = !style.always_on_top
+                        })
+                    })),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "允许移出屏幕",
+                        self.lyrics.allow_offscreen,
+                        "关闭时拖动歌词窗口会被限制在屏幕内，避免拖到看不见的地方",
+                        p,
+                    )
+                    .id("setting-lyrics-offscreen")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_lyrics_style(cx, |style| {
+                            style.allow_offscreen = !style.allow_offscreen
                         })
                     })),
                 );

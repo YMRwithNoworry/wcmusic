@@ -114,6 +114,27 @@ pub(crate) fn line_emphasis(index: usize, displayed_position: f32) -> f32 {
     lyric_fade(index as f32 - displayed_position)
 }
 
+/// 把歌词窗口的位置限制在工作区内，保证整扇窗口都还看得见。
+///
+/// 工作区比窗口还小（或坐标不是有限值）时按贴边处理，避免 clamp 的上下界翻转。
+pub(crate) fn clamp_window_position(
+    x: f32,
+    y: f32,
+    window_width: f32,
+    window_height: f32,
+    area_left: f32,
+    area_top: f32,
+    area_width: f32,
+    area_height: f32,
+) -> (f32, f32) {
+    if !(x.is_finite() && y.is_finite()) {
+        return (x, y);
+    }
+    let max_x = (area_left + area_width - window_width).max(area_left);
+    let max_y = (area_top + area_height - window_height).max(area_top);
+    (x.clamp(area_left, max_x), y.clamp(area_top, max_y))
+}
+
 /// 颜色强调：只有当前行（或换行瞬间正在过渡的那一行）才染上高亮色。
 ///
 /// `lyric_fade` 的取值范围是 ±3 行，直接拿它插值颜色会让好几行一起泛绿；
@@ -489,6 +510,8 @@ pub struct LyricsStyle {
     pub always_on_top: bool,
     /// 锁定后歌词窗口鼠标穿透，点击会落到下层窗口。
     pub locked: bool,
+    /// 是否允许把歌词窗口拖出屏幕。关闭时拖动会被限制在工作区内，避免拖丢。
+    pub allow_offscreen: bool,
     pub hide_when_paused: bool,
     /// 歌词偏移，正数表示歌词提前。
     pub offset_ms: i64,
@@ -521,6 +544,8 @@ impl Default for LyricsStyle {
             animation: LyricsAnimation::Slide,
             always_on_top: true,
             locked: true,
+            // 默认不允许拖出屏幕：歌词窗口拖丢之后很难找回来。
+            allow_offscreen: false,
             hide_when_paused: false,
             offset_ms: 0,
             window_x: None,
@@ -1536,6 +1561,23 @@ impl LyricsOverlay {
             session.origin.0 + (cursor.0 - session.cursor.0),
             session.origin.1 + (cursor.1 - session.cursor.1),
         );
+        let target = if self.style.allow_offscreen {
+            target
+        } else {
+            match lyrics_window::work_area(hwnd, self.scale_factor) {
+                Some((left, top, width, height)) => clamp_window_position(
+                    target.0,
+                    target.1,
+                    self.style.window_width,
+                    self.style.window_height,
+                    left,
+                    top,
+                    width,
+                    height,
+                ),
+                None => target,
+            }
+        };
         lyrics_window::move_window(hwnd, target.0, target.1, self.scale_factor);
         if let Some(session) = self.dragging.as_mut() {
             session.current = target;
@@ -2204,6 +2246,40 @@ mod tests {
                 assert_eq!(highlight, 0.0, "第 {index} 行不应被染色");
             }
         }
+    }
+
+    #[test]
+    fn clamp_window_position_keeps_the_window_inside() {
+        // 工作区内原样保留。
+        assert_eq!(
+            clamp_window_position(100.0, 100.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
+            (100.0, 100.0)
+        );
+        // 右下越界拉回来，整扇窗口仍然可见。
+        assert_eq!(
+            clamp_window_position(1500.0, 1000.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
+            (940.0, 780.0)
+        );
+        // 左上越界。
+        assert_eq!(
+            clamp_window_position(-50.0, -30.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
+            (0.0, 0.0)
+        );
+        // 左侧显示器（负坐标工作区）。
+        assert_eq!(
+            clamp_window_position(-3000.0, 10.0, 980.0, 260.0, -1920.0, 0.0, 1920.0, 1040.0),
+            (-1920.0, 10.0)
+        );
+        // 工作区比窗口还小：贴住左上角，不 panic。
+        assert_eq!(
+            clamp_window_position(500.0, 500.0, 980.0, 260.0, 0.0, 0.0, 300.0, 100.0),
+            (0.0, 0.0)
+        );
+        // 非有限坐标原样返回（NaN 不能用 == 比较，单独看）。
+        let (nan_x, nan_y) =
+            clamp_window_position(f32::NAN, 10.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0);
+        assert!(nan_x.is_nan());
+        assert_eq!(nan_y, 10.0);
     }
 
     #[test]

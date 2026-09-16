@@ -21,14 +21,17 @@
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, GWLP_WNDPROC, GetCursorPos,
         GetWindowLongPtrW, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WM_MOUSEACTIVATE,
-        WM_NCHITTEST, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-        WS_EX_TRANSPARENT,
+        SPI_GETWORKAREA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
+        WM_MOUSEACTIVATE, WM_NCHITTEST, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
     };
 
     /// True while the lyric window must ignore the mouse entirely.
@@ -185,6 +188,46 @@ mod platform {
         }
     }
 
+    /// 窗口所在显示器的工作区（逻辑像素）：`(left, top, width, height)`。
+    ///
+    /// 关掉「允许移出屏幕」之后，拖动位置会被限制在这里面，避免把歌词拖丢。
+    pub fn work_area(hwnd: isize, scale_factor: f32) -> Option<(f32, f32, f32, f32)> {
+        let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            1.0
+        };
+        let mut rect: RECT = unsafe { std::mem::zeroed() };
+        unsafe {
+            let monitor = MonitorFromWindow(hwnd as HWND, MONITOR_DEFAULTTONEAREST);
+            if !monitor.is_null() {
+                let mut info: MONITORINFO = std::mem::zeroed();
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if GetMonitorInfoW(monitor, &mut info) != 0 {
+                    rect = info.rcWork;
+                }
+            }
+            if rect.right <= rect.left || rect.bottom <= rect.top {
+                // 取不到显示器信息时退回主显示器工作区（同样排除任务栏）。
+                if SystemParametersInfoW(
+                    SPI_GETWORKAREA,
+                    0,
+                    &mut rect as *mut RECT as *mut std::ffi::c_void,
+                    0,
+                ) == 0
+                {
+                    return None;
+                }
+            }
+        }
+        Some((
+            rect.left as f32 / scale,
+            rect.top as f32 / scale,
+            (rect.right - rect.left) as f32 / scale,
+            (rect.bottom - rect.top) as f32 / scale,
+        ))
+    }
+
     /// Move the window to a logical-pixel position.
     pub fn move_window(hwnd: isize, x: f32, y: f32, scale_factor: f32) {
         let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
@@ -204,6 +247,22 @@ mod platform {
             );
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::work_area;
+
+        #[test]
+        fn reports_a_usable_work_area_for_the_primary_monitor() {
+            // 传 0（没有窗口）时 MonitorFromWindow 会给出主显示器，
+            // 正好用来验证这条 FFI 路径不会失败或崩溃。
+            let (left, top, width, height) =
+                work_area(0, 1.0).expect("primary monitor work area");
+            assert!(width > 0.0 && height > 0.0, "work area {left},{top} {width}x{height}");
+            // 逻辑像素下不可能是 0 尺寸；再宽一点的下限用来兜住明显的单位错误。
+            assert!(width >= 320.0 && height >= 240.0, "suspicious work area {width}x{height}");
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -218,6 +277,9 @@ mod stub {
     }
     pub fn set_topmost(_hwnd: isize, _enabled: bool) {}
     pub fn move_window(_hwnd: isize, _x: f32, _y: f32, _scale_factor: f32) {}
+    pub fn work_area(_hwnd: isize, _scale_factor: f32) -> Option<(f32, f32, f32, f32)> {
+        None
+    }
 }
 
 #[cfg(not(windows))]
