@@ -161,6 +161,13 @@ impl AppSettings {
         if (settings.lyrics.font_size - LEGACY_DEFAULT_LYRICS_FONT_SIZE).abs() < 0.01 {
             settings.lyrics.font_size = crate::lyrics::LyricsStyle::default().font_size;
         }
+        // 旧版本默认是「#F3F3F3 + 1px 细描边」，现在默认纯白、无描边（无背景不变）。
+        if settings.lyrics.text_color == LEGACY_DEFAULT_LYRICS_TEXT_COLOR {
+            settings.lyrics.text_color = crate::lyrics::LyricsStyle::default().text_color;
+        }
+        if (settings.lyrics.stroke_width - LEGACY_DEFAULT_LYRICS_STROKE_WIDTH).abs() < 0.01 {
+            settings.lyrics.stroke_width = crate::lyrics::LyricsStyle::default().stroke_width;
+        }
         Some(settings)
     }
 
@@ -187,6 +194,10 @@ impl AppSettings {
 const LEGACY_DEFAULT_LYRICS_FONT: &str = "Microsoft YaHei UI";
 /// 旧版本歌词字号默认值（偏大），迁移到新的默认字号。
 const LEGACY_DEFAULT_LYRICS_FONT_SIZE: f32 = 36.0;
+/// 旧版本歌词文字色默认值（#F3F3F3），现在默认纯白。
+const LEGACY_DEFAULT_LYRICS_TEXT_COLOR: u32 = 0xF3F3F3;
+/// 旧版本默认带 1px 细描边，现在默认不描边。
+const LEGACY_DEFAULT_LYRICS_STROKE_WIDTH: f32 = 1.0;
 
 /// 旧版本把歌词设置平铺在设置文件的顶层，这里把它们搬进 `lyrics` 对象，
 /// 让老用户的字号、字体与卡拉OK开关保持不变。
@@ -344,6 +355,40 @@ mod tests {
             crate::lyrics::LyricsStyle::default().font_size
         );
         assert!(loaded.lyrics.font_size < LEGACY_DEFAULT_LYRICS_FONT_SIZE);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrates_the_legacy_default_lyrics_look() {
+        // 旧默认「#F3F3F3 + 细描边」迁移到新的默认「纯白 + 无描边 + 无背景」。
+        let path = temp_path("legacy-look");
+        let mut settings = AppSettings::default();
+        settings.lyrics.text_color = LEGACY_DEFAULT_LYRICS_TEXT_COLOR;
+        settings.lyrics.stroke_width = LEGACY_DEFAULT_LYRICS_STROKE_WIDTH;
+        settings.lyrics.background_opacity = 0.0;
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.lyrics.text_color, 0xFFFFFF);
+        assert_eq!(loaded.lyrics.stroke_width, 0.0);
+        assert_eq!(loaded.lyrics.background_opacity, 0.0);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn keeps_user_chosen_lyrics_look() {
+        // 用户自己挑过的颜色 / 描边不能被迁移覆盖。
+        let path = temp_path("custom-look");
+        let mut settings = AppSettings::default();
+        settings.lyrics.text_color = 0x00C65B;
+        settings.lyrics.stroke_width = 2.0;
+        settings.save_to(&path).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.lyrics.text_color, 0x00C65B);
+        assert_eq!(loaded.lyrics.stroke_width, 2.0);
         let _ = fs::remove_file(path);
     }
 

@@ -49,9 +49,9 @@ pub const FONT_FAMILIES: [&str; 7] = [
     "Arial",
 ];
 
-/// 未播放文本可选颜色。
+/// 未播放文本可选颜色。第一项是默认值：纯白（桌面歌词默认就是白字 + 无描边）。
 pub const TEXT_COLORS: [u32; 8] = [
-    0xF3F3F3, 0xFFFFFF, 0xE4E7EC, 0xD5D5DD, 0xFFE9B8, 0xFFD9D9, 0xC9F0FF, 0x1C1F1B,
+    0xFFFFFF, 0xF3F3F3, 0xE4E7EC, 0xD5D5DD, 0xFFE9B8, 0xFFD9D9, 0xC9F0FF, 0x1C1F1B,
 ];
 
 /// 已播放（高亮）部分可选颜色。
@@ -533,7 +533,8 @@ impl Default for LyricsStyle {
             highlight_alpha: 1.0,
             stroke_color: 0x000000,
             stroke_alpha: 1.0,
-            stroke_width: 1.0,
+            // 默认不描边：白字直接压在桌面上，最接近 LX Music 的观感。
+            stroke_width: 0.0,
             opacity: 1.0,
             background_color: 0x101014,
             background_opacity: 0.0,
@@ -2176,9 +2177,13 @@ mod tests {
 
     #[test]
     fn cycles_through_presets_and_palettes() {
+        // 从「无描边」开始循环：无 -> 细 -> 中（默认值是 0.0，所以显式从预设起点走）。
         let mut style = LyricsStyle::default();
+        assert_eq!(style.stroke_label(), STROKE_PRESETS[0].1);
         style.next_stroke_width();
-        assert_eq!(style.stroke_label(), "中");
+        assert_eq!(style.stroke_label(), STROKE_PRESETS[1].1);
+        style.next_stroke_width();
+        assert_eq!(style.stroke_label(), STROKE_PRESETS[2].1);
         style.next_background();
         assert_eq!(style.background_label(), "淡");
 
