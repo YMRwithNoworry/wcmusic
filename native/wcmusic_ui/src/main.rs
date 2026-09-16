@@ -2125,6 +2125,16 @@ impl MusicApp {
             return;
         };
         let title = row.title.clone();
+        // 曲目播完后进度计时器会把 `is_playing` 置为 false、并把 `elapsed_ms`
+        // 停在总时长；此时再点播放如果直接 resume，只会「续播」一首已经结束的曲子。
+        // 所以先判断当前行是否已播完，是的话按当前上下文取下一首（循环）。
+        let duration_ms = row.track.duration_ms;
+        if track_finished(self.elapsed_ms, duration_ms) {
+            self.notice = format!("已播完 {title}，继续播放下一首").into();
+            self.play_offset(1, cx);
+            cx.notify();
+            return;
+        }
         let Some(player) = self.audio_player.as_ref() else {
             self.notice = "音频还未准备好，请稍候".into();
             cx.notify();
@@ -4986,15 +4996,33 @@ impl MusicApp {
         let (title, artist) = row
             .map(|row| (row.title.clone(), row.artist.clone()))
             .unwrap_or_else(|| ("选择一首歌曲开始播放".into(), "WCMusic".into()));
+        // 底栏封面比列表行稍大：48px，仍可点击进入专享模式。
         let artwork = row
-            .map(|row| track_artwork(row, p))
+            .map(|row| track_artwork_sized(row, 48.0, p))
             .unwrap_or_else(|| empty_artwork(p));
         let playing = self.is_playing;
         let fetching = self.fetching.clone();
-        let status = fetching
-            .as_ref()
-            .map(|fetching| format!("获取中：正在通过{}解析整曲…", fetching.source))
-            .unwrap_or_else(|| artist.to_string());
+        // 左侧副标题优先显示当前歌词行；没有歌词时退回艺术家名。
+        let current_lyric = self
+            .current_lyric_index()
+            .and_then(|index| self.lyric_lines.get(index))
+            .map(|line| line.text.clone())
+            .filter(|line| !line.trim().is_empty());
+        let subtitle: SharedString = match (fetching.as_ref(), current_lyric) {
+            (Some(fetching), _) => {
+                format!("获取中：正在通过{}解析整曲…", fetching.source).into()
+            }
+            (None, Some(lyric)) => lyric.into(),
+            (None, None) => artist.into(),
+        };
+        let duration_text = row
+            .map(|row| row.track.duration_ms)
+            .filter(|duration_ms| *duration_ms > 0)
+            .map(|duration_ms| format!(" / {}", format_playback_time(duration_ms)))
+            .unwrap_or_else(|| " / --:--".to_owned());
+        // LX Music 风格底栏：左侧信息 | 中间进度条 | 右侧时间 + 图标按钮。
+        // 图标用 gpui-kit 资源库里的 Lucide 名字（SkipBack / SkipForward /
+        // Volume2 / FileMusic），组件默认图标集里没有这几个，所以走 assets 目录。
         div()
             .w_full()
             .mt(px(18.0))
@@ -5003,10 +5031,11 @@ impl MusicApp {
             .border_color(p.border)
             .flex()
             .items_center()
-            .gap_3()
+            .gap_4()
             .child(
-                div()
-                    .flex()
+                // 左侧：封面（点击进入专享模式）+ 标题 + 副标题。
+                h_flex()
+                    .flex_shrink_0()
                     .items_center()
                     .gap_3()
                     .child(
@@ -5018,15 +5047,24 @@ impl MusicApp {
                     )
                     .child(
                         div()
-                            .flex_1()
+                            .w(px(180.0))
+                            .min_w_0()
                             .flex()
                             .flex_col()
-                            .gap_1()
+                            .gap(px(2.0))
                             .child(
                                 h_flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(div().text_sm().text_color(p.foreground).child(title))
+                                    .child(
+                                        div()
+                                            .max_w(px(140.0))
+                                            .overflow_hidden()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(p.foreground)
+                                            .child(title),
+                                    )
                                     .when_some(fetching.clone(), |this, fetching| {
                                         this.child(fetching_badge(
                                             format!("获取中 · {}", fetching.source),
@@ -5036,70 +5074,21 @@ impl MusicApp {
                             )
                             .child(
                                 div()
+                                    .w_full()
+                                    .overflow_hidden()
                                     .text_xs()
-                                    .text_color(if fetching.is_some() { p.primary } else { p.muted })
-                                    .child(status),
+                                    .text_color(if fetching.is_some() {
+                                        p.primary
+                                    } else {
+                                        p.muted
+                                    })
+                                    .child(subtitle),
                             ),
                     ),
             )
             .child(
-                Button::new("player-previous")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ArrowLeft)
-                    .tooltip("上一首")
-                    .accessibility_label("上一首")
-                    .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
-            )
-            .child(match fetching.clone() {
-                // 获取中：把播放键换成转圈，明确告诉用户正在取歌。
-                Some(_) => div()
-                    .size(px(32.0))
-                    .flex_shrink_0()
-                    .rounded(px(999.0))
-                    .bg(p.primary)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        Spinner::new()
-                            .with_size(px(16.0))
-                            .color(p.primary_foreground),
-                    )
-                    .into_any_element(),
-                None => Button::new("player-toggle")
-                    .primary()
-                    .rounded(px(999.0))
-                    .icon(if playing {
-                        IconName::Pause
-                    } else {
-                        IconName::Play
-                    })
-                    .tooltip(if playing { "暂停" } else { "播放" })
-                    .accessibility_label(if playing { "暂停" } else { "播放" })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
-                    .into_any_element(),
-            })
-            .child(
-                Button::new("player-next")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ArrowRight)
-                    .tooltip("下一首")
-                    .accessibility_label("下一首")
-                    .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
-            )
-            .child(
-                // 已播放时间：固定宽度的对齐槽，数字位数变化不会推移进度条。
-                div().w(px(46.0)).flex_shrink_0().flex().justify_end().child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child(format_playback_time(self.elapsed_ms)),
-                ),
-            )
-            .child(
-                div().flex_1().h(px(20.0)).flex().items_center().child(
+                // 中间：进度条占满剩余宽度，保留原 SliderState 拖动逻辑。
+                div().flex_1().min_w_0().h(px(18.0)).flex().items_center().child(
                     Slider::new(
                         self.progress_slider
                             .as_ref()
@@ -5109,37 +5098,44 @@ impl MusicApp {
                 ),
             )
             .child(
-                // 总时长同样占固定宽度，拖动时进度条两侧都不会移动。
-                div().w(px(46.0)).flex_shrink_0().flex().child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child(match row.map(|row| row.track.duration_ms) {
-                            Some(duration_ms) if duration_ms > 0 => {
-                                format_playback_time(duration_ms)
-                            }
-                            _ => "--:--".to_owned(),
-                        }),
-                ),
-            )
-            .child(
-                div()
-                    .w(px(180.0))
-                    .flex()
+                // 右侧：时间文本 + 图标按钮组（歌词 / 音量 / 上一首 / 播放 / 下一首）。
+                h_flex()
+                    .flex_shrink_0()
                     .items_center()
                     .gap_2()
                     .child(
-                        // 固定宽度的数字槽：音量在 100% 与 9% 之间变化时位数不同，
-                        // 不固定宽度就会把右边的滑杆推来推去。
-                        div().w(px(40.0)).flex().justify_end().child(
-                            div()
-                                .text_xs()
-                                .text_color(p.muted)
-                                .child(format!("{}%", (self.volume * 100.0).round() as u32)),
-                        ),
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(format!(
+                                "{}{}",
+                                format_playback_time(self.elapsed_ms),
+                                duration_text
+                            )),
                     )
                     .child(
-                        div().w(px(120.0)).h(px(20.0)).flex().items_center().child(
+                        Button::new("player-lyrics")
+                            .ghost()
+                            .small()
+                            .icon(gpui_kit::assets::IconName::FileMusic)
+                            .tooltip("歌词")
+                            .accessibility_label("歌词")
+                            .on_click(cx.listener(|this, _, _, cx| this.open_now_playing(cx))),
+                    )
+                    .child(
+                        // 音量图标按钮：点击静音 / 取消静音（沿用原有语义）。
+                        Button::new("player-volume")
+                            .ghost()
+                            .small()
+                            .icon(gpui_kit::assets::IconName::Volume2)
+                            .tooltip("静音 / 取消静音")
+                            .accessibility_label("静音")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
+                    )
+                    .child(
+                        // 紧凑音量滑块，保留现有 volume_slider / set_volume_percent。
+                        div().w(px(84.0)).h(px(18.0)).flex().items_center().child(
                             Slider::new(
                                 self.volume_slider
                                     .as_ref()
@@ -5147,6 +5143,53 @@ impl MusicApp {
                             )
                             .w_full(),
                         ),
+                    )
+                    .child(
+                        Button::new("player-previous")
+                            .ghost()
+                            .small()
+                            .icon(gpui_kit::assets::IconName::SkipBack)
+                            .tooltip("上一首")
+                            .accessibility_label("上一首")
+                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
+                    )
+                    .child(match fetching.clone() {
+                        // 获取中：把播放键换成转圈，明确告诉用户正在取歌。
+                        Some(_) => div()
+                            .size(px(32.0))
+                            .flex_shrink_0()
+                            .rounded(px(999.0))
+                            .bg(p.primary)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                Spinner::new()
+                                    .with_size(px(16.0))
+                                    .color(p.primary_foreground),
+                            )
+                            .into_any_element(),
+                        None => Button::new("player-toggle")
+                            .primary()
+                            .rounded(px(999.0))
+                            .icon(if playing {
+                                gpui_kit::assets::IconName::Pause
+                            } else {
+                                gpui_kit::assets::IconName::Play
+                            })
+                            .tooltip(if playing { "暂停" } else { "播放" })
+                            .accessibility_label(if playing { "暂停" } else { "播放" })
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
+                            .into_any_element(),
+                    })
+                    .child(
+                        Button::new("player-next")
+                            .ghost()
+                            .small()
+                            .icon(gpui_kit::assets::IconName::SkipForward)
+                            .tooltip("下一首")
+                            .accessibility_label("下一首")
+                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
                     ),
             )
     }
@@ -5682,8 +5725,15 @@ fn fetching_badge(label: impl Into<SharedString>, p: Palette) -> gpui::AnyElemen
         .into_any_element()
 }
 
-/// 播放进度的时间文本：分钟补零，配合播放条上的固定宽度时间槽，
-/// 数字位数变化时不会把进度条推走。
+/// 当前曲目是否已经播到（或越过）结尾。
+///
+/// 抽成纯函数方便单测：`duration_ms == 0`（未知时长）时永远返回 `false`，
+/// 避免把「还不知道多长」误判成「已播完」。
+fn track_finished(elapsed_ms: u64, duration_ms: u64) -> bool {
+    duration_ms > 0 && elapsed_ms >= duration_ms
+}
+
+/// 播放进度的时间文本：分钟补零，底栏把它拼成 `00:14 / 02:53` 这样的时间块。
 fn format_playback_time(ms: u64) -> String {
     let seconds = ms / 1000;
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
@@ -6210,5 +6260,36 @@ mod tests {
         playlist.track_count = Some(30);
         playlist.play_count = Some(12_000);
         assert_eq!(playlist_meta_line(&playlist), "30 首 · 1.2万 播放");
+    }
+
+    #[test]
+    fn track_finished_is_false_while_playing() {
+        // 还没播完：暂停/继续都要保持原来的中途行为。
+        assert!(!track_finished(0, 180_000));
+        assert!(!track_finished(89_999, 180_000));
+        assert!(!track_finished(179_999, 180_000));
+        assert!(!track_finished(1, 1_000));
+    }
+
+    #[test]
+    fn track_finished_is_true_exactly_at_the_end() {
+        // 进度计时器会把 elapsed 停在总时长：刚好播完也算播完。
+        assert!(track_finished(180_000, 180_000));
+        assert!(track_finished(1_000, 1_000));
+    }
+
+    #[test]
+    fn track_finished_is_true_past_the_end() {
+        // 位置越过总时长（seek 或解码器回传）同样算播完。
+        assert!(track_finished(180_001, 180_000));
+        assert!(track_finished(u64::MAX, 180_000));
+    }
+
+    #[test]
+    fn track_finished_is_false_when_duration_unknown() {
+        // 未知时长（duration_ms == 0）不能误判成已播完。
+        assert!(!track_finished(0, 0));
+        assert!(!track_finished(123_456, 0));
+        assert!(!track_finished(u64::MAX, 0));
     }
 }
