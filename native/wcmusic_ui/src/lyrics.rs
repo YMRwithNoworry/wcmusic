@@ -32,19 +32,19 @@ use crate::lyrics_window;
 /// GPUI 会给「非激活窗口」的动画帧请求套上 `inactive_frame_interval`
 /// （gpui 默认 33.33ms，见 `WindowOptions`），而桌面歌词窗口是
 /// `focus: false` + `WS_EX_NOACTIVATE` 的悬浮窗，永远不会成为激活窗口，
-/// 于是 `Window::request_animation_frame()` 这条路会被稳定压到 30fps 以下
+/// 于是 `Window::request_animation_frame()` 这条路曾被稳定压到 30fps 以下
 /// （实测 p50 ≈ 43–50ms）。
 ///
-/// 该节流只作用于「带 pending next-frame callback」或 `force_render` 的帧请求；
-/// 普通的「窗口 dirty」重绘走平台 vsync 线程的失效驱动，不受它影响。
-/// 所以默认改成 [`FrameDriver::Timer`]：动画期间用后台定时器持续
-/// `cx.notify()`，让窗口保持 dirty。`AnimationFrame` / `Notify` 保留给
-/// `WCMUSIC_LYRICS_FRAME_DRIVER` 做 A/B 诊断。
+/// 现在歌词窗口的 `WindowOptions` 已显式设置 `inactive_frame_interval: None`
+/// 解除这层节流：`WCMUSIC_LYRICS_SIM=1` + `raf` 实测 p50 = 16.66ms
+/// （60Hz vsync），和激活窗口一致。所以默认回到 [`FrameDriver::AnimationFrame`]：
+/// 由窗口帧时钟驱动，不额外唤醒后台定时器，最省电。`WCMUSIC_LYRICS_FRAME_DRIVER`
+/// 仍可选 `timer`（8ms 后台定时器持续 `cx.notify()`）作为回退，`notify` 保留给诊断。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FrameDriver {
-    /// 后台定时器把歌词视图标脏（默认）。
+    /// 8ms 后台定时器把歌词视图标脏（可选回退）。
     Timer,
-    /// 旧的 `Window::request_animation_frame()`。
+    /// `Window::request_animation_frame()`（默认）。
     AnimationFrame,
     /// 在 `render` 里直接 `cx.notify()`。
     Notify,
@@ -134,8 +134,9 @@ mod frame_probe {
 
     /// 诊断开关：`WCMUSIC_LYRICS_FRAME_DRIVER=timer|raf|notify`，选择动画期间的帧驱动方式。
     ///
-    /// 默认 `timer`：用后台定时器持续把歌词视图标脏，重绘交给平台的 vsync 失效驱动。
-    /// `raf` 是旧的 `Window::request_animation_frame()` 路径，`notify` 是更早的诊断路径。
+    /// 默认 `raf`：`Window::request_animation_frame()` 由窗口帧时钟（vsync）驱动，
+    /// 歌词窗口的 `inactive_frame_interval: None` 已解除非激活节流，无需额外定时器唤醒。
+    /// `timer` 是 8ms 后台定时器 + `cx.notify()` 的回退路径，`notify` 是更早的诊断路径。
     /// 详见 [`FrameDriver`]。
     pub fn frame_driver() -> FrameDriver {
         static FLAG: OnceLock<FrameDriver> = OnceLock::new();
@@ -144,9 +145,10 @@ mod frame_probe {
                 .map(|value| value.trim().to_ascii_lowercase())
                 .as_deref()
             {
-                Ok("raf") | Ok("animation-frame") => FrameDriver::AnimationFrame,
+                Ok("timer") => FrameDriver::Timer,
                 Ok("notify") => FrameDriver::Notify,
-                _ => FrameDriver::Timer,
+                Ok("raf") | Ok("animation-frame") => FrameDriver::AnimationFrame,
+                _ => FrameDriver::AnimationFrame,
             }
         })
     }
@@ -1886,7 +1888,9 @@ impl LyricsOverlay {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                let translation_size = quantize_font_size((size * 0.56).max(12.0));
+                // 翻译字号从 0.56× 提到 0.72×（下限 16px）：小字量下更接近主歌词
+                // 的可读性。行高与下面的 `spacing` 增量同步放大，避免贴住上下行。
+                let translation_size = quantize_font_size((size * 0.72).max(16.0));
                 let translation_width = self.measure(
                     window,
                     translation,
@@ -1914,6 +1918,8 @@ impl LyricsOverlay {
                     translation_block_width,
                     progress,
                 ));
+                // 预留行高随翻译字号一起变大（翻译行本身占 `translation_size * 1.32`
+                // 再加 2px 行距），居中摆放时不会和主歌词/上下行贴住。
                 row_height += translation_size * 1.32 + 2.0;
             }
         }
@@ -1972,7 +1978,10 @@ impl LyricsOverlay {
                 .translation
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
-        let spacing = size * 1.86 + if has_translation { size * 0.62 } else { 0.0 };
+        // 翻译行变大后（0.72×/下限 16px），当前行的实际高度约增加
+        // `translation_size * 1.32 + 2.0`；相邻行中心距也要同步拉开，
+        // 否则相邻行会压在翻译行上。取 0.8× 主字号，比旧值 0.62× 更宽松。
+        let spacing = size * 1.86 + if has_translation { size * 0.8 } else { 0.0 };
         let position = self.displayed_position();
         let enter = self.enter_progress();
         let center_y = height * 0.5;

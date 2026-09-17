@@ -1138,8 +1138,11 @@ impl MusicApp {
         }
     }
 
-    /// 右键菜单：把菜单里的歌曲加入指定文件夹，重复添加只提示不重复写入。
-    fn add_menu_track_to_folder(&mut self, folder_index: usize, cx: &mut Context<Self>) {
+    /// 右键菜单：把菜单里的歌曲在指定文件夹里「加入 / 移除」切换。
+    ///
+    /// 未收藏 -> 加入并提示；已收藏 -> 删除对应 `SavedTrack` 并提示，两个方向
+    /// 都立刻落盘（`persist_settings`）并刷新界面，「爱听的」列表随之增删。
+    fn toggle_menu_track_in_folder(&mut self, folder_index: usize, cx: &mut Context<Self>) {
         let track = match self.track_menu.as_ref() {
             Some(menu) => menu.row.track.clone(),
             None => return,
@@ -1148,17 +1151,13 @@ impl MusicApp {
         let Some(folder) = PLAYLIST_FOLDERS.get(folder_index).copied() else {
             return;
         };
-        if self
-            .saved_tracks
-            .iter()
-            .any(|saved| saved.matches(folder, &track))
-        {
-            self.notice = format!("「{}」已在{folder}", track.title).into();
+        let added = toggle_saved_track(&mut self.saved_tracks, folder, &track);
+        self.persist_settings();
+        self.notice = if added {
+            format!("已添加到「{folder}」：{}", track.title).into()
         } else {
-            self.saved_tracks.push(SavedTrack::new(folder, track.clone()));
-            self.persist_settings();
-            self.notice = format!("已添加到{folder}：{}", track.title).into();
-        }
+            format!("已从「{folder}」移除：{}", track.title).into()
+        };
         cx.notify();
     }
 
@@ -2012,6 +2011,12 @@ impl MusicApp {
                 kind: gpui::WindowKind::PopUp,
                 is_movable: true,
                 is_resizable: false,
+                // 桌面歌词窗口是「永不激活」的悬浮窗（focus: false + WS_EX_NOACTIVATE），
+                // GPUI 默认会给非激活窗口的 `request_animation_frame` 套上
+                // 33.33ms 的节流（gpui-pre 0.3.4 `WindowOptions::inactive_frame_interval`
+                // 默认 Some(33_333µs)）。置为 None 才能让 `raf` 驱动按 vsync 逐帧走，
+                // 把歌词动画从「稳定 30fps 以下」救回 60fps。
+                inactive_frame_interval: None,
                 window_background: WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             },
@@ -2513,8 +2518,13 @@ impl MusicApp {
         cx.notify();
     }
 
-    /// 进入专享模式：全窗口只显示封面、歌曲信息与滚动歌词。
-    fn open_now_playing(&mut self, cx: &mut Context<Self>) {
+    /// 切换专享模式：进入后全窗口只显示封面、歌曲信息与滚动歌词；
+    /// 已经在专享模式里再点一次底栏封面 / 歌词按钮就退出。
+    fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
+        if self.show_now_playing {
+            self.close_now_playing(cx);
+            return;
+        }
         if self.current_row().is_none() {
             self.notice = "请先选择一首歌曲".into();
         } else {
@@ -2865,8 +2875,19 @@ impl MusicApp {
     fn ensure_hotkeys(&mut self, cx: &mut Context<Self>) {
         if self.hotkey_observer.is_none() {
             // 录制快捷键时靠全局按键观察者接住按键（不依赖焦点落在哪个控件上）。
+            // 顺带在这里处理 Esc 退出专享模式：专享页没有可聚焦控件时，
+            // `.on_key_down` 挂在根节点上也收不到按键，只有应用级观察者稳定命中。
             let subscription = cx.observe_keystrokes(|this, event, _window, cx| {
+                // 先记下是否正处于「录制快捷键」状态：录制中 Esc 是取消录制，
+                // 不能顺手把专享模式也退掉。
+                let capturing = this.capturing_hotkey.is_some();
                 this.handle_capture_keystroke(&event.keystroke.clone(), cx);
+                if !capturing
+                    && this.show_now_playing
+                    && is_escape_key(event.keystroke.key.as_str())
+                {
+                    this.close_now_playing(cx);
+                }
             });
             self.hotkey_observer = Some(subscription);
         }
@@ -3213,23 +3234,23 @@ impl MusicApp {
                     translation_button.ghost()
                 };
                 div()
-                    // 右上角返回区：两个按钮 + 一块吸收点击的留白。
+                    // 「翻译」快捷开关：只保留按钮本身的一小块遮挡区。
                     //
-                    // 下面的歌词每一行都是整行可点（点了跳转到该行）；如果这里不把
-                    // 点击挡住，点偏几像素就会落到歌词行上执行 seek，表现为歌曲突然
-                    // 被打断或跳回开头（看起来像重新播放）。所以这块区域自己带 id，
-                    // 命中测试会停在它上面，不再穿透到歌词行。
+                    // 下面的歌词每一行都是整行可点（点了跳转到该行）；按钮周围
+                    // 的留白如果完全不挡，点偏几像素就会落到歌词行上执行 seek。
+                    // 之前这里连着「返回」按钮一起铺了 146×60 的死区，返回按钮
+                    // 去掉后把遮挡区收到贴着按钮的大小，避免大块空白挡住歌词行点击
+                    // （退出专享模式改走 Esc / 底栏封面）。
                     .id("now-playing-exit")
                     .occlude()
                     .absolute()
                     .top_0()
                     .right_0()
-                    .w(px(146.0))
-                    .h(px(60.0))
+                    .w(px(84.0))
+                    .h(px(44.0))
                     .flex()
                     .justify_end()
                     .items_start()
-                    .gap_1()
                     .p(px(6.0))
                     .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
                     .child(translation_button.on_click(cx.listener(|this, _, _, cx| {
@@ -3237,14 +3258,6 @@ impl MusicApp {
                             style.show_translation = !style.show_translation
                         })
                     })))
-                    .child(
-                        Button::new("close-now-playing")
-                            .ghost()
-                            .icon(IconName::ChevronDown)
-                            .tooltip("返回（退出专享模式）")
-                            .accessibility_label("返回")
-                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx))),
-                    )
             })
             .into_any_element()
     }
@@ -3333,7 +3346,7 @@ impl MusicApp {
                 {
                     column = column.child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(mix_hsla(p.muted, accent, highlight))
                             .opacity(0.7 + 0.2 * emphasis)
                             .child(SharedString::from(translation.to_owned())),
@@ -4659,11 +4672,25 @@ impl MusicApp {
                     .cursor_pointer()
                     .hover(|style| style.bg(p.surface_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.add_menu_track_to_folder(index, cx)
+                        this.toggle_menu_track_in_folder(index, cx)
                     }))
                     .child(div().child(*folder))
                     .when(added, |this| {
-                        this.child(div().text_xs().text_color(p.primary).child("已添加"))
+                        // 已收藏：勾 + 主色「已添加」，一眼能看出点一下会移除。
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(2.0))
+                                .text_xs()
+                                .text_color(p.primary)
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(px(12.0))
+                                        .text_color(p.primary),
+                                )
+                                .child("已添加"),
+                        )
                     }),
             );
         }
@@ -5567,7 +5594,7 @@ impl MusicApp {
             .items_center()
             .gap_4()
             .child(
-                // 左侧：封面（点击进入专享模式）+ 标题 + 副标题。
+                // 左侧：封面（点击进入 / 退出专享模式）+ 标题 + 副标题。
                 h_flex()
                     .flex_shrink_0()
                     .items_center()
@@ -5576,7 +5603,7 @@ impl MusicApp {
                         div()
                             .id("now-playing-artwork")
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.open_now_playing(cx)))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_now_playing(cx)))
                             .child(artwork),
                     )
                     .child(
@@ -5655,7 +5682,7 @@ impl MusicApp {
                             .icon(gpui_kit::assets::IconName::FileMusic)
                             .tooltip("歌词")
                             .accessibility_label("歌词")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_now_playing(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_now_playing(cx))),
                     )
                     .child(
                         // 音量图标按钮：点击静音 / 取消静音（沿用原有语义）。
@@ -5799,6 +5826,15 @@ impl Render for MusicApp {
         div()
             .relative()
             .size_full()
+            // Esc 退出专享模式。挂在最外层：没有元素聚焦时 GPUI 会把按键派发到
+            // 根节点；子元素有焦点时事件也会冒泡到这里。浮层自己的 Esc 处理会先
+            // `stop_propagation`，所以设置浮层 / 右键菜单打开时不会误退出专享模式。
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.show_now_playing && is_escape(event) {
+                    this.close_now_playing(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .child(content)
             .children(overlay)
             .children(track_menu)
@@ -6002,7 +6038,12 @@ fn color_thumb(left: f32, top: f32, color: Hsla) -> gpui::Div {
 }
 
 fn is_escape(event: &KeyDownEvent) -> bool {
-    let key = event.keystroke.key.as_str();
+    is_escape_key(event.keystroke.key.as_str())
+}
+
+/// 按键名是否表示 Escape。桌面歌词 / 专享模式既可能在控件上收到 `KeyDownEvent`，
+/// 也可能经全局按键观察者收到裸 `Keystroke`，两种路径共用这一份判断。
+fn is_escape_key(key: &str) -> bool {
     key == "escape" || key == "esc"
 }
 
@@ -6424,11 +6465,13 @@ fn search_status(title: &'static str, detail: impl Into<SharedString>, p: Palett
 }
 
 /// 内置字体：MiSans（随程序分发，用户系统装没装都不影响）。
-/// 三个字重正好覆盖界面里用到的 NORMAL / MEDIUM / SEMIBOLD。
-const BUNDLED_FONT_FILES: [&[u8]; 3] = [
+/// 四个字重覆盖界面里用到的 NORMAL / MEDIUM / SEMIBOLD，以及桌面歌词默认的
+/// 700（Bold）——补上真正的 Bold 后，默认歌词不再是 600 或系统合成加粗。
+const BUNDLED_FONT_FILES: [&[u8]; 4] = [
     include_bytes!("../../../assets/fonts/MiSans-Regular.ttf"),
     include_bytes!("../../../assets/fonts/MiSans-Medium.ttf"),
     include_bytes!("../../../assets/fonts/MiSans-Semibold.ttf"),
+    include_bytes!("../../../assets/fonts/MiSans-Bold.ttf"),
 ];
 
 /// 首选界面字体名，按顺序取第一个真正可用的。
@@ -6730,6 +6773,23 @@ fn main() {
         });
 }
 
+/// 右键菜单文件夹条目的纯逻辑：已收藏则删掉匹配的那一条，未收藏则追加。
+///
+/// 返回 `true` 表示本次操作是「加入」，`false` 表示「移除」。抽成自由函数是
+/// 为了能在不构造 `Context` 的情况下直接单测查找 / 删除行为。
+fn toggle_saved_track(saved_tracks: &mut Vec<SavedTrack>, folder: &str, track: &Track) -> bool {
+    if let Some(index) = saved_tracks
+        .iter()
+        .position(|saved| saved.matches(folder, track))
+    {
+        saved_tracks.remove(index);
+        false
+    } else {
+        saved_tracks.push(SavedTrack::new(folder, track.clone()));
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6749,6 +6809,48 @@ mod tests {
         assert_eq!(row.title, "Slow Light");
         assert_eq!(row.artist, "Mizu");
         assert_eq!(row.album, "Still Water");
+    }
+
+    #[test]
+    fn toggle_saved_track_adds_then_removes() {
+        let mut saved = Vec::new();
+        let track = Track::local("1", "Slow Light", "file:///slow-light.mp3");
+
+        assert!(toggle_saved_track(&mut saved, "我的收藏", &track));
+        assert_eq!(saved.len(), 1);
+        assert!(saved[0].matches("我的收藏", &track));
+
+        assert!(!toggle_saved_track(&mut saved, "我的收藏", &track));
+        assert!(saved.is_empty(), "再次点击应把已收藏的这条移除");
+    }
+
+    #[test]
+    fn toggle_saved_track_is_scoped_by_folder() {
+        let mut saved = Vec::new();
+        let track = Track::local("1", "Slow Light", "file:///slow-light.mp3");
+
+        assert!(toggle_saved_track(&mut saved, "我的收藏", &track));
+        // 另一个文件夹里的同一首歌还没收藏，应当新增而不是误删「我的收藏」里的那条。
+        assert!(toggle_saved_track(&mut saved, "通勤", &track));
+        assert_eq!(saved.len(), 2);
+
+        assert!(!toggle_saved_track(&mut saved, "通勤", &track));
+        assert_eq!(saved.len(), 1);
+        assert!(saved[0].matches("我的收藏", &track));
+    }
+
+    #[test]
+    fn toggle_saved_track_distinguishes_source() {
+        let mut saved = Vec::new();
+        let mut kw = Track::local("123", "Slow Light", "file:///slow-light.mp3");
+        kw.source = TrackSource::Kw;
+        let mut kg = kw.clone();
+        kg.source = TrackSource::Kg;
+
+        assert!(toggle_saved_track(&mut saved, "我的收藏", &kw));
+        // 不同音源的相同 id 不算同一首：应当是「加入」而不是把酷我那条删掉。
+        assert!(toggle_saved_track(&mut saved, "我的收藏", &kg));
+        assert_eq!(saved.len(), 2);
     }
 
     #[test]
