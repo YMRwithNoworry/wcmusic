@@ -27,6 +27,32 @@ use wcmusic_core::{Track, TrackSource};
 use crate::MusicApp;
 use crate::lyrics_window;
 
+/// 桌面歌词动画期间的帧驱动方式。
+///
+/// GPUI 会给「非激活窗口」的动画帧请求套上 `inactive_frame_interval`
+/// （gpui 默认 33.33ms，见 `WindowOptions`），而桌面歌词窗口是
+/// `focus: false` + `WS_EX_NOACTIVATE` 的悬浮窗，永远不会成为激活窗口，
+/// 于是 `Window::request_animation_frame()` 这条路会被稳定压到 30fps 以下
+/// （实测 p50 ≈ 43–50ms）。
+///
+/// 该节流只作用于「带 pending next-frame callback」或 `force_render` 的帧请求；
+/// 普通的「窗口 dirty」重绘走平台 vsync 线程的失效驱动，不受它影响。
+/// 所以默认改成 [`FrameDriver::Timer`]：动画期间用后台定时器持续
+/// `cx.notify()`，让窗口保持 dirty。`AnimationFrame` / `Notify` 保留给
+/// `WCMUSIC_LYRICS_FRAME_DRIVER` 做 A/B 诊断。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FrameDriver {
+    /// 后台定时器把歌词视图标脏（默认）。
+    Timer,
+    /// 旧的 `Window::request_animation_frame()`。
+    AnimationFrame,
+    /// 在 `render` 里直接 `cx.notify()`。
+    Notify,
+}
+
+/// 定时器驱动帧的重绘节拍：略快于 60Hz，保证每个 vsync 到来时窗口都是 dirty 的。
+const FRAME_TIMER_TICK: Duration = Duration::from_millis(8);
+
 /// 桌面歌词的帧探针，由环境变量 `WCMUSIC_FRAME_PROBE=1` 打开。
 ///
 /// 打开后，`LyricsOverlay::render` 会在每个「需要逐帧重绘」的帧上记录
@@ -39,6 +65,8 @@ use crate::lyrics_window;
 /// 这是一个给「桌面歌词掉帧」回归用的诊断开关：关闭时每帧只做一次 `OnceLock`
 /// 读取（等价于一次原子 bool 判断），没有任何 I/O。
 mod frame_probe {
+    use super::FrameDriver;
+
     use std::io::Write as _;
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
@@ -104,16 +132,22 @@ mod frame_probe {
 
     static SIMULATION_BLANK: OnceLock<bool> = OnceLock::new();
 
-    /// 诊断开关：`WCMUSIC_LYRICS_FRAME_DRIVER=notify` 时改用 `cx.notify()`
-    /// 保持窗口 dirty、由平台 vsync 失效驱动下一帧，而不是
-    /// `window.request_animation_frame()`。用来验证 GPUI 对「非激活窗口」的
-    /// `inactive_frame_interval`（33ms）节流是不是桌面歌词掉帧的真正原因。
-    pub fn notify_frame_driver() -> bool {
-        static FLAG: OnceLock<bool> = OnceLock::new();
+    /// 诊断开关：`WCMUSIC_LYRICS_FRAME_DRIVER=timer|raf|notify`，选择动画期间的帧驱动方式。
+    ///
+    /// 默认 `timer`：用后台定时器持续把歌词视图标脏，重绘交给平台的 vsync 失效驱动。
+    /// `raf` 是旧的 `Window::request_animation_frame()` 路径，`notify` 是更早的诊断路径。
+    /// 详见 [`FrameDriver`]。
+    pub fn frame_driver() -> FrameDriver {
+        static FLAG: OnceLock<FrameDriver> = OnceLock::new();
         *FLAG.get_or_init(|| {
-            std::env::var("WCMUSIC_LYRICS_FRAME_DRIVER")
-                .map(|value| value.trim().eq_ignore_ascii_case("notify"))
-                .unwrap_or(false)
+            match std::env::var("WCMUSIC_LYRICS_FRAME_DRIVER")
+                .map(|value| value.trim().to_ascii_lowercase())
+                .as_deref()
+            {
+                Ok("raf") | Ok("animation-frame") => FrameDriver::AnimationFrame,
+                Ok("notify") => FrameDriver::Notify,
+                _ => FrameDriver::Timer,
+            }
         })
     }
 
@@ -314,6 +348,16 @@ pub fn tint(rgb: u32, alpha: f32) -> Hsla {
 
 fn hex_label(rgb: u32) -> SharedString {
     format!("#{:06X}", rgb & 0x00FF_FFFF).into()
+}
+
+/// 把绘制用的字号量化到 0.5px 档位。
+///
+/// 逐帧重绘时字号随强调度连续变化（`size * (0.86 + 0.14 * emphasis) * scale`），
+/// 未量化时几乎每帧都是新字号，GPUI 的文字排版缓存每帧都会 miss，于是每一帧
+/// 都要对屏幕上每一行重新做一次 shaping。量化到 0.5px 后相邻帧落在同一档位，
+/// 排版缓存能命中；0.5px 的档位在视觉上看不出差别。
+fn quantize_font_size(size: f32) -> f32 {
+    (size * 2.0).round() / 2.0
 }
 
 /// 缓入缓出的五次曲线（smootherstep），与专享模式歌词用同一条曲线：
@@ -1135,6 +1179,8 @@ pub struct LyricsOverlay {
     last_frame_at: Option<std::time::Instant>,
     /// 诊断用自驱动（`WCMUSIC_LYRICS_SIM=1`）的起始时间，见 `apply_simulation`。
     sim_started: Option<std::time::Instant>,
+    /// 定时器帧驱动是否已经在跑（见 [`LyricsOverlay::start_frame_timer`]）。
+    frame_timer_running: bool,
     hwnd: Option<isize>,
     /// 歌词窗口自身的 DPI 缩放，用于在逻辑像素与物理像素之间换算。
     scale_factor: f32,
@@ -1170,6 +1216,7 @@ impl LyricsOverlay {
             notice_generation: 0,
             last_frame_at: None,
             sim_started: None,
+            frame_timer_running: false,
             measure_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             hwnd: None,
             scale_factor: 1.0,
@@ -1537,6 +1584,49 @@ impl LyricsOverlay {
         }
     }
 
+    /// 动画期间驱动下一帧的重绘请求，具体路径见 [`FrameDriver`]。
+    fn drive_frames(&mut self, window: &Window, cx: &mut Context<Self>) {
+        match frame_probe::frame_driver() {
+            FrameDriver::Timer => self.start_frame_timer(cx),
+            FrameDriver::AnimationFrame => window.request_animation_frame(),
+            FrameDriver::Notify => cx.notify(),
+        }
+    }
+
+    /// 用一个后台定时器持续把歌词视图标脏。
+    ///
+    /// 只负责「让窗口保持 dirty」：真正的绘制发生在平台 vsync 线程
+    /// `RedrawWindow(RDW_INVALIDATE)` 送来的 `WM_PAINT` 上，因此不会被 GPUI
+    /// 的 `inactive_frame_interval` 节流。动画结束（`needs_frames()` 变假）后
+    /// 定时器自己退出，暂停时不会有空转的唤醒。
+    fn start_frame_timer(&mut self, cx: &mut Context<Self>) {
+        if self.frame_timer_running {
+            return;
+        }
+        self.frame_timer_running = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(FRAME_TIMER_TICK).await;
+                let running = this
+                    .update(cx, |this, cx| {
+                        if this.needs_frames() {
+                            cx.notify();
+                            true
+                        } else {
+                            this.frame_timer_running = false;
+                            false
+                        }
+                    })
+                    // 实体已经销毁：直接结束。
+                    .unwrap_or(false);
+                if !running {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     // ---- 绘制 ----
 
     /// 诊断用自驱动：`WCMUSIC_LYRICS_SIM=1` 时不用播放器，也能让歌词浮窗
@@ -1796,7 +1886,7 @@ impl LyricsOverlay {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                let translation_size = (size * 0.56).max(12.0);
+                let translation_size = quantize_font_size((size * 0.56).max(12.0));
                 let translation_width = self.measure(
                     window,
                     translation,
@@ -1899,7 +1989,7 @@ impl LyricsOverlay {
                 };
                 let (row, row_height) = self.lyric_row(
                     index,
-                    size * scale,
+                    quantize_font_size(size * scale),
                     1.0,
                     1.0,
                     style.karaoke,
@@ -1939,7 +2029,7 @@ impl LyricsOverlay {
             };
             let (row, row_height) = self.lyric_row(
                 index,
-                size * (0.86 + 0.14 * emphasis) * scale,
+                quantize_font_size(size * (0.86 + 0.14 * emphasis) * scale),
                 alpha,
                 color_emphasis(emphasis),
                 is_current && style.karaoke,
@@ -2435,11 +2525,7 @@ impl Render for LyricsOverlay {
         // 不再靠 16ms 定时器，避免 Windows 定时器精度导致的掉帧。
         if animate {
             self.advance_frame();
-            if frame_probe::notify_frame_driver() {
-                cx.notify();
-            } else {
-                window.request_animation_frame();
-            }
+            self.drive_frames(window, cx);
         } else {
             self.last_frame_at = None;
         }
