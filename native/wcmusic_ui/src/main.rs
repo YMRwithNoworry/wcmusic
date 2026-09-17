@@ -12,7 +12,8 @@ mod ui_busy;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui_kit as gpui;
@@ -24,10 +25,11 @@ use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, Hsla, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Subscription,
-    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, checkerboard,
-    div, hsla, img, linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, Entity, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
+    SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions, checkerboard, div, hsla, img, linear_color_stop, linear_gradient,
+    point, prelude::*, px, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformPlaylist, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -36,7 +38,7 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
-use crate::hotkey::{HotKeyAction, HotKeyManager};
+use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
@@ -123,6 +125,13 @@ const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播�
 const PLAYLIST_CARD_WIDTH: f32 = 200.0;
 const PLAYLIST_COVER_WIDTH: f32 = 180.0;
 const PLAYLIST_COVER_HEIGHT: f32 = 140.0;
+/// 列表载入时最多预热的封面条目数。
+///
+/// 之前给整张列表都下封面：载入 100 首的榜单实测常驻内存多出约 23 MB
+/// （每张封面都要落到本地缓存并被图片系统解码驻留）。只预热一屏多一点，
+/// 其余条目保持 `artwork_path = None`，由 `preferred_artwork_source` /
+/// `track_artwork` 决定显示远程兜底或占位，内存不再随列表长度线性增长。
+const ARTWORK_PREHEAT_LIMIT: usize = 24;
 /// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
 const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
 
@@ -534,6 +543,12 @@ struct MusicApp {
     /// 全局快捷键设置，与 `hotkey_manager` 保持一致。
     hotkeys: HotKeySettings,
     hotkey_manager: Option<Arc<HotKeyManager>>,
+    /// 快捷键事件接收端的共享槽。
+    ///
+    /// 60ms 轮询任务持有同一个 `Arc`，换 manager 时由 `set_hotkey_manager`
+    /// 往槽里写入新的接收端 —— 这样轮询任务不必读取 `MusicApp` 实体就能跟上
+    /// 设置变化（在 UI 线程嵌套借用实体时读实体 `read_with` 会 panic）。
+    hotkey_event_slot: Arc<Mutex<Option<HotKeyEventReceiver>>>,
     /// 正在等待用户按下新快捷键的动作。
     capturing_hotkey: Option<HotKeyAction>,
     /// 捕获快捷键用的全局按键观察者。
@@ -635,6 +650,7 @@ impl MusicApp {
             lyric_scroll_started: None,
             hotkeys: settings.hotkeys.clone(),
             hotkey_manager: None,
+            hotkey_event_slot: Arc::new(Mutex::new(None)),
             capturing_hotkey: None,
             hotkey_observer: None,
             use_network_proxy: settings.use_network_proxy,
@@ -759,10 +775,12 @@ impl MusicApp {
                 .map_err(|error| error.to_string())?;
             let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
             if !rows.is_empty() {
-                let worker_count = rows.len().min(8).max(1);
-                let chunk_size = rows.len().div_ceil(worker_count);
+                // 只预热前几屏封面，其余条目保持占位，避免整表下载驻留。
+                let preheat = rows.len().min(ARTWORK_PREHEAT_LIMIT);
+                let worker_count = preheat.min(8).max(1);
+                let chunk_size = preheat.div_ceil(worker_count);
                 std::thread::scope(|scope| {
-                    for chunk in rows.chunks_mut(chunk_size) {
+                    for chunk in rows[..preheat].chunks_mut(chunk_size) {
                         scope.spawn(move || {
                             for row in chunk {
                                 let Some(uri) = row.track.artwork_uri.clone() else {
@@ -884,10 +902,12 @@ impl MusicApp {
                 .map_err(|error| error.to_string())?;
             let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
             if !rows.is_empty() {
-                let worker_count = rows.len().min(8).max(1);
-                let chunk_size = rows.len().div_ceil(worker_count);
+                // 同榜单：只预热前几屏封面。
+                let preheat = rows.len().min(ARTWORK_PREHEAT_LIMIT);
+                let worker_count = preheat.min(8).max(1);
+                let chunk_size = preheat.div_ceil(worker_count);
                 std::thread::scope(|scope| {
-                    for chunk in rows.chunks_mut(chunk_size) {
+                    for chunk in rows[..preheat].chunks_mut(chunk_size) {
                         scope.spawn(move || {
                             for row in chunk {
                                 let Some(uri) = row.track.artwork_uri.clone() else {
@@ -1015,16 +1035,21 @@ impl MusicApp {
         if pending.is_empty() {
             return;
         }
+        // 每轮只预热前几张歌单封面，别一次性把整页封面全下载并解码驻留。
+        // 只把这一批记进「已请求」，剩下的留到后续 render 再按同样的上限补，
+        // 免得 24 张之后的歌单永远停在没有封面的状态。
+        pending.truncate(ARTWORK_PREHEAT_LIMIT);
         for (key, _) in &pending {
             self.playlist_cover_requested.insert(key.clone());
         }
 
         let task = cx.background_spawn(async move {
             let worker_count = pending.len().min(6).max(1);
+            let chunk_size = pending.len().div_ceil(worker_count);
             let mut done: Vec<(String, std::path::PathBuf)> = Vec::new();
             std::thread::scope(|scope| {
                 let (sender, receiver) = std::sync::mpsc::channel();
-                for chunk in pending.chunks(pending.len().div_ceil(worker_count)) {
+                for chunk in pending.chunks(chunk_size) {
                     let sender = sender.clone();
                     scope.spawn(move || {
                         for (key, uri) in chunk {
@@ -2672,7 +2697,9 @@ impl MusicApp {
                 if ui_busy::is_busy() {
                     continue;
                 }
-                let Ok(keep_running) = this.update(cx, |this, cx| {
+                // 经窗口上下文安全进入实体：UI 线程嵌套持有借用时拿到 None，
+                // 跳过这一拍继续轮询，而不是 panic。
+                match try_update_entity(cx, &this, |this, cx| {
                     if !this.is_playing {
                         return false;
                     }
@@ -2696,11 +2723,12 @@ impl MusicApp {
                     this.sync_lyrics_window_position(cx);
                     cx.notify();
                     this.is_playing
-                }) else {
-                    break;
-                };
-                if !keep_running {
-                    break;
+                }) {
+                    // 已暂停 / 播完：计时器到此为止。
+                    Some(false) => break,
+                    Some(true) => {}
+                    // 借不到实体（嵌套借用 / 无当前窗口）：下一拍再试。
+                    None => continue,
                 }
             }
         })
@@ -2789,9 +2817,21 @@ impl MusicApp {
 
     // ---- 全局快捷键 ----
 
+    /// 替换当前快捷键注册，并同步更新轮询任务持有的接收端槽。
+    ///
+    /// 轮询任务只认这个槽：换 manager（注册/注销/改键）时把新的接收端写进去，
+    /// 旧通道会随旧 manager 一起关掉，`try_recv` 自然读不到东西。
+    fn set_hotkey_manager(&mut self, manager: Option<Arc<HotKeyManager>>) {
+        let events = manager.as_ref().map(|manager| manager.events());
+        if let Ok(mut slot) = self.hotkey_event_slot.lock() {
+            *slot = events;
+        }
+        self.hotkey_manager = manager;
+    }
+
     /// 按当前设置重新注册全局快捷键，并汇报注册失败的原因。
     fn apply_hotkeys(&mut self, cx: &mut Context<Self>) {
-        self.hotkey_manager = None;
+        self.set_hotkey_manager(None);
         self.persist_settings();
         if !self.hotkeys.enabled {
             self.notice = "全局快捷键：已关闭".into();
@@ -2818,7 +2858,7 @@ impl MusicApp {
             )
             .into()
         };
-        self.hotkey_manager = Some(Arc::new(manager));
+        self.set_hotkey_manager(Some(Arc::new(manager)));
         cx.notify();
     }
 
@@ -2876,7 +2916,7 @@ impl MusicApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hotkey_manager = None;
+        self.set_hotkey_manager(None);
         self.capturing_hotkey = Some(action);
         self.notice = format!("请按下「{}」的新快捷键（Esc 取消，Backspace 清除）", action.label())
             .into();
@@ -6394,19 +6434,50 @@ const BUNDLED_FONT_FILES: [&[u8]; 3] = [
 /// 首选界面字体名，按顺序取第一个真正可用的。
 const UI_FONT_CANDIDATES: [&str; 1] = ["MiSans"];
 
+/// 内置字体是否已经喂给过文本系统。
+///
+/// `install_ui_font` 会被调用多次（启动、开窗后、切主题），但字体字节是编译期
+/// 嵌入的静态数据，重复 `add_fonts` 在 Windows 侧只是不断 `AddFontFile` 累加，
+/// 白白多占内存 —— 所以只注册一次，后续调用只重设主题字体。
+static UI_FONT_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+/// 从异步上下文里安全地借一次实体。
+///
+/// `cx.spawn` 出来的定时任务会嵌套在弹窗 / 对话框的局部事件循环里被轮询，
+/// 此时 UI 线程可能仍在外层 `update_entity` 里持有借用；`Entity::update` /
+/// `WeakEntity::update` / `read_with` 走的都是 `AsyncApp` 的
+/// `RefCell::borrow_mut` / `borrow`，会直接 panic（随后在无法 unwind 的窗口
+/// 过程里二次 panic → 进程 abort）。
+///
+/// 这里改经 `AppContext::with_window` 进入：它内部用 `try_borrow_mut`，借不到
+/// 就返回 `None`，交给调用方跳过这一拍再试。
+fn try_update_entity<T: 'static, R>(
+    cx: &mut AsyncApp,
+    entity: &WeakEntity<T>,
+    update: impl FnOnce(&mut T, &mut Context<T>) -> R,
+) -> Option<R> {
+    cx.with_window(entity.entity_id(), |_, app| {
+        entity.update(app, update).ok()
+    })
+    .flatten()
+}
+
 /// 注册内置 MiSans 字体，并把主题默认字体切到 MiSans。
 ///
 /// `gpui-component` 的 `Root` 会把主题里的 `font_family` 应用到整棵界面树，
 /// 所以改主题字体即可全局生效；注意 `Theme::change` 会用主题注册表里的字体
-/// 覆盖这个字段，切换明暗主题后需要重新调用本函数。
+/// 覆盖这个字段，切换明暗主题后需要重新调用本函数（但字体只注册一次）。
 fn install_ui_font(cx: &mut App) {
     let text_system = cx.text_system();
-    let fonts = BUNDLED_FONT_FILES
-        .iter()
-        .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
-        .collect::<Vec<_>>();
-    if let Err(error) = text_system.add_fonts(fonts) {
-        eprintln!("加载内置 MiSans 字体失败：{error}");
+    // `swap` 保证同一组静态字节只 `add_fonts` 一次；后续调用只重设主题字体。
+    if !UI_FONT_REGISTERED.swap(true, Ordering::SeqCst) {
+        let fonts = BUNDLED_FONT_FILES
+            .iter()
+            .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
+            .collect::<Vec<_>>();
+        if let Err(error) = text_system.add_fonts(fonts) {
+            eprintln!("加载内置 MiSans 字体失败：{error}");
+        }
     }
     let available = text_system.all_font_names();
     let family = UI_FONT_CANDIDATES
@@ -6518,22 +6589,26 @@ fn main() {
             {
                 let window_handle: AnyWindowHandle = window_handle.into();
                 let view_for_hotkeys = view.clone();
+                // 只把事件接收端槽和弱句柄 clone 进闭包：循环里不再读取实体，
+                // 只在真的收到 action 时才去更新实体。
+                let hotkey_event_slot = view.read(cx).hotkey_event_slot.clone();
+                let hotkey_view = view_for_hotkeys.downgrade();
                 cx.spawn(async move |cx| {
                     loop {
                         cx.background_executor()
                             .timer(Duration::from_millis(60))
                             .await;
-                        // 这个轮询任务在 UI 线程持有实体借用时读取 MusicApp 会 panic
-                        // （并直接终止进程），因此长阻塞操作期间整拍跳过。
+                        // 长阻塞操作期间整拍跳过，事件留在通道里。
                         if ui_busy::is_busy() {
                             continue;
                         }
-                        let events = view_for_hotkeys.read_with(cx, |this, _| {
-                            this.hotkey_manager
-                                .as_ref()
-                                .map(|manager| manager.events())
-                        });
-                        let Some(events) = events else {
+                        // 直接从共享槽里取接收端（换 manager 时 `MusicApp` 会写入
+                        // 新的接收端），不碰实体，避免嵌套借用时 panic。
+                        let receiver = match hotkey_event_slot.lock() {
+                            Ok(slot) => slot.clone(),
+                            Err(_) => continue,
+                        };
+                        let Some(events) = receiver else {
                             continue;
                         };
                         while let Some(action) = events.try_recv() {
@@ -6550,8 +6625,10 @@ fn main() {
                                     }
                                 });
                             } else {
-                                let _ = view_for_hotkeys
-                                    .update(cx, |this, cx| this.handle_hot_key(action, cx));
+                                // 同上：借不到实体就跳过这一拍，绝不 panic。
+                                let _ = try_update_entity(cx, &hotkey_view, |this, cx| {
+                                    this.handle_hot_key(action, cx);
+                                });
                             }
                         }
                     }
@@ -6571,13 +6648,24 @@ fn main() {
                 let window_handle: AnyWindowHandle = window_handle.into();
                 let tray_for_events = tray.clone();
                 let view_for_tray = view.clone();
+                let tray_view = view_for_tray.downgrade();
                 cx.spawn(async move |cx| {
+                    // 退出请求借不到 App（嵌套事件循环）时留到下一拍重试。
+                    let mut quit_pending = false;
                     loop {
                         cx.background_executor()
                             .timer(Duration::from_millis(120))
                             .await;
                         // 与快捷键轮询同理：长阻塞操作期间不要碰实体，事件留在通道里。
                         if ui_busy::is_busy() {
+                            continue;
+                        }
+                        if quit_pending {
+                            // `AsyncApp::update` 会 `borrow_mut` panic，改走窗口上下文
+                            // （内部 `try_borrow_mut`），失败就下一拍再退。
+                            if window_handle.update(cx, |_, _, app| app.quit()).is_ok() {
+                                break;
+                            }
                             continue;
                         }
                         match events.try_recv() {
@@ -6591,17 +6679,17 @@ fn main() {
                             }
                             Some(tray::TrayEvent::Exit) => {
                                 tray_for_events.shutdown();
-                                let _ = cx.update(|cx| cx.quit());
-                                break;
+                                quit_pending = true;
+                                continue;
                             }
                             Some(tray::TrayEvent::LyricsToggle) => {
-                                let _ = view_for_tray.update(cx, |this, cx| {
+                                let _ = try_update_entity(cx, &tray_view, |this, cx| {
                                     let enabled = !this.lyrics_enabled;
                                     this.set_lyrics_enabled(enabled, cx);
                                 });
                             }
                             Some(tray::TrayEvent::LyricsLock) => {
-                                let _ = view_for_tray.update(cx, |this, cx| {
+                                let _ = try_update_entity(cx, &tray_view, |this, cx| {
                                     this.update_lyrics_style(cx, |style| style.locked = !style.locked);
                                     this.notice = if this.lyrics.locked {
                                         "桌面歌词：已锁定（鼠标穿透）".into()
@@ -6612,24 +6700,25 @@ fn main() {
                                 });
                             }
                             Some(tray::TrayEvent::LyricsFontLarger) => {
-                                let _ = view_for_tray.update(cx, |this, cx| {
+                                let _ = try_update_entity(cx, &tray_view, |this, cx| {
                                     this.nudge_lyrics_font_size(2.0, cx)
                                 });
                             }
                             Some(tray::TrayEvent::LyricsFontSmaller) => {
-                                let _ = view_for_tray.update(cx, |this, cx| {
+                                let _ = try_update_entity(cx, &tray_view, |this, cx| {
                                     this.nudge_lyrics_font_size(-2.0, cx)
                                 });
                             }
                             Some(tray::TrayEvent::LyricsResetPosition) => {
-                                let _ = view_for_tray.update(cx, |this, cx| {
+                                let _ = try_update_entity(cx, &tray_view, |this, cx| {
                                     this.reset_lyrics_position(cx)
                                 });
                             }
                             None => {}
                         }
-                        // 桌面歌词窗口被拖动后位置会变化，这里顺带落盘。
-                        let _ = view_for_tray.update(cx, |this, cx| {
+                        // 桌面歌词窗口被拖动后位置会变化，这里顺带落盘；
+                        // 借不到实体（UI 线程嵌套借用）时跳过这一拍。
+                        let _ = try_update_entity(cx, &tray_view, |this, cx| {
                             this.sync_lyrics_window_position(cx);
                         });
                     }

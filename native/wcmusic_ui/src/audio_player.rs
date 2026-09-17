@@ -261,6 +261,9 @@ pub fn download_audio_with_proxy(url: &str, use_proxy: bool) -> Result<Vec<u8>, 
     if bytes.len() as u64 > MAX_AUDIO_BYTES {
         return Err("音频文件超过 128 MB 限制".into());
     }
+    // `read_to_end` 按几何增长扩容，容量常是长度的 1.5–2 倍；这份缓冲会被整曲
+    // `Arc` 常驻到切歌为止，先把多余容量还回去，避免白白多占峰值内存。
+    bytes.shrink_to_fit();
     Ok(bytes)
 }
 
