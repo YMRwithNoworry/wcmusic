@@ -37,6 +37,7 @@ migrate_working_dir/
 /android/app/src/main/jniLibs/
 /coverage/
 /.wrangler/
+/test/failures/
 
 # Symbolication related
 app.*.symbols

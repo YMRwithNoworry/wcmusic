@@ -71,6 +71,7 @@ nu build_android.nu                        # Flutter APK + cargo ndk 产物
 ## 测试与发布
 
 - Dart 测试在 `test/`；Rust 单元测试写在源文件内的 `#[cfg(test)] mod tests`（`native/wcmusic_core/tests` 是空目录）。
+- 本机 `flutter test` 的基线是 74 passed / 9 failed：`golden_test.dart` 的金图差异（渲染与字体环境不同，diff 图输出到 `test/failures/`）、`widget_test.dart` 的 pointer 异常、`source_repository_test.dart` 依赖 Rust 运行时导致 10 分钟超时。这些是既存环境问题，不要为了它们改代码；新增测试后先看失败是否落在基线之外。
 - 站点：`site/` 静态文件，`wrangler.toml` 配置 Cloudflare Pages。
 - 安装包走 GitHub Release，文件名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`（见 `site/downloads/README.md`）。
 - 不要把 `build/`、`native/**/target/`、`android/app/src/main/jniLibs/` 提交进仓库（已在 `.gitignore`）。
