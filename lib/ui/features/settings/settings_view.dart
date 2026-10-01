@@ -45,6 +45,12 @@ class _SettingsViewState extends State<SettingsView> {
                 subtitle: Text(isAndroid ? '在其他应用上方同步显示歌词' : '在桌面置顶窗口中同步显示歌词'),
               ),
               if (!isAndroid) const LyricsStyleControls(),
+              SwitchListTile(
+                value: viewModel.spatialAudioEnabled,
+                onChanged: viewModel.setSpatialAudioEnabled,
+                title: const Text('空间音效'),
+                subtitle: const Text('拓宽立体声声场，增强空间感'),
+              ),
               ListTile(
                 title: const Text('播放音量'),
                 subtitle: Slider(

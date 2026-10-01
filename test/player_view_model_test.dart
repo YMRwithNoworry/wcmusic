@@ -71,6 +71,29 @@ void main() {
     expect(player.setVolumeValue, .35);
   });
 
+  test('toggles and persists spatial audio effects', () async {
+    final player = FakePlayerService();
+    final settings = FakeAudioEffectSettingsStore();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+      audioEffectSettingsStore: settings,
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.setSpatialAudioEnabled(true);
+    expect(viewModel.spatialAudioEnabled, isTrue);
+    expect(player.spatialAudioEnabled, isTrue);
+    expect(settings.spatialAudioEnabled, isTrue);
+
+    await viewModel.setSpatialAudioEnabled(false);
+    expect(viewModel.spatialAudioEnabled, isFalse);
+    expect(player.spatialAudioEnabled, isFalse);
+    expect(settings.spatialAudioEnabled, isFalse);
+  });
+
   test('synchronizes floating lyrics with playback position', () async {
     final player = _PositionPlayerService();
     final overlay = _FakeFloatingLyricsService();

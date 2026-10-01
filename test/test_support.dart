@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:wcmusic/data/services/audio_effect_settings_store.dart';
 import 'package:wcmusic/data/services/player_service.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/data/services/desktop_window_service.dart';
@@ -51,6 +52,7 @@ const testLibraryTracks = <Track>[
 class FakePlayerService implements AudioPlayerService {
   Duration? soughtPosition;
   double? setVolumeValue;
+  bool? spatialAudioEnabled;
   Track? playedTrack;
   bool stopped = false;
   final _completedController = StreamController<void>.broadcast(sync: true);
@@ -99,9 +101,26 @@ class FakePlayerService implements AudioPlayerService {
   }
 
   @override
+  Future<void> setSpatialAudioEnabled(bool enabled) async {
+    spatialAudioEnabled = enabled;
+  }
+
+  @override
   Future<void> toggle() async {}
 
   void emitCompleted() => _completedController.add(null);
+}
+
+class FakeAudioEffectSettingsStore implements AudioEffectSettingsStore {
+  bool spatialAudioEnabled = false;
+
+  @override
+  Future<bool> loadSpatialAudio() async => spatialAudioEnabled;
+
+  @override
+  Future<void> saveSpatialAudio(bool enabled) async {
+    spatialAudioEnabled = enabled;
+  }
 }
 
 class FakeOnlineSearchService implements OnlineSearchService {

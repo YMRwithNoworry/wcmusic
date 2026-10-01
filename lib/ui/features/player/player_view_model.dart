@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../data/services/audio_effect_settings_store.dart';
 import '../../../data/services/player_service.dart';
 import '../../../data/services/online_search_service.dart';
 import '../../../data/services/desktop_window_service.dart';
@@ -29,9 +30,12 @@ class PlayerViewModel extends ChangeNotifier {
     LyricService? lyricService,
     FloatingLyricsService? floatingLyricsService,
     TrackDownloadService? downloadService,
+    AudioEffectSettingsStore? audioEffectSettingsStore,
   }) : onlineSearchService =
            onlineSearchService ?? MultiSourceOnlineSearchService(),
        playerService = playerService ?? PlayerService(),
+       audioEffectSettingsStore =
+           audioEffectSettingsStore ?? FileAudioEffectSettingsStore(),
        lyricService = lyricService ?? OnlineLyricService(),
        floatingLyricsService =
            floatingLyricsService ?? PlatformFloatingLyricsService(),
@@ -69,6 +73,7 @@ class PlayerViewModel extends ChangeNotifier {
   final OnlineSearchService onlineSearchService;
   final WindowLifecycleService? windowLifecycleService;
   final AudioPlayerService playerService;
+  final AudioEffectSettingsStore audioEffectSettingsStore;
   final LyricService lyricService;
   final FloatingLyricsService floatingLyricsService;
   final TrackDownloadService downloadService;
@@ -88,6 +93,7 @@ class PlayerViewModel extends ChangeNotifier {
   double _volumeBeforeMute = .8;
   String? message;
   bool floatingLyricsEnabled = false;
+  bool spatialAudioEnabled = false;
   LyricsOverlayStyle lyricsStyle = const LyricsOverlayStyle();
   PlaybackMode playbackMode = PlaybackMode.listLoop;
   PlaybackQuality playbackQuality = PlaybackQuality.high;
@@ -159,6 +165,7 @@ class PlayerViewModel extends ChangeNotifier {
       folders = await musicRepository.loadFolders();
       sources = await sourceRepository.loadSources();
       selectedSourceId = await sourceRepository.loadSelectedSourceId();
+      await _loadSpatialAudioSetting();
       unawaited(refreshPlatformPlaylists());
       unawaited(refreshRecentTracks());
       unawaited(_upgradeEmptyPlatformFavorites());
@@ -776,6 +783,18 @@ class PlayerViewModel extends ChangeNotifier {
     await playerService.setVolume(next);
   }
 
+  Future<void> setSpatialAudioEnabled(bool enabled) async {
+    try {
+      await playerService.setSpatialAudioEnabled(enabled);
+      spatialAudioEnabled = enabled;
+      await audioEffectSettingsStore.saveSpatialAudio(enabled);
+      message = enabled ? '空间音效已开启' : '空间音效已关闭';
+    } on Object catch (error) {
+      message = '更新空间音效失败：$error';
+    }
+    notifyListeners();
+  }
+
   Future<void> toggleMute() =>
       setVolume(volume <= .001 ? _volumeBeforeMute : 0);
 
@@ -821,6 +840,18 @@ class PlayerViewModel extends ChangeNotifier {
       message = '开启歌词浮层失败：$error';
     }
     notifyListeners();
+  }
+
+  Future<void> _loadSpatialAudioSetting() async {
+    try {
+      final enabled = await audioEffectSettingsStore.loadSpatialAudio();
+      if (enabled) await playerService.setSpatialAudioEnabled(true);
+      spatialAudioEnabled = enabled;
+      notifyListeners();
+    } on Object catch (error) {
+      message = '恢复空间音效设置失败：$error';
+      notifyListeners();
+    }
   }
 
   Future<void> _loadLyricsStyle() async {

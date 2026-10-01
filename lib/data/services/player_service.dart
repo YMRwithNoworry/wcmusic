@@ -16,6 +16,7 @@ abstract interface class AudioPlayerService {
   Future<void> stop();
   Future<void> seek(Duration position);
   Future<void> setVolume(double volume);
+  Future<void> setSpatialAudioEnabled(bool enabled);
   Future<void> dispose();
 }
 
@@ -86,6 +87,17 @@ class PlayerService implements AudioPlayerService {
   @override
   Future<void> setVolume(double volume) =>
       player.setVolume(volume.clamp(0.0, 1.0) * 100);
+
+  @override
+  Future<void> setSpatialAudioEnabled(bool enabled) async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) return;
+    await platform.future;
+    await platform.setProperty(
+      'af',
+      enabled ? 'lavfi=[extrastereo=m=2.0:c=0]' : '',
+    );
+  }
 
   Future<void> _retryWithoutProxy(Track track) async {
     final platform = player.platform;
