@@ -386,14 +386,44 @@ pub(crate) fn line_emphasis(index: usize, displayed_position: f32) -> f32 {
     lyric_fade(index as f32 - displayed_position)
 }
 
-/// 把歌词窗口的位置限制在工作区内，保证整扇窗口都还看得见。
+/// 歌词本身的保护范围（窗口本地坐标）：左、上、宽、高。
 ///
-/// 工作区比窗口还小（或坐标不是有限值）时按贴边处理，避免 clamp 的上下界翻转。
-pub(crate) fn clamp_window_position(
-    x: f32,
-    y: f32,
+/// 「不允许移出屏幕」保护的是这块范围，而不是整扇窗口 —— 工具条与设置面板
+/// 属于配置 UI，允许被推出屏幕；真正不能丢的是画面正中的歌词。
+///
+/// 保护的是「当前行」所在的那条横带：位置与 `lyrics_layer` 一致（窗口垂直居中），
+/// 高度按同一条行距公式算出，并上下各留半行余量，免得贴着屏幕边缘时被裁掉。
+/// 水平方向保留整扇窗口的宽度：歌词是按窗口宽度居中排版的，只有整宽都在屏内，
+/// 长句才不会被切断。
+pub(crate) fn lyric_guard_rect(
     window_width: f32,
     window_height: f32,
+    font_size: f32,
+    show_translation: bool,
+) -> (f32, f32, f32, f32) {
+    // 与 `lyrics_layer` 用同一条公式，保证保护的正是真正画出来的那一行。
+    let translation_height = if show_translation {
+        quantize_font_size((font_size * 0.72).max(16.0)) * 1.32 + 2.0
+    } else {
+        0.0
+    };
+    let line_height = font_size * 1.32 + translation_height;
+    let height = (line_height * 2.0).min(window_height).max(1.0);
+    let top = ((window_height * 0.5) - height * 0.5).max(0.0);
+    (0.0, top, window_width.max(1.0), height)
+}
+
+/// 把歌词窗口的原点限制在工作区内，使[保护范围](lyric_guard_rect)始终完整可见。
+///
+/// 只有这块范围受约束，工具条与设置面板因此可以被推出屏幕；窗口整体不再强制留在屏内。
+/// 工作区比保护范围还小（或坐标不是有限值）时按贴边处理，避免 clamp 的上下界翻转。
+pub(crate) fn clamp_lyric_position(
+    x: f32,
+    y: f32,
+    guard_left: f32,
+    guard_top: f32,
+    guard_width: f32,
+    guard_height: f32,
     area_left: f32,
     area_top: f32,
     area_width: f32,
@@ -402,9 +432,12 @@ pub(crate) fn clamp_window_position(
     if !(x.is_finite() && y.is_finite()) {
         return (x, y);
     }
-    let max_x = (area_left + area_width - window_width).max(area_left);
-    let max_y = (area_top + area_height - window_height).max(area_top);
-    (x.clamp(area_left, max_x), y.clamp(area_top, max_y))
+    // 保护范围在屏幕上的位置是「窗口原点 + 本地偏移」，把它夹进工作区即可反解出原点范围。
+    let min_x = area_left - guard_left;
+    let max_x = (area_left + area_width - guard_width - guard_left).max(min_x);
+    let min_y = area_top - guard_top;
+    let max_y = (area_top + area_height - guard_height - guard_top).max(min_y);
+    (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
 }
 
 /// 颜色强调：只有当前行（或换行瞬间正在过渡的那一行）才染上高亮色。
@@ -2100,16 +2133,27 @@ impl LyricsOverlay {
             target
         } else {
             match lyrics_window::work_area(hwnd, self.scale_factor) {
-                Some((left, top, width, height)) => clamp_window_position(
-                    target.0,
-                    target.1,
-                    self.style.window_width,
-                    self.style.window_height,
-                    left,
-                    top,
-                    width,
-                    height,
-                ),
+                // 只保证歌词本身不离开屏幕：工具条与设置面板允许被推出屏幕外。
+                Some((left, top, width, height)) => {
+                    let (guard_left, guard_top, guard_width, guard_height) = lyric_guard_rect(
+                        self.style.window_width,
+                        self.style.window_height,
+                        self.style.font_size,
+                        self.style.show_translation,
+                    );
+                    clamp_lyric_position(
+                        target.0,
+                        target.1,
+                        guard_left,
+                        guard_top,
+                        guard_width,
+                        guard_height,
+                        left,
+                        top,
+                        width,
+                        height,
+                    )
+                }
                 None => target,
             }
         };
@@ -2858,37 +2902,88 @@ mod tests {
     }
 
     #[test]
-    fn clamp_window_position_keeps_the_window_inside() {
-        // 工作区内原样保留。
+    fn lyric_guard_rect_covers_the_centered_current_line() {
+        // 28px 主字号、默认开翻译：保护范围应当正好罩住画面正中的当前行。
+        let (left, top, width, height) = lyric_guard_rect(980.0, 260.0, 28.0, true);
+        assert_eq!(left, 0.0, "水平方向要覆盖整宽，长句才不会被切");
+        assert_eq!(width, 980.0);
+        // 垂直居中：上下留白相等，且范围盖过窗口中线。
+        assert!(top < 130.0 && top + height > 130.0);
+        assert!((top - (260.0 - height) / 2.0).abs() < 1e-3);
+        // 高度至少能容下主歌词 + 翻译行。
+        let translation = (28.0_f32 * 0.72).max(16.0) * 1.32 + 2.0;
+        assert!(height >= 28.0 * 1.32 + translation - 1e-3);
+    }
+
+    #[test]
+    fn lyric_guard_rect_shrinks_without_translation() {
+        // 关掉翻译后保护范围变矮，但仍然是居中、整宽的一条横带。
+        let (_, top_with, _, height_with) = lyric_guard_rect(980.0, 260.0, 28.0, true);
+        let (left, top_without, width, height_without) =
+            lyric_guard_rect(980.0, 260.0, 28.0, false);
+        assert!(height_without < height_with);
+        assert_eq!(left, 0.0);
+        assert_eq!(width, 980.0);
+        assert!((top_without - top_with).abs() > 1.0 || height_with != height_without);
+    }
+
+    #[test]
+    fn lyric_guard_rect_never_exceeds_the_window() {
+        // 超大字号时保护范围也不能高过窗口本身，否则 clamp 的上下界会翻转。
+        let (_, top, _, height) = lyric_guard_rect(980.0, 120.0, 96.0, true);
+        assert!(height <= 120.0);
+        assert!(top >= 0.0);
+        assert!(top + height <= 120.0 + 1e-3);
+    }
+
+    #[test]
+    fn clamp_lyric_position_keeps_the_lyrics_inside() {
+        // 保护范围取默认窗口中间那条横带（宽 980、高约 75）。
+        let guard = lyric_guard_rect(980.0, 260.0, 28.0, true);
+        let (gl, gt, gw, gh) = guard;
+        let area = (0.0, 0.0, 1920.0, 1040.0);
+
+        // 完整可见时原样保留。
         assert_eq!(
-            clamp_window_position(100.0, 100.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
-            (100.0, 100.0)
+            clamp_lyric_position(100.0, 400.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3),
+            (100.0, 400.0)
         );
-        // 右下越界拉回来，整扇窗口仍然可见。
-        assert_eq!(
-            clamp_window_position(1500.0, 1000.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
-            (940.0, 780.0)
-        );
-        // 左上越界。
-        assert_eq!(
-            clamp_window_position(-50.0, -30.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0),
-            (0.0, 0.0)
-        );
-        // 左侧显示器（负坐标工作区）。
-        assert_eq!(
-            clamp_window_position(-3000.0, 10.0, 980.0, 260.0, -1920.0, 0.0, 1920.0, 1040.0),
-            (-1920.0, 10.0)
-        );
-        // 工作区比窗口还小：贴住左上角，不 panic。
-        assert_eq!(
-            clamp_window_position(500.0, 500.0, 980.0, 260.0, 0.0, 0.0, 300.0, 100.0),
-            (0.0, 0.0)
-        );
-        // 非有限坐标原样返回（NaN 不能用 == 比较，单独看）。
+
+        // 往右下拖：歌词不能被推出右下角。窗口右边缘允许越过屏幕，
+        // 但保护范围必须还在屏内。
+        let (x, y) =
+            clamp_lyric_position(5000.0, 5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3);
+        assert!(x + gl + gw <= area.0 + area.2 + 1e-3, "歌词右缘不能出屏");
+        assert!(y + gt + gh <= area.1 + area.3 + 1e-3, "歌词下缘不能出屏");
+        // 因为保护范围在窗口正中，窗口底部允许超出屏幕。
+        assert!(y + 260.0 > area.1 + area.3, "工具条应当允许被推出屏幕");
+
+        // 往左上拖：歌词上缘不能出屏，但工具条（窗口顶部）可以。
+        let (x2, y2) =
+            clamp_lyric_position(-5000.0, -5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3);
+        assert!(x2 + gl >= area.0 - 1e-3, "歌词左缘不能出屏");
+        assert!(y2 + gt >= area.1 - 1e-3, "歌词上缘不能出屏");
+        assert!(y2 < area.1, "工具条应当允许被推出屏幕上方");
+    }
+
+    #[test]
+    fn clamp_lyric_position_handles_small_areas_and_nan() {
+        let guard = lyric_guard_rect(980.0, 260.0, 28.0, true);
+        let (gl, gt, gw, gh) = guard;
+        // 工作区比保护范围还小：贴边处理，不 panic、不翻转上下界。
+        let (x, y) =
+            clamp_lyric_position(500.0, 500.0, gl, gt, gw, gh, 0.0, 0.0, 300.0, 100.0);
+        assert!(x.is_finite() && y.is_finite());
+        assert!(x <= 0.0 + 1e-3);
+        // 非有限坐标原样返回。
         let (nan_x, nan_y) =
-            clamp_window_position(f32::NAN, 10.0, 980.0, 260.0, 0.0, 0.0, 1920.0, 1040.0);
+            clamp_lyric_position(f32::NAN, 10.0, gl, gt, gw, gh, 0.0, 0.0, 1920.0, 1040.0);
         assert!(nan_x.is_nan());
         assert_eq!(nan_y, 10.0);
+        // 左侧显示器（负坐标工作区）。
+        let (x3, _) =
+            clamp_lyric_position(-3000.0, 10.0, gl, gt, gw, gh, -1920.0, 0.0, 1920.0, 1040.0);
+        assert!(x3 + gl >= -1920.0 - 1e-3);
     }
 
     #[test]

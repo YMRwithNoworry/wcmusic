@@ -2073,19 +2073,31 @@ impl MusicApp {
     fn lyrics_window_bounds(&self, cx: &mut Context<Self>) -> Bounds<Pixels> {
         let origin = match (self.lyrics.window_x, self.lyrics.window_y) {
             (Some(x), Some(y)) => {
-                // 关掉「允许移出屏幕」时，把上次保存的位置也拉回屏幕内，
-                // 免得换了分辨率或拔掉外接屏之后歌词窗口停在看不见的地方。
+                // 关掉「允许移出屏幕」时，把上次保存的位置也拉回来，
+                // 免得换了分辨率或拔掉外接屏之后歌词停在看不见的地方。
+                //
+                // 这里只保证歌词本身可见：工具条与设置面板允许停在屏幕外，
+                // 与拖动时的约束保持一致。
                 let (x, y) = if self.lyrics.allow_offscreen {
                     (x, y)
                 } else {
                     match cx.primary_display() {
                         Some(display) => {
                             let bounds = display.bounds();
-                            crate::lyrics::clamp_window_position(
+                            let (guard_left, guard_top, guard_width, guard_height) =
+                                crate::lyrics::lyric_guard_rect(
+                                    self.lyrics.window_width,
+                                    self.lyrics.window_height,
+                                    self.lyrics.font_size,
+                                    self.lyrics.show_translation,
+                                );
+                            crate::lyrics::clamp_lyric_position(
                                 x,
                                 y,
-                                self.lyrics.window_width,
-                                self.lyrics.window_height,
+                                guard_left,
+                                guard_top,
+                                guard_width,
+                                guard_height,
                                 f32::from(bounds.origin.x),
                                 f32::from(bounds.origin.y),
                                 f32::from(bounds.size.width),
@@ -5444,7 +5456,7 @@ impl MusicApp {
                     setting_toggle_row(
                         "允许移出屏幕",
                         self.lyrics.allow_offscreen,
-                        "关闭时拖动歌词窗口会被限制在屏幕内，避免拖到看不见的地方",
+                        "关闭时只把歌词本身限制在屏幕内，工具条与设置面板仍可移出屏幕",
                         p,
                     )
                     .id("setting-lyrics-offscreen")
