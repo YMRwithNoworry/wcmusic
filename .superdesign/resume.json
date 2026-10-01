@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "song-detail-effects": {
+      "targetKind": "existing-ui",
+      "projectId": "54472777-5c50-44bd-b561-c85a00b1c706",
+      "activeDraftId": "9421a197-ac02-44c5-a1ba-ab535ee38a6f",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        ".superdesign/init/components.md",
+        ".superdesign/init/layouts.md",
+        ".superdesign/init/routes.md",
+        ".superdesign/init/theme.md",
+        ".superdesign/init/pages.md",
+        ".superdesign/init/extractable-components.md",
+        "native/wcmusic_ui/src/main.rs:3420:3600",
+        "native/wcmusic_ui/src/main.rs:5845:6212",
+        "native/wcmusic_ui/src/main.rs:2342:2354",
+        "native/wcmusic_ui/src/audio_player.rs:158:198"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "1e39ac673f43ce10b22f84aa74da2ddb6ebfdce3b84ba22cacc28e2ed2234343",
+        ".superdesign/init/components.md": "ef9256c1d648ce19c391b85e2cec7d4a449086f966bf80600a6a4e202e3942c1",
+        ".superdesign/init/layouts.md": "8e1c08d3c63e265ae8adca5a5fd2d8d7972a62ef29b182aed079b0dd2191f949",
+        ".superdesign/init/routes.md": "d5190b86c80e8a5edfeaa52daa65c8e77ec2047e55e44c1e03f55fe58d3ee7ce",
+        ".superdesign/init/theme.md": "c4ff717f8c379490f8a0785c45bc42b88be3dd07a80fc26b1191be2ecc58d521",
+        ".superdesign/init/pages.md": "0dc8eb6936f13144a6d6de3857ba0d68b63d654f64a56c3eaa0c6c5c1493e80f",
+        ".superdesign/init/extractable-components.md": "c87bf0a5ff8afb5e9bbdb10cf44184351ab7a65c92c27bdf2b43c80d8fc37538",
+        "native/wcmusic_ui/src/main.rs": "649eddf62d670b081e8823de2021ecb3f07767ffff4c34364b752f36abb6d855",
+        "native/wcmusic_ui/src/audio_player.rs": "46b1e300ad6bf7c35068eff3f6ee845162367ee57f9dbfe59d31621d6181d76f"
+      },
+      "drafts": {
+        "9421a197-ac02-44c5-a1ba-ab535ee38a6f": {
+          "title": "WCMusic Desktop UI Reference",
+          "visualDirection": "Existing compact player UI; anchored spatial-audio popover"
+        }
+      }
+    }
+  },
+  "updatedAt": "2026-10-01T22:22:49+08:00"
+}
