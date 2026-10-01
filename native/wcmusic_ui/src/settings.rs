@@ -6,6 +6,46 @@ use wcmusic_core::{PlatformPlaylist, Track};
 use crate::hotkey::HotKeyAction;
 use crate::lyrics::LyricsStyle;
 
+/// 播放方式，与 Flutter 端 `PlaybackMode` 的四档语义保持一致。
+///
+/// 用字符串序列化，settings.json 里直接可读；旧设置文件没有这个字段时由
+/// 外层 `#[serde(default)]` 落回顺序播放。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaybackMode {
+    /// 顺序播放：一首接一首，到列表末尾后停下。
+    #[default]
+    Sequence,
+    /// 列表循环：到末尾回到第一首。
+    ListLoop,
+    /// 随机循环：下一首随机取，且不与当前这首重复。
+    Shuffle,
+    /// 单曲循环：同一首反复播放。
+    SingleLoop,
+}
+
+impl PlaybackMode {
+    /// 点图标时的循环顺序：顺序 → 列表循环 → 随机循环 → 单曲循环。
+    /// 与 Flutter 端 `PlaybackModeButton` 保持一致。
+    pub const ALL: [Self; 4] = [Self::Sequence, Self::ListLoop, Self::Shuffle, Self::SingleLoop];
+
+    /// 切换到下一档。
+    pub fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    /// 界面提示里的中文名，与 Flutter 端一致。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sequence => "顺序播放",
+            Self::ListLoop => "列表循环",
+            Self::Shuffle => "随机循环",
+            Self::SingleLoop => "单曲循环",
+        }
+    }
+}
+
 /// 全局快捷键设置：是否启用，以及每个动作绑定的快捷键文本。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -153,6 +193,10 @@ pub struct AppSettings {
     /// 没有这个字段时仍能加载，加载后对应一个空列表。
     #[serde(default)]
     pub saved_tracks: Vec<SavedTrack>,
+    /// 播放方式（顺序 / 列表循环 / 随机循环 / 单曲循环）。
+    /// 旧设置文件没有这个字段时落回顺序播放。
+    #[serde(default)]
+    pub playback_mode: PlaybackMode,
 }
 
 impl Default for AppSettings {
@@ -166,6 +210,7 @@ impl Default for AppSettings {
             use_network_proxy: false,
             saved_playlists: Vec::new(),
             saved_tracks: Vec::new(),
+            playback_mode: PlaybackMode::default(),
         }
     }
 }
@@ -392,6 +437,33 @@ mod tests {
         assert!(loaded.dark_theme);
         assert!(loaded.saved_tracks.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn old_settings_without_playback_mode_default_to_sequence() {
+        // 旧版 settings.json 没有 playback_mode 字段，加载后必须是顺序播放。
+        let path = temp_path("no-playback-mode");
+        fs::write(&path, r#"{"dark_theme":true}"#).unwrap();
+
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.playback_mode, PlaybackMode::Sequence);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn playback_mode_round_trips() {
+        // 四档都要能写盘再读回，避免 serde 改名后静默落到默认值。
+        for mode in PlaybackMode::ALL {
+            let path = temp_path("playback-mode");
+            let mut settings = AppSettings::default();
+            settings.playback_mode = mode;
+            settings.save_to(&path).unwrap();
+
+            let loaded = AppSettings::load_from(Some(&path)).unwrap();
+            assert_eq!(loaded.playback_mode, mode, "{} 未能round-trip", mode.label());
+            let _ = fs::remove_file(&path);
+        }
     }
 
     #[test]

@@ -42,7 +42,9 @@ use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
 };
-use crate::settings::{AppSettings, HotKeySettings, SavedPlaylist, SavedTrack};
+use crate::settings::{
+    AppSettings, HotKeySettings, PlaybackMode, SavedPlaylist, SavedTrack,
+};
 use crate::smooth_scroll::{
     SmoothScrollDiv, SmoothScrollState, advance_smooth_scroll,
 };
@@ -121,6 +123,8 @@ fn smooth(
 }
 
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
+/// 底栏收藏按钮写入的文件夹，必须是 `PLAYLIST_FOLDERS` 里的一项。
+const FAVORITE_FOLDER: &str = "我的收藏";
 /// 此刻页「平台热门歌单」里每张卡片的宽度与封面高度（逻辑像素）。
 const PLAYLIST_CARD_WIDTH: f32 = 200.0;
 const PLAYLIST_COVER_WIDTH: f32 = 180.0;
@@ -587,6 +591,13 @@ struct MusicApp {
     saved_playlists: Vec<SavedPlaylist>,
     /// 「爱听的」各文件夹里收藏的歌曲，与 settings.json 保持同步。
     saved_tracks: Vec<SavedTrack>,
+    /// 播放方式（顺序 / 列表循环 / 随机循环 / 单曲循环），写入 settings.json。
+    playback_mode: PlaybackMode,
+    /// 随机循环用的自增种子。
+    ///
+    /// 不引入 rand 依赖：这里只需要「每次都换一首、单次会话内不重复」，
+    /// 用播放次数做种子再配合列表长度取模就够，且行为完全可测。
+    shuffle_cursor: u64,
     /// 当前打开的轨道行右键菜单；None 表示关闭。
     track_menu: Option<TrackMenuState>,
     /// 歌单封面本地缓存：`渠道:id` -> 已下载到本地的图片路径。
@@ -684,6 +695,8 @@ impl MusicApp {
             playlist_tracks_generation: 0,
             saved_playlists: settings.saved_playlists.clone(),
             saved_tracks: settings.saved_tracks.clone(),
+            playback_mode: settings.playback_mode,
+            shuffle_cursor: 0,
             track_menu: None,
             playlist_cover_paths: std::collections::HashMap::new(),
             playlist_cover_requested: std::collections::HashSet::new(),
@@ -702,6 +715,7 @@ impl MusicApp {
             use_network_proxy: self.use_network_proxy,
             saved_playlists: self.saved_playlists.clone(),
             saved_tracks: self.saved_tracks.clone(),
+            playback_mode: self.playback_mode,
         }
     }
 
@@ -2781,11 +2795,17 @@ impl MusicApp {
                             this.audio_player.as_ref().and_then(AudioPlayer::position)
                         {
                             this.elapsed_ms = position.as_millis() as u64;
-                            if let Some(row) = this.current_row()
-                                && row.track.duration_ms > 0
-                                && this.elapsed_ms >= row.track.duration_ms
-                            {
+                            // 先把时长取出来，避免在调用下面的可变更方法时还持有
+                            // `current_row()` 的不可变借用。
+                            let duration_ms =
+                                this.current_row().map(|row| row.track.duration_ms).unwrap_or(0);
+                            if track_finished(this.elapsed_ms, duration_ms) {
                                 this.is_playing = false;
+                                // 按当前播放方式决定是重播、随机、循环还是停在末尾。
+                                // 新曲会由 `start_playback` 成功回调重新起一个计时器，
+                                // 所以这一轮直接结束，避免两个 250ms 轮询叠加。
+                                this.play_next_after_finish(cx);
+                                return false;
                             }
                         }
                     }
@@ -2803,6 +2823,155 @@ impl MusicApp {
             }
         })
         .detach();
+    }
+
+    /// 底栏收藏按钮：把当前歌曲加入 / 移出「我的收藏」。
+    ///
+    /// 与轨道行右键菜单共用 `saved_tracks` 和 `toggle_saved_track`，
+    /// 两处状态始终一致，任何一处改动都会落盘并同步「爱听的」列表。
+    fn toggle_current_favorite(&mut self, cx: &mut Context<Self>) {
+        let Some(track) = self.current_row().map(|row| row.track.clone()) else {
+            self.notice = "还没有正在播放的歌曲".into();
+            cx.notify();
+            return;
+        };
+        let added = toggle_saved_track(&mut self.saved_tracks, FAVORITE_FOLDER, &track);
+        self.persist_settings();
+        self.notice = if added {
+            format!("已添加到「{FAVORITE_FOLDER}」：{}", track.title).into()
+        } else {
+            format!("已从「{FAVORITE_FOLDER}」移除：{}", track.title).into()
+        };
+        cx.notify();
+    }
+
+    /// 底栏播放方式按钮：在四档之间循环，并立刻写入 settings.json。
+    fn cycle_playback_mode(&mut self, cx: &mut Context<Self>) {
+        self.playback_mode = self.playback_mode.next();
+        self.persist_settings();
+        self.notice = format!("播放方式：{}", self.playback_mode.label()).into();
+        cx.notify();
+    }
+
+    /// 播完一首之后接着播哪一首，取决于当前播放方式。
+    ///
+    /// * 单曲循环：原地重播；
+    /// * 随机循环：在同一个播放上下文里随机挑一首，且不重复当前这首；
+    /// * 顺序 / 列表循环：沿用 `play_offset`，两者的区别只在末尾 ——
+    ///   顺序播放停在最后一首，列表循环回到开头。
+    ///
+    /// 手动点上一首 / 下一首始终走 `play_offset`，不受随机影响。
+    fn play_next_after_finish(&mut self, cx: &mut Context<Self>) {
+        match self.playback_mode {
+            PlaybackMode::SingleLoop => {
+                if let Some(row) = self.current_row().cloned() {
+                    self.start_playback(row, self.current_online_track.is_some(), cx);
+                }
+            }
+            PlaybackMode::Shuffle => {
+                let len = self.playback_queue_len();
+                if len == 0 {
+                    return;
+                }
+                self.shuffle_cursor = self.shuffle_cursor.wrapping_add(1);
+                let current = self.playback_queue_position().unwrap_or(0);
+                let next = shuffle_next_index(current, len, self.shuffle_cursor);
+                self.play_queue_index(next, cx);
+            }
+            PlaybackMode::ListLoop => {
+                // 到末尾则回到第一首，其余与顺序播放一致。
+                if self.at_queue_end_forwards() {
+                    self.play_queue_index(0, cx);
+                } else {
+                    self.play_offset(1, cx);
+                }
+            }
+            PlaybackMode::Sequence => {
+                if self.at_queue_end_forwards() {
+                    self.is_playing = false;
+                    self.notice = "已播放到列表末尾".into();
+                    cx.notify();
+                } else {
+                    self.play_offset(1, cx);
+                }
+            }
+        }
+    }
+
+    /// 当前播放上下文的长度（榜单 / 歌单 / 搜索结果 / 本地列表）。
+    fn playback_queue_len(&self) -> usize {
+        if self.active_tab == Tab::Rankings && self.selected_ranking.is_some() {
+            self.ranking_tracks.len()
+        } else if self.playlist_detail.is_some()
+            && self
+                .current_online_track
+                .as_ref()
+                .is_some_and(|current| self.playlist_tracks.iter().any(|row| row == current))
+        {
+            self.playlist_tracks.len()
+        } else if self.current_online_track.is_some() && !self.search_results.is_empty() {
+            self.search_results.len()
+        } else {
+            self.rows.len()
+        }
+    }
+
+    /// 当前歌曲在所属播放上下文里的下标。
+    fn playback_queue_position(&self) -> Option<usize> {
+        if self.active_tab == Tab::Rankings && self.selected_ranking.is_some() {
+            self.current_online_track
+                .as_ref()
+                .and_then(|current| self.ranking_tracks.iter().position(|row| row == current))
+        } else if self.playlist_detail.is_some() {
+            self.current_online_track
+                .as_ref()
+                .and_then(|current| self.playlist_tracks.iter().position(|row| row == current))
+        } else if let Some(current) = &self.current_online_track {
+            self.search_results.iter().position(|row| row == current)
+        } else {
+            self.current_track
+        }
+    }
+
+    /// 当前是否停在播放上下文的最后一首（顺序播放要在末尾停下）。
+    fn at_queue_end_forwards(&self) -> bool {
+        let len = self.playback_queue_len();
+        if len == 0 {
+            return true;
+        }
+        self.playback_queue_position().unwrap_or(0) + 1 >= len
+    }
+
+    /// 播放上下文中指定下标的歌曲（随机循环与「回到第一首」共用）。
+    fn play_queue_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.active_tab == Tab::Rankings && self.selected_ranking.is_some() {
+            if let Some(row) = self.ranking_tracks.get(index).cloned() {
+                self.current_online_track = Some(row.clone());
+                self.current_track = None;
+                self.start_playback(row, true, cx);
+            }
+            return;
+        }
+        if self.playlist_detail.is_some() && !self.playlist_tracks.is_empty() {
+            if let Some(row) = self.playlist_tracks.get(index).cloned() {
+                self.current_online_track = Some(row.clone());
+                self.current_track = None;
+                self.start_playback(row, true, cx);
+            }
+            return;
+        }
+        if self.current_online_track.is_some() && !self.search_results.is_empty() {
+            if let Some(row) = self.search_results.get(index).cloned() {
+                self.current_online_track = Some(row.clone());
+                self.start_playback(row, true, cx);
+            }
+            return;
+        }
+        if let Some(row) = self.rows.get(index).cloned() {
+            self.current_track = Some(index);
+            self.current_online_track = None;
+            self.start_playback(row, false, cx);
+        }
     }
 
     fn play_offset(&mut self, offset: isize, cx: &mut Context<Self>) {
@@ -5662,6 +5831,14 @@ impl MusicApp {
             .filter(|duration_ms| *duration_ms > 0)
             .map(|duration_ms| format!(" / {}", format_playback_time(duration_ms)))
             .unwrap_or_else(|| " / --:--".to_owned());
+        // 底栏高亮色：与专享模式歌词、LX Music 底栏同为那一支绿色。
+        let bar_accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
+        // 底栏收藏按钮的状态：当前歌曲是否已在「我的收藏」里。
+        let is_favorite = row.is_some_and(|row| {
+            self.saved_tracks
+                .iter()
+                .any(|saved| saved.matches(FAVORITE_FOLDER, &row.track))
+        });
         // LX Music 风格底栏：左侧信息 | 中间进度条 | 右侧时间 + 图标按钮。
         // 图标用 gpui-kit 资源库里的 Lucide 名字（SkipBack / SkipForward /
         // Volume2 / FileMusic），组件默认图标集里没有这几个，所以走 assets 目录。
@@ -5729,55 +5906,108 @@ impl MusicApp {
                     ),
             )
             .child(
-                // 中间：进度条占满剩余宽度，保留原 SliderState 拖动逻辑。
-                div().flex_1().min_w_0().h(px(18.0)).flex().items_center().child(
-                    Slider::new(
-                        self.progress_slider
-                            .as_ref()
-                            .expect("progress slider initialized"),
-                    )
-                    .w_full(),
-                ),
+                // 中间留白：LX Music 的底栏把进度线放在时间正下方，中间不铺控件。
+                div().flex_1().min_w_0(),
             )
             .child(
-                // 右侧：时间文本 + 图标按钮组（歌词 / 音量 / 上一首 / 播放 / 下一首）。
+                // 右侧：时间 + 进度线，然后是 收藏 / LRC / 音量 / 播放方式 / 传输控制。
+                //
+                // 这一组统一用应用的高亮绿（与专享模式歌词同一支），对应 LX Music
+                // 底栏那一片绿色图标；未播放时压暗，播放中才点亮。
                 h_flex()
                     .flex_shrink_0()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
+                    .when(row.is_some(), |this| this.text_color(bar_accent))
                     .child(
-                        div()
+                        // 时间与进度线同宽叠放：进度线正好落在时间文本下方，
+                        // 与 LX Music 底栏一致（而不是横跨整个底栏的长条）。
+                        v_flex()
                             .flex_shrink_0()
-                            .text_xs()
-                            .text_color(p.muted)
-                            .child(format!(
-                                "{}{}",
-                                format_playback_time(self.elapsed_ms),
-                                duration_text
-                            )),
+                            .items_center()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if playing { bar_accent } else { p.muted })
+                                    .child(format!(
+                                        "{}{}",
+                                        format_playback_time(self.elapsed_ms),
+                                        duration_text
+                                    )),
+                            )
+                            .child(
+                                div().w(px(96.0)).h(px(10.0)).flex().items_center().child(
+                                    Slider::new(
+                                        self.progress_slider
+                                            .as_ref()
+                                            .expect("progress slider initialized"),
+                                    )
+                                    .w_full(),
+                                ),
+                            ),
                     )
                     .child(
-                        Button::new("player-lyrics")
+                        // 收藏：把当前歌曲加入 / 移出「我的收藏」，与右键菜单同一套数据。
+                        Button::new("player-favorite")
                             .ghost()
                             .small()
-                            .icon(gpui_kit::assets::IconName::FileMusic)
-                            .tooltip("歌词")
-                            .accessibility_label("歌词")
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_now_playing(cx))),
+                            .text_color(bar_accent)
+                            .icon(if is_favorite {
+                                gpui_kit::assets::IconName::Heart
+                            } else {
+                                gpui_kit::assets::IconName::HeartOff
+                            })
+                            .tooltip(if is_favorite {
+                                "从「我的收藏」移除"
+                            } else {
+                                "添加到「我的收藏」"
+                            })
+                            .accessibility_label("收藏")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_current_favorite(cx))),
+                    )
+                    .child(
+                        // LRC：开关桌面歌词，等价于托盘里的「桌面歌词」开关。
+                        Button::new("player-lyrics")
+                            // 开启时用高亮绿实心块，关闭时是普通文字按钮，
+                            // 一眼能看出桌面歌词是开还是关。
+                            .when(self.lyrics_enabled, |this| {
+                                this.bg(bar_accent).text_color(p.primary_foreground)
+                            })
+                            .when(!self.lyrics_enabled, |this| {
+                                this.ghost().text_color(p.muted)
+                            })
+                            .small()
+                            .label("LRC")
+                            .tooltip(if self.lyrics_enabled {
+                                "关闭桌面歌词"
+                            } else {
+                                "开启桌面歌词"
+                            })
+                            .accessibility_label("桌面歌词")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let enabled = !this.lyrics_enabled;
+                                this.set_lyrics_enabled(enabled, cx)
+                            })),
                     )
                     .child(
                         // 音量图标按钮：点击静音 / 取消静音（沿用原有语义）。
                         Button::new("player-volume")
                             .ghost()
                             .small()
-                            .icon(gpui_kit::assets::IconName::Volume2)
+                            .text_color(bar_accent)
+                            .icon(if self.muted_volume.is_some() {
+                                gpui_kit::assets::IconName::VolumeX
+                            } else {
+                                gpui_kit::assets::IconName::Volume2
+                            })
                             .tooltip("静音 / 取消静音")
                             .accessibility_label("静音")
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
                     )
                     .child(
                         // 紧凑音量滑块，保留现有 volume_slider / set_volume_percent。
-                        div().w(px(84.0)).h(px(18.0)).flex().items_center().child(
+                        div().w(px(72.0)).h(px(18.0)).flex().items_center().child(
                             Slider::new(
                                 self.volume_slider
                                     .as_ref()
@@ -5787,9 +6017,26 @@ impl MusicApp {
                         ),
                     )
                     .child(
+                        // 播放方式：顺序 / 列表循环 / 随机循环 / 单曲循环。
+                        Button::new("player-mode")
+                            .ghost()
+                            .small()
+                            .text_color(bar_accent)
+                            .icon(match self.playback_mode {
+                                PlaybackMode::SingleLoop => gpui_kit::assets::IconName::Repeat1,
+                                PlaybackMode::Shuffle => gpui_kit::assets::IconName::Shuffle,
+                                PlaybackMode::ListLoop => gpui_kit::assets::IconName::Repeat,
+                                PlaybackMode::Sequence => gpui_kit::assets::IconName::ListOrdered,
+                            })
+                            .tooltip(self.playback_mode.label())
+                            .accessibility_label("播放方式")
+                            .on_click(cx.listener(|this, _, _, cx| this.cycle_playback_mode(cx))),
+                    )
+                    .child(
                         Button::new("player-previous")
                             .ghost()
                             .small()
+                            .text_color(bar_accent)
                             .icon(gpui_kit::assets::IconName::SkipBack)
                             .tooltip("上一首")
                             .accessibility_label("上一首")
@@ -5811,8 +6058,10 @@ impl MusicApp {
                                     .color(p.primary_foreground),
                             )
                             .into_any_element(),
+                        // 播放键沿用 LX 的高亮绿实心圆，而不是主题的黑底。
                         None => Button::new("player-toggle")
-                            .primary()
+                            .bg(bar_accent)
+                            .text_color(p.primary_foreground)
                             .rounded(px(999.0))
                             .icon(if playing {
                                 gpui_kit::assets::IconName::Pause
@@ -5828,6 +6077,7 @@ impl MusicApp {
                         Button::new("player-next")
                             .ghost()
                             .small()
+                            .text_color(bar_accent)
                             .icon(gpui_kit::assets::IconName::SkipForward)
                             .tooltip("下一首")
                             .accessibility_label("下一首")
@@ -6360,6 +6610,22 @@ fn lyric_scroll_position(from: f32, to: f32, progress: f32) -> f32 {
 /// 与桌面歌词共用同一条曲线，避免两处淡出手感不一致。
 fn lyric_emphasis(index: usize, displayed_position: f32) -> f32 {
     crate::lyrics::line_emphasis(index, displayed_position)
+}
+
+/// 随机循环下「下一首」在列表里的下标。
+///
+/// 不引入 rand 依赖：这里只需要「换一首、且不重复当前这首」，所以用自增的
+/// `cursor` 在 `len - 1` 个偏移里取一个，再加 1 保证偏移量不为 0。
+/// 列表只有一首时只能停在原地（否则会越界）。抽成纯函数便于单测边界。
+fn shuffle_next_index(current: usize, len: usize, cursor: u64) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if len == 1 {
+        return current.min(len - 1);
+    }
+    let step = 1 + (cursor % (len as u64 - 1)) as usize;
+    (current + step) % len
 }
 
 /// 推进逐字填充的平滑位置。
@@ -7151,6 +7417,72 @@ mod tests {
         assert_eq!(lyric_emphasis(0, 10.0), 0.0);
         // smoothstep 后中点仍然落在中间，边缘过渡更柔。
         assert!((lyric_emphasis(3, 4.5) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn playback_mode_cycles_through_all_four_states() {
+        // 与 Flutter 端的循环顺序一致：顺序 → 列表循环 → 随机循环 → 单曲循环 → 顺序。
+        assert_eq!(PlaybackMode::Sequence.next(), PlaybackMode::ListLoop);
+        assert_eq!(PlaybackMode::ListLoop.next(), PlaybackMode::Shuffle);
+        assert_eq!(PlaybackMode::Shuffle.next(), PlaybackMode::SingleLoop);
+        assert_eq!(PlaybackMode::SingleLoop.next(), PlaybackMode::Sequence);
+        // 循环一圈必须回到起点，不能漏档或卡住。
+        let mut mode = PlaybackMode::Sequence;
+        for _ in 0..PlaybackMode::ALL.len() {
+            mode = mode.next();
+        }
+        assert_eq!(mode, PlaybackMode::Sequence);
+    }
+
+    #[test]
+    fn playback_mode_defaults_to_sequence() {
+        // 旧 settings.json 没有这个字段时必须是顺序播放。
+        assert_eq!(PlaybackMode::default(), PlaybackMode::Sequence);
+        assert_eq!(PlaybackMode::Sequence.label(), "顺序播放");
+        assert_eq!(PlaybackMode::SingleLoop.label(), "单曲循环");
+    }
+
+    #[test]
+    fn shuffle_never_repeats_the_current_track() {
+        // 随机循环的前提：换一首，不能原地打转。
+        let len = 5;
+        for current in 0..len {
+            for cursor in 0..40u64 {
+                let next = shuffle_next_index(current, len, cursor);
+                assert!(next < len, "下标必须落在列表内");
+                assert_ne!(next, current, "随机不应重复当前这首");
+            }
+            // 不同 cursor 要能覆盖到多个不同的下一首，而不是恒定一个值。
+            let picks: std::collections::HashSet<usize> =
+                (0..40u64).map(|c| shuffle_next_index(current, len, c)).collect();
+            assert!(picks.len() > 1, "随机应当能挑到不止一首");
+        }
+    }
+
+    #[test]
+    fn shuffle_handles_tiny_lists() {
+        // 只有一首时只能停在原地，且不能越界。
+        assert_eq!(shuffle_next_index(0, 1, 0), 0);
+        assert_eq!(shuffle_next_index(0, 1, 999), 0);
+        // 空列表返回 0 而不是 panic。
+        assert_eq!(shuffle_next_index(0, 0, 7), 0);
+        // 两首时永远切到另一首。
+        assert_eq!(shuffle_next_index(0, 2, 0), 1);
+        assert_eq!(shuffle_next_index(1, 2, 3), 0);
+    }
+
+    #[test]
+    fn favorite_toggle_uses_the_favorites_folder() {
+        // 底栏收藏按钮写入的文件夹必须是「爱听的」列表里真实存在的一项，
+        // 否则收藏后不会出现在任何文件夹里。
+        assert!(PLAYLIST_FOLDERS.contains(&FAVORITE_FOLDER));
+
+        let mut saved = Vec::new();
+        let track = Track::local("1", "Slow Light", "file:///slow-light.mp3");
+        assert!(toggle_saved_track(&mut saved, FAVORITE_FOLDER, &track));
+        // 再点一次应是移除，与右键菜单的语义一致。
+        assert!(!toggle_saved_track(&mut saved, FAVORITE_FOLDER, &track));
+        assert!(saved.is_empty());
     }
 
     #[test]
