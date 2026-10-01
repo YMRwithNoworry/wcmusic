@@ -34,6 +34,7 @@ abstract interface class OnlineSearchService {
   Future<List<Track>> search(
     String query, {
     int limit = 30,
+    int page = 1,
     OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   });
   Future<List<PlatformPlaylist>> discoverPlaylists();
@@ -155,19 +156,21 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   Future<List<Track>> search(
     String query, {
     int limit = 30,
+    int page = 1,
     OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   }) async {
     final keyword = query.trim();
     if (keyword.isEmpty) return const [];
+    final pageNumber = page < 1 ? 1 : page;
     return switch (channel) {
-      OnlineSearchChannel.kuwo => _searchKuwo(keyword, limit),
-      OnlineSearchChannel.kugou => _searchKugou(keyword, limit),
-      OnlineSearchChannel.qqMusic => _searchQq(keyword, limit),
-      OnlineSearchChannel.netease => _searchNetease(keyword, limit),
+      OnlineSearchChannel.kuwo => _searchKuwo(keyword, limit, pageNumber),
+      OnlineSearchChannel.kugou => _searchKugou(keyword, limit, pageNumber),
+      OnlineSearchChannel.qqMusic => _searchQq(keyword, limit, pageNumber),
+      OnlineSearchChannel.netease => _searchNetease(keyword, limit, pageNumber),
     };
   }
 
-  Future<List<Track>> _searchKuwo(String keyword, int limit) async {
+  Future<List<Track>> _searchKuwo(String keyword, int limit, int page) async {
     final uri = _kuwoSearchEndpoint.replace(
       queryParameters: {
         ..._kuwoSearchEndpoint.queryParameters,
@@ -175,7 +178,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
         'ft': 'music',
         'itemset': 'web_2013',
         'client': 'kt',
-        'pn': '0',
+        'pn': (page - 1).toString(),
         'rn': limit.clamp(1, 50).toString(),
         'rformat': 'json',
         'encoding': 'utf8',
@@ -216,12 +219,12 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     return tracks;
   }
 
-  Future<List<Track>> _searchKugou(String keyword, int limit) async {
+  Future<List<Track>> _searchKugou(String keyword, int limit, int page) async {
     final uri = _kugouSearchEndpoint.replace(
       queryParameters: {
         ..._kugouSearchEndpoint.queryParameters,
         'keyword': keyword,
-        'page': '1',
+        'page': page.toString(),
         'pagesize': limit.clamp(1, 50).toString(),
         'platform': 'WebFilter',
       },
@@ -259,12 +262,12 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     return tracks;
   }
 
-  Future<List<Track>> _searchQq(String keyword, int limit) async {
+  Future<List<Track>> _searchQq(String keyword, int limit, int page) async {
     final uri = _qqSearchEndpoint.replace(
       queryParameters: {
         ..._qqSearchEndpoint.queryParameters,
         'w': keyword,
-        'p': '1',
+        'p': page.toString(),
         'n': limit.clamp(1, 50).toString(),
         'format': 'json',
         'new_json': '1',
@@ -325,14 +328,18 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     return tracks;
   }
 
-  Future<List<Track>> _searchNetease(String keyword, int limit) async {
+  Future<List<Track>> _searchNetease(
+    String keyword,
+    int limit,
+    int page,
+  ) async {
     final uri = _neteaseSearchEndpoint.replace(
       queryParameters: {
         ..._neteaseSearchEndpoint.queryParameters,
         's': keyword,
         'type': '1',
         'limit': limit.clamp(1, 50).toString(),
-        'offset': '0',
+        'offset': '${(page - 1) * limit.clamp(1, 50)}',
       },
     );
     final decoded = await _getJson(uri);
@@ -683,7 +690,11 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     Set<String> sourceKeys,
   ) async {
     if (!sourceKeys.contains('wy')) return null;
-    final matches = await _searchNetease('${track.title} ${track.artist}', 10);
+    final matches = await _searchNetease(
+      '${track.title} ${track.artist}',
+      10,
+      1,
+    );
     final expectedTitle = _normalized(track.title);
     final expectedArtist = _normalized(track.artist);
     Track? best;

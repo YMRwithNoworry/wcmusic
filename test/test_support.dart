@@ -153,6 +153,7 @@ class FakeOnlineSearchService implements OnlineSearchService {
   Future<List<Track>> search(
     String query, {
     int limit = 30,
+    int page = 1,
     OnlineSearchChannel channel = OnlineSearchChannel.kuwo,
   }) async {
     lastChannel = channel;

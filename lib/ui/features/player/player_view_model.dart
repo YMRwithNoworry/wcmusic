@@ -98,6 +98,8 @@ class PlayerViewModel extends ChangeNotifier {
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
   String onlineQuery = '';
+  int onlineSearchPage = 1;
+  static const int onlineSearchPageSize = 30;
   OnlineSearchChannel onlineSearchChannel = OnlineSearchChannel.kuwo;
   List<Track> onlineResults = const [];
   List<PlatformPlaylist> platformPlaylists = const [];
@@ -930,14 +932,18 @@ class PlayerViewModel extends ChangeNotifier {
     );
   }
 
+  bool get canLoadMoreOnlineResults =>
+      onlineResults.length >= onlineSearchPageSize;
+
   void setQuery(String value) {
     query = value;
     notifyListeners();
   }
 
-  Future<void> searchOnline(String value) async {
+  Future<void> searchOnline(String value, {int page = 1}) async {
     final keyword = value.trim();
     onlineQuery = keyword;
+    onlineSearchPage = page < 1 ? 1 : page;
     final generation = ++_searchGeneration;
     if (keyword.isEmpty) {
       onlineResults = const [];
@@ -953,6 +959,8 @@ class PlayerViewModel extends ChangeNotifier {
     try {
       final results = await onlineSearchService.search(
         keyword,
+        limit: onlineSearchPageSize,
+        page: onlineSearchPage,
         channel: onlineSearchChannel,
       );
       if (generation != _searchGeneration) return;

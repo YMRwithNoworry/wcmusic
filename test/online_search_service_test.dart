@@ -26,11 +26,12 @@ void main() {
       kuwoSearchEndpoint: server.endpoint,
     );
 
-    final tracks = await service.search('  晴天  ', limit: 80);
+    final tracks = await service.search('  晴天  ', limit: 80, page: 2);
     final requestUri = await requestFuture;
 
     expect(requestUri.queryParameters['all'], '晴天');
     expect(requestUri.queryParameters['rn'], '50');
+    expect(requestUri.queryParameters['pn'], '1');
     expect(tracks.single.title, '晴天');
     expect(tracks.single.duration, const Duration(minutes: 4, seconds: 5));
     expect(tracks.single.source, TrackSource.kw);
@@ -58,15 +59,19 @@ void main() {
       },
     });
     addTearDown(() => server.close(force: true));
+    final requestFuture = server.firstRequest;
     final service = MultiSourceOnlineSearchService(
       kugouSearchEndpoint: server.endpoint,
     );
 
     final tracks = await service.search(
       '另一首歌',
+      page: 2,
       channel: OnlineSearchChannel.kugou,
     );
+    final requestUri = await requestFuture;
 
+    expect(requestUri.queryParameters['page'], '2');
     expect(tracks.single.id, 'kg-HASH-9');
     expect(tracks.single.source, TrackSource.kg);
     expect(tracks.single.sourceId, 'HASH-9');
@@ -100,11 +105,13 @@ void main() {
 
     final tracks = await service.search(
       'QQ 歌曲',
+      page: 3,
       channel: OnlineSearchChannel.qqMusic,
     );
     final requestUri = await requestFuture;
 
     expect(requestUri.queryParameters['w'], 'QQ 歌曲');
+    expect(requestUri.queryParameters['p'], '3');
     expect(tracks.single.source, TrackSource.tx);
     expect(tracks.single.sourceId, 'MID-7');
     expect(tracks.single.artist, 'QQ 歌手');
@@ -117,15 +124,20 @@ void main() {
       },
     });
     addTearDown(() => server.close(force: true));
+    final requestFuture = server.firstRequest;
     final service = MultiSourceOnlineSearchService(
       neteaseSearchEndpoint: server.endpoint,
     );
 
     final tracks = await service.search(
       '网易歌曲',
+      limit: 10,
+      page: 2,
       channel: OnlineSearchChannel.netease,
     );
+    final requestUri = await requestFuture;
 
+    expect(requestUri.queryParameters['offset'], '10');
     expect(tracks.single.source, TrackSource.wy);
     expect(tracks.single.sourceId, '123');
     expect(tracks.single.album, '网易专辑');

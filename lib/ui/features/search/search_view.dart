@@ -32,7 +32,7 @@ class _SearchViewState extends State<SearchView> {
       title: '在线搜索',
       subtitle: viewModel.onlineQuery.isEmpty
           ? '寻找歌曲、艺术家与专辑'
-          : '${viewModel.onlineResults.length} 条结果 · ${viewModel.onlineSearchChannel.label}',
+          : '${viewModel.onlineResults.length} 条结果 · ${viewModel.onlineSearchChannel.label} · 第 ${viewModel.onlineSearchPage} 页',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -109,6 +109,15 @@ class _SearchViewState extends State<SearchView> {
       );
     }
     if (viewModel.onlineResults.isEmpty) {
+      if (viewModel.onlineSearchPage > 1) {
+        return Column(
+          key: ValueKey('empty-page-${viewModel.onlineSearchPage}'),
+          children: [
+            const _SearchStatus(icon: Icons.search_off, title: '这一页没有更多歌曲'),
+            _SearchPagination(viewModel: viewModel),
+          ],
+        );
+      }
       return const _SearchStatus(
         key: ValueKey('empty'),
         icon: Icons.search_off,
@@ -116,11 +125,56 @@ class _SearchViewState extends State<SearchView> {
       );
     }
     return Column(
-      key: ValueKey('results-${viewModel.onlineQuery}'),
+      key: ValueKey(
+        'results-${viewModel.onlineQuery}-${viewModel.onlineSearchPage}',
+      ),
       children: [
         for (final track in viewModel.onlineResults)
           _OnlineTrackRow(track: track),
+        _SearchPagination(viewModel: viewModel),
       ],
+    );
+  }
+}
+
+class _SearchPagination extends StatelessWidget {
+  const _SearchPagination({required this.viewModel});
+
+  final PlayerViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final loading = viewModel.isSearchingOnline;
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton.filledTonal(
+            onPressed: loading || viewModel.onlineSearchPage <= 1
+                ? null
+                : () => viewModel.searchOnline(
+                    viewModel.onlineQuery,
+                    page: viewModel.onlineSearchPage - 1,
+                  ),
+            icon: const Icon(Icons.chevron_left),
+            tooltip: '上一页',
+          ),
+          const SizedBox(width: 12),
+          Text('第 ${viewModel.onlineSearchPage} 页'),
+          const SizedBox(width: 12),
+          IconButton.filledTonal(
+            onPressed: loading || !viewModel.canLoadMoreOnlineResults
+                ? null
+                : () => viewModel.searchOnline(
+                    viewModel.onlineQuery,
+                    page: viewModel.onlineSearchPage + 1,
+                  ),
+            icon: const Icon(Icons.chevron_right),
+            tooltip: '下一页',
+          ),
+        ],
+      ),
     );
   }
 }
