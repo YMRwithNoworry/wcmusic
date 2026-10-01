@@ -19,8 +19,9 @@ use std::cell::RefCell;
 
 use gpui_kit::{
     AnyElement, App, Bounds, DispatchPhase, Div, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, Styled, StyleRefinement, Window, px,
+    InspectorElementId, IntoElement, LayoutId, Overflow, ParentElement, Pixels, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, px,
 };
 
 /// Time constant of the exponential approach.
@@ -59,7 +60,13 @@ fn approach_fraction(dt_seconds: f32, tau_seconds: f32) -> f32 {
 /// overshoot), never moves away from the target, and equals `target` exactly
 /// once the remaining distance is below `settle`.
 pub fn smooth_scroll_step(current: f32, target: f32, dt_seconds: f32) -> f32 {
-    smooth_scroll_step_with(current, target, dt_seconds, SMOOTH_SCROLL_TAU, SMOOTH_SCROLL_SETTLE)
+    smooth_scroll_step_with(
+        current,
+        target,
+        dt_seconds,
+        SMOOTH_SCROLL_TAU,
+        SMOOTH_SCROLL_SETTLE,
+    )
 }
 
 fn smooth_scroll_step_with(
@@ -92,7 +99,11 @@ pub fn smooth_scroll_target(current: f32, delta: f32, max_offset: f32) -> f32 {
     if !delta.is_finite() || !current.is_finite() {
         return current;
     }
-    let max = if max_offset.is_finite() { max_offset.max(0.0) } else { 0.0 };
+    let max = if max_offset.is_finite() {
+        max_offset.max(0.0)
+    } else {
+        0.0
+    };
     (current + delta).clamp(-max, 0.0)
 }
 
@@ -141,12 +152,27 @@ impl SmoothScrollState {
         self.animating = true;
     }
 
-    /// Add `delta` pixels (positive scrolls the view down) on top of the
-    /// pending target, clamped to the scrollable range.
-    pub fn scroll_by(&mut self, delta: f32) {
+    /// 按像素累计滚轮位移；负值向下浏览内容，正值返回顶部。
+    pub fn scroll_by(&mut self, delta: f32) -> bool {
         let current = self.handle.offset().y.as_f32();
         let max = self.handle.max_offset().y.as_f32();
-        self.set_target(smooth_scroll_target(current, delta, max));
+        self.scroll_by_in_range(current, delta, max)
+    }
+
+    fn scroll_by_in_range(&mut self, current: f32, delta: f32, max: f32) -> bool {
+        if !current.is_finite() || !delta.is_finite() || !max.is_finite() || max <= 0.0 {
+            return false;
+        }
+        // 连续刻度累计到尚未到达的目标；外部滚动则从实际位置重新开始。
+        let pending =
+            self.animating && (!self.sampled.is_finite() || (self.sampled - current).abs() <= 0.5);
+        let base = if pending { self.target } else { current };
+        let target = smooth_scroll_target(base, delta, max);
+        if target == base {
+            return false;
+        }
+        self.set_target(target);
+        true
     }
 
     pub fn offset(&self) -> f32 {
@@ -175,6 +201,12 @@ pub fn advance_smooth_scroll(scrolls: &[Rc<RefCell<SmoothScrollState>>], dt_seco
     for state in scrolls {
         let mut state = state.borrow_mut();
         let actual = state.offset();
+        if !state.animating {
+            // 触控板走原生滚动路径，空闲的缓动状态不能覆盖它的位置。
+            state.target = actual;
+            state.sampled = actual;
+            continue;
+        }
         let max = state.max_offset().max(0.0);
         // The only writer of `sampled` is this function, and it writes the
         // exact `f32` it handed to the handle, so a real divergence means
@@ -228,6 +260,7 @@ impl IntoElement for SmoothScrollDiv {
 
 impl SmoothScrollDiv {
     pub fn new(inner: Stateful<Div>, state: &Rc<RefCell<SmoothScrollState>>) -> Self {
+        let inner = inner.track_scroll(&state.borrow().handle);
         let wheel_state = state.clone();
         let on_wheel: Rc<dyn Fn(&ScrollWheelEvent, &mut Window, &mut App)> =
             Rc::new(move |event, window, cx| {
@@ -240,10 +273,11 @@ impl SmoothScrollDiv {
                 if !delta.is_finite() || delta == 0.0 {
                     return;
                 }
-                wheel_state.borrow_mut().scroll_by(delta);
-                // `Render::render` turns this into a `request_animation_frame`
-                // on the next frame; see `SmoothScrollState::request_frame`.
-                // Consume the event so gpui's immediate scroll never runs.
+                if !wheel_state.borrow_mut().scroll_by(delta) {
+                    return;
+                }
+                // 先触发重绘，再由 Render 在安全的视图上下文中请求动画帧。
+                window.refresh();
                 cx.stop_propagation();
             });
         Self { inner, on_wheel }
@@ -307,8 +341,19 @@ impl Element for SmoothScrollDiv {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.inner
-            .paint(id, inspector_id, bounds, request_layout, prepaint, window, cx);
+        self.inner.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
+
+        if self.inner.style().overflow.y != Some(Overflow::Scroll) {
+            return;
+        }
 
         // Registering the listener in the capture phase is what lets us replace
         // the immediate jump with an animation: gpui applies wheel deltas in a
@@ -342,11 +387,20 @@ mod tests {
         let mut previous = current;
         for _ in 0..120 {
             let next = smooth_scroll_step(previous, target, 1.0 / 60.0);
-            assert!(next <= previous + 1e-5, "step moved backwards: {previous} -> {next}");
-            assert!(next >= target - 1e-4, "step overshot the target: {next} < {target}");
+            assert!(
+                next <= previous + 1e-5,
+                "step moved backwards: {previous} -> {next}"
+            );
+            assert!(
+                next >= target - 1e-4,
+                "step overshot the target: {next} < {target}"
+            );
             previous = next;
         }
-        assert_eq!(previous, target, "animation must settle exactly on the target");
+        assert_eq!(
+            previous, target,
+            "animation must settle exactly on the target"
+        );
     }
 
     #[test]
@@ -400,6 +454,52 @@ mod tests {
         assert_eq!(target, -159.0);
     }
 
+    #[test]
+    fn wheel_state_accumulates_notches_before_the_next_frame() {
+        let mut state = SmoothScrollState::new();
+        for _ in 0..3 {
+            assert!(state.scroll_by_in_range(0.0, -53.0, 1000.0));
+        }
+        assert_eq!(state.target, -159.0);
+        assert!(state.scroll_by_in_range(-20.0, 53.0, 1000.0));
+        assert_eq!(state.target, -106.0);
+    }
+
+    #[test]
+    fn wheel_at_boundaries_or_without_overflow_does_not_start_animation() {
+        let mut state = SmoothScrollState::new();
+        assert!(!state.scroll_by(-100.0));
+        assert!(!state.scroll_by_in_range(0.0, 100.0, 500.0));
+        assert!(!state.scroll_by_in_range(-500.0, -100.0, 500.0));
+        assert!(!state.scroll_by_in_range(0.0, 0.0, 500.0));
+        assert!(!state.scroll_by_in_range(0.0, f32::NAN, 500.0));
+        assert!(!state.scroll_by_in_range(0.0, -100.0, f32::INFINITY));
+        assert!(!state.take_frame_request());
+    }
+
+    #[test]
+    fn wheel_after_an_external_move_uses_the_actual_offset() {
+        let mut state = SmoothScrollState::new();
+        state.target = -300.0;
+        state.sampled = -100.0;
+        state.animating = true;
+        assert!(state.scroll_by_in_range(-200.0, -50.0, 500.0));
+        assert_eq!(state.target, -250.0);
+    }
+
+    #[test]
+    fn idle_animation_preserves_native_pixel_scrolling() {
+        let state = Rc::new(RefCell::new(SmoothScrollState::new()));
+        state
+            .borrow()
+            .handle
+            .set_offset(gpui_kit::point(px(0.0), px(-0.25)));
+        assert!(!advance_smooth_scroll(&[state.clone()], 1.0 / 60.0));
+        assert_eq!(state.borrow().offset(), -0.25);
+        assert_eq!(state.borrow().target, -0.25);
+        assert!(!state.borrow().animating);
+    }
+
     /// A wheel event asks for a frame, and the request is consumed exactly
     /// once so the frame clock can stop when nothing is moving.
     #[test]
@@ -410,7 +510,7 @@ mod tests {
         assert!(!state.take_frame_request());
         assert!(state.sampled.is_infinite());
 
-        state.scroll_by(-100.0);
+        assert!(state.scroll_by_in_range(0.0, -100.0, 500.0));
         assert!(state.request_frame);
         assert!(state.animating);
 
@@ -459,7 +559,10 @@ mod tests {
         advance_smooth_scroll(&scrolls, 1.0 / 60.0);
 
         let state = state.borrow();
-        assert!(!state.animating, "animation must yield to the external move");
+        assert!(
+            !state.animating,
+            "animation must yield to the external move"
+        );
         assert_eq!(state.target, 0.0);
         assert_eq!(state.sampled, 0.0);
     }
