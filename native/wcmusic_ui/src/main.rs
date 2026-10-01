@@ -23,7 +23,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
-    ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
+    ActiveTheme, Icon, IconName, Root, Selectable as _, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, Div, Entity, Hsla,
@@ -6016,6 +6016,7 @@ impl MusicApp {
                     .child(
                         // LRC：开关桌面歌词，等价于托盘里的「桌面歌词」开关。
                         Button::new("player-lyrics")
+                            .selected(self.lyrics_enabled)
                             // 开启时用高亮绿实心块，关闭时是普通文字按钮，
                             // 一眼能看出桌面歌词是开还是关。
                             .when(self.lyrics_enabled, |this| {
