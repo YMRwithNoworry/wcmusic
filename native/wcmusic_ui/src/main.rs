@@ -10,6 +10,7 @@ mod settings;
 mod smooth_scroll;
 mod tray;
 mod ui_busy;
+mod ui_theme;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -127,9 +128,9 @@ const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播�
 /// 底栏收藏按钮写入的文件夹，必须是 `PLAYLIST_FOLDERS` 里的一项。
 const FAVORITE_FOLDER: &str = "我的收藏";
 /// 此刻页「平台热门歌单」里每张卡片的宽度与封面高度（逻辑像素）。
-const PLAYLIST_CARD_WIDTH: f32 = 200.0;
-const PLAYLIST_COVER_WIDTH: f32 = 180.0;
-const PLAYLIST_COVER_HEIGHT: f32 = 140.0;
+const PLAYLIST_CARD_WIDTH: f32 = 184.0;
+const PLAYLIST_COVER_WIDTH: f32 = 176.0;
+const PLAYLIST_COVER_HEIGHT: f32 = 176.0;
 /// 列表载入时最多预热的封面条目数。
 ///
 /// 之前给整张列表都下封面：载入 100 首的榜单实测常驻内存多出约 23 MB
@@ -3302,8 +3303,26 @@ impl MusicApp {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
-        let mut nav = v_flex().gap_1().mt(px(28.0));
+        let mut nav = v_flex().gap_1().mt(px(30.0)).child(
+            div()
+                .px(px(12.0))
+                .pb(px(8.0))
+                .text_xs()
+                .text_color(p.muted)
+                .child("音乐"),
+        );
         for tab in Tab::ALL {
+            if tab == Tab::Sources {
+                nav = nav.child(
+                    div()
+                        .mt(px(20.0))
+                        .mb(px(6.0))
+                        .px(px(12.0))
+                        .text_xs()
+                        .text_color(p.muted)
+                        .child("管理"),
+                );
+            }
             let selected = self.active_tab == tab;
             let color = if selected {
                 p.sidebar_accent_foreground
@@ -3317,8 +3336,8 @@ impl MusicApp {
                     .items_center()
                     .gap_3()
                     .w_full()
-                    .px(px(12.0))
-                    .py(px(10.0))
+                    .h(px(44.0))
+                    .px(px(10.0))
                     .rounded_lg()
                     .bg(if selected {
                         p.sidebar_accent
@@ -3349,9 +3368,10 @@ impl MusicApp {
             );
         }
         v_flex()
-            .w(px(232.0))
+            .w(px(212.0))
+            .flex_shrink_0()
             .h_full()
-            .p(px(18.0))
+            .p(px(16.0))
             .bg(p.sidebar)
             .border_r_1()
             .border_color(p.sidebar_border)
@@ -3364,10 +3384,10 @@ impl MusicApp {
                     .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Home, cx)))
                     .child(
                         div()
-                            .size(px(42.0))
+                            .size(px(36.0))
                             .rounded_lg()
                             .overflow_hidden()
-                            .child(img(BRAND_ICON_PATH).size(px(42.0))),
+                            .child(img(BRAND_ICON_PATH).size(px(36.0))),
                     )
                     .child(
                         div()
@@ -3400,7 +3420,7 @@ impl MusicApp {
                         div()
                             .text_xs()
                             .text_color(p.muted)
-                            .child("GPUI KIT · DESKTOP"),
+                            .child(format!("桌面端 · v{}", env!("CARGO_PKG_VERSION"))),
                     ),
             )
     }
@@ -3448,7 +3468,7 @@ impl MusicApp {
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        let artwork = track_artwork_sized(row, 300.0, p);
+        let artwork = track_artwork_sized(row, 280.0, p);
 
         div()
             .size_full()
@@ -3466,11 +3486,27 @@ impl MusicApp {
             .gap_10()
             .child(
                 div()
-                    .w(px(320.0))
+                    .w(px(280.0))
                     .flex_shrink_0()
                     .flex()
                     .flex_col()
                     .gap_4()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(playback_indicator(self.is_playing, self.elapsed_ms, p))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(p.muted)
+                                    .child(if self.is_playing {
+                                        "正在播放"
+                                    } else {
+                                        "已暂停"
+                                    }),
+                            ),
+                    )
                     .child(
                         // 再点一次封面即可退出专享模式。
                         div()
@@ -3479,9 +3515,19 @@ impl MusicApp {
                             .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
                             .child(artwork),
                     )
-                    .child(now_playing_info("歌曲名", title, p))
-                    .child(now_playing_info("艺术家", artist, p))
-                    .child(now_playing_info("专辑名", album, p)),
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(23.0))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(p.foreground)
+                                    .child(title),
+                            )
+                            .child(div().text_sm().text_color(p.muted).child(artist))
+                            .child(div().text_xs().text_color(p.muted).child(album)),
+                    ),
             )
             .child(
                 div()
@@ -3733,45 +3779,64 @@ impl MusicApp {
 
     fn home_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
-        let now_playing = self
-            .current_row()
-            .map(|row| row.title.clone())
-            .unwrap_or_else(|| "还没有正在播放的歌曲".into());
-        div().flex().flex_col().gap_5().child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p(px(26.0))
-                .rounded_lg()
-                .bg(p.primary)
-                .text_color(p.primary_foreground)
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(p.primary_foreground)
-                        .child("今日推荐"),
-                )
-                .child(
-                    div()
-                        .text_2xl()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("让音乐回到此刻"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(p.primary_foreground)
-                        .child(now_playing),
-                )
-                .child(
-                    Button::new("browse-rankings")
-                        .secondary()
-                        .label("浏览榜单")
-                        .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Rankings, cx))),
-                ),
-        )
-        .child(self.home_playlists_section(cx))
+        let row = self.current_row();
+        let subtitle = row
+            .map(|row| format!("{} · {}", row.title, row.artist))
+            .unwrap_or_else(|| "发现新的声音，也重逢那些熟悉的旋律".to_owned());
+        let mut actions = h_flex().items_center().gap_2();
+        if row.is_some() {
+            actions = actions.child(
+                Button::new("home-now-playing")
+                    .primary()
+                    .icon(if self.is_playing {
+                        gpui_kit::assets::IconName::AudioLines
+                    } else {
+                        gpui_kit::assets::IconName::Play
+                    })
+                    .label("正在播放")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_now_playing(cx))),
+            );
+        }
+        actions = actions.child(
+            Button::new("browse-rankings")
+                .ghost()
+                .icon(gpui_kit::assets::IconName::ArrowUpRight)
+                .label("浏览榜单")
+                .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Rankings, cx))),
+        );
+        v_flex()
+            .gap(px(28.0))
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .flex_wrap()
+                    .gap_4()
+                    .pb(px(22.0))
+                    .border_b_1()
+                    .border_color(p.border)
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(p.muted)
+                                    .child("WCMusic / 每日发现"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(30.0))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(p.foreground)
+                                    .child("此刻，听见喜欢"),
+                            )
+                            .child(div().text_sm().text_color(p.muted).child(subtitle)),
+                    )
+                    .child(actions),
+            )
+            .child(self.home_playlists_section(cx))
     }
 
     /// 此刻页的平台歌单区域：未打开详情时是渠道 + 网格，打开后是详情。
@@ -3801,19 +3866,19 @@ impl MusicApp {
                             .text_color(p.foreground)
                             .child("平台热门歌单"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(p.muted)
-                            .child("收藏喜欢的歌单，下次直接从「我的收藏」进入"),
-                    ),
+                    .child(div().text_xs().text_color(p.muted).child(format!(
+                        "{} · {} 张歌单",
+                        self.home_playlists_channel.label(),
+                        self.home_playlists.len()
+                    ))),
             )
             .child(
                 Button::new("home-playlists-refresh")
-                    .secondary()
+                    .ghost()
                     .small()
                     .icon(IconName::RotateCw)
-                    .label("刷新")
+                    .tooltip("刷新热门歌单")
+                    .accessibility_label("刷新热门歌单")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_home_playlists(cx))),
             );
 
@@ -3828,21 +3893,13 @@ impl MusicApp {
             } else {
                 button.secondary()
             };
-            chips = chips.child(button.on_click(cx.listener(
-                move |this, _, _, cx| this.select_home_playlists_channel(channel, cx),
-            )));
+            chips =
+                chips.child(button.on_click(cx.listener(move |this, _, _, cx| {
+                    this.select_home_playlists_channel(channel, cx)
+                })));
         }
 
-        let mut section = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p(px(18.0))
-            .rounded_lg()
-            .bg(p.surface)
-            .border_1()
-            .border_color(p.border)
-            .child(header);
+        let mut section = div().flex().flex_col().gap_4().child(header);
 
         if !self.saved_playlists.is_empty() {
             section = section.child(self.saved_playlists_row(cx));
@@ -3931,11 +3988,9 @@ impl MusicApp {
             .flex()
             .flex_col()
             .gap_2()
-            .p(px(10.0))
+            .p(px(4.0))
+            .pb(px(8.0))
             .rounded_lg()
-            .bg(p.surface)
-            .border_1()
-            .border_color(p.border)
             .cursor_pointer()
             .hover(|style| style.bg(p.surface_hover))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -3968,7 +4023,11 @@ impl MusicApp {
                         .px(px(8.0))
                         .py(px(4.0))
                         .rounded_md()
-                        .bg(if saved { p.primary.opacity(0.16) } else { p.track })
+                        .bg(if saved {
+                            p.primary.opacity(0.16)
+                        } else {
+                            p.track
+                        })
                         .cursor_pointer()
                         .hover(|style| style.bg(p.accent))
                         // 收藏是卡片里的独立按钮：吞掉按下事件，避免同时打开歌单详情。
@@ -3987,7 +4046,11 @@ impl MusicApp {
                                 IconName::HeartOff
                             })
                             .size(px(13.0))
-                            .text_color(if saved { p.primary } else { p.muted }),
+                            .text_color(if saved {
+                                p.primary
+                            } else {
+                                p.muted
+                            }),
                         )
                         .child(
                             div()
@@ -5938,9 +6001,7 @@ impl MusicApp {
             .map(|line| line.text.clone())
             .filter(|line| !line.trim().is_empty());
         let subtitle: SharedString = match (fetching.as_ref(), current_lyric) {
-            (Some(fetching), _) => {
-                format!("获取中：正在通过{}解析整曲…", fetching.source).into()
-            }
+            (Some(fetching), _) => format!("获取中：正在通过{}解析整曲…", fetching.source).into(),
             (None, Some(lyric)) => lyric.into(),
             (None, None) => artist.into(),
         };
@@ -5949,21 +6010,20 @@ impl MusicApp {
             .filter(|duration_ms| *duration_ms > 0)
             .map(|duration_ms| format!(" / {}", format_playback_time(duration_ms)))
             .unwrap_or_else(|| " / --:--".to_owned());
-        // 底栏高亮色：与专享模式歌词、LX Music 底栏同为那一支绿色。
-        let bar_accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
+        let bar_accent = p.primary;
         // 底栏收藏按钮的状态：当前歌曲是否已在「我的收藏」里。
         let is_favorite = row.is_some_and(|row| {
             self.saved_tracks
                 .iter()
                 .any(|saved| saved.matches(FAVORITE_FOLDER, &row.track))
         });
-        // LX Music 风格底栏：左侧信息 | 中间进度条 | 右侧时间 + 图标按钮。
-        // 图标用 gpui-kit 资源库里的 Lucide 名字（SkipBack / SkipForward /
-        // Volume2 / FileMusic），组件默认图标集里没有这几个，所以走 assets 目录。
+        // 进度独立成行，次要工具保持中性色，绿色留给播放与启用状态。
         div()
             .w_full()
-            .mt(px(18.0))
-            .pt(px(14.0))
+            .flex_shrink_0()
+            .px(px(24.0))
+            .py(px(12.0))
+            .bg(p.surface)
             .border_t_1()
             .border_color(p.border)
             .relative()
@@ -5977,290 +6037,319 @@ impl MusicApp {
                 }),
             )
             .flex()
-            .items_center()
-            .gap_4()
+            .flex_col()
+            .gap_2()
             .child(
-                // 左侧：封面（点击进入 / 退出专享模式）+ 标题 + 副标题。
                 h_flex()
-                    .flex_shrink_0()
+                    .w_full()
                     .items_center()
                     .gap_3()
                     .child(
                         div()
-                            .id("now-playing-artwork")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_now_playing(cx)))
-                            .child(artwork),
+                            .w(px(40.0))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(format_playback_time(self.elapsed_ms)),
                     )
                     .child(
                         div()
-                            .w(px(180.0))
+                            .flex_1()
                             .min_w_0()
+                            .h(px(14.0))
                             .flex()
-                            .flex_col()
-                            .gap(px(2.0))
+                            .items_center()
                             .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .max_w(px(140.0))
-                                            .overflow_hidden()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(p.foreground)
-                                            .child(title),
-                                    )
-                                    .when_some(fetching.clone(), |this, fetching| {
-                                        this.child(fetching_badge(
-                                            format!("获取中 · {}", fetching.source),
-                                            p,
-                                        ))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .overflow_hidden()
-                                    .text_xs()
-                                    .text_color(if fetching.is_some() {
-                                        p.primary
-                                    } else {
-                                        p.muted
-                                    })
-                                    .child(subtitle),
+                                Slider::new(
+                                    self.progress_slider
+                                        .as_ref()
+                                        .expect("progress slider initialized"),
+                                )
+                                .w_full(),
                             ),
+                    )
+                    .child(
+                        div()
+                            .w(px(44.0))
+                            .flex_shrink_0()
+                            .text_right()
+                            .text_xs()
+                            .text_color(p.muted)
+                            .child(duration_text.trim_start_matches(" / ").to_owned()),
                     ),
             )
             .child(
-                // 中间留白：LX Music 的底栏把进度线放在时间正下方，中间不铺控件。
-                div().flex_1().min_w_0(),
-            )
-            .child(
-                // 右侧：时间 + 进度线，然后是 收藏 / LRC / 音量 / 播放方式 / 传输控制。
-                //
-                // 这一组统一用应用的高亮绿（与专享模式歌词同一支），对应 LX Music
-                // 底栏那一片绿色图标；未播放时压暗，播放中才点亮。
                 h_flex()
-                    .flex_shrink_0()
+                    .w_full()
                     .items_center()
+                    .justify_between()
+                    .flex_wrap()
                     .gap_3()
-                    .when(row.is_some(), |this| this.text_color(bar_accent))
                     .child(
-                        // 时间与进度线同宽叠放：进度线正好落在时间文本下方，
-                        // 与 LX Music 底栏一致（而不是横跨整个底栏的长条）。
-                        v_flex()
-                            .flex_shrink_0()
+                        // 左侧：封面（点击进入 / 退出专享模式）+ 标题 + 副标题。
+                        h_flex()
+                            .flex_1()
+                            .min_w(px(210.0))
                             .items_center()
-                            .gap(px(2.0))
+                            .gap_3()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(if playing { bar_accent } else { p.muted })
-                                    .child(format!(
-                                        "{}{}",
-                                        format_playback_time(self.elapsed_ms),
-                                        duration_text
-                                    )),
-                            )
-                            .child(
-                                div().w(px(96.0)).h(px(10.0)).flex().items_center().child(
-                                    Slider::new(
-                                        self.progress_slider
-                                            .as_ref()
-                                            .expect("progress slider initialized"),
+                                    .id("now-playing-artwork")
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_now_playing(cx)),
                                     )
-                                    .w_full(),
-                                ),
-                            ),
-                    )
-                    .child(
-                        // 收藏：把当前歌曲加入 / 移出「我的收藏」，与右键菜单同一套数据。
-                        Button::new("player-favorite")
-                            .ghost()
-                            .small()
-                            .text_color(bar_accent)
-                            .icon(if is_favorite {
-                                gpui_kit::assets::IconName::Heart
-                            } else {
-                                gpui_kit::assets::IconName::HeartOff
-                            })
-                            .tooltip(if is_favorite {
-                                "从「我的收藏」移除"
-                            } else {
-                                "添加到「我的收藏」"
-                            })
-                            .accessibility_label("收藏")
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_current_favorite(cx))),
-                    )
-                    .child(
-                        // LRC：开关桌面歌词，等价于托盘里的「桌面歌词」开关。
-                        Button::new("player-lyrics")
-                            .selected(self.lyrics_enabled)
-                            // 开启时用高亮绿实心块，关闭时是普通文字按钮，
-                            // 一眼能看出桌面歌词是开还是关。
-                            .when(self.lyrics_enabled, |this| {
-                                this.bg(bar_accent).text_color(p.primary_foreground)
-                            })
-                            .when(!self.lyrics_enabled, |this| {
-                                this.ghost().text_color(p.muted)
-                            })
-                            .small()
-                            .label("LRC")
-                            .tooltip(if self.lyrics_enabled {
-                                "关闭桌面歌词"
-                            } else {
-                                "开启桌面歌词"
-                            })
-                            .accessibility_label("桌面歌词")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let enabled = !this.lyrics_enabled;
-                                this.set_lyrics_enabled(enabled, cx)
-                            })),
-                    )
-                    .child(
-                        // 音量图标按钮：点击静音 / 取消静音（沿用原有语义）。
-                        Button::new("player-volume")
-                            .ghost()
-                            .small()
-                            .text_color(bar_accent)
-                            .icon(if self.muted_volume.is_some() {
-                                gpui_kit::assets::IconName::VolumeX
-                            } else {
-                                gpui_kit::assets::IconName::Volume2
-                            })
-                            .tooltip("静音 / 取消静音")
-                            .accessibility_label("静音")
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
-                    )
-                    .child(
-                        // 紧凑音量滑块，保留现有 volume_slider / set_volume_percent。
-                        div().w(px(72.0)).h(px(18.0)).flex().items_center().child(
-                            Slider::new(
-                                self.volume_slider
-                                    .as_ref()
-                                    .expect("volume slider initialized"),
+                                    .child(artwork),
                             )
-                            .w_full(),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .relative()
-                            .when(self.show_now_playing, |this| {
-                                this.child(self.spatial_audio_panel(cx))
-                            })
                             .child(
                                 div()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|_, _: &MouseDownEvent, _, cx| {
-                                            cx.stop_propagation()
-                                        }),
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.0))
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(p.foreground)
+                                                    .child(title),
+                                            )
+                                            .child(playback_indicator(playing, self.elapsed_ms, p)),
                                     )
                                     .child(
-                                        Button::new("player-spatial-audio")
-                                            .selected(
-                                                self.effects_panel_open
-                                                    || self.spatial_audio_enabled,
-                                            )
-                                            .when(
-                                                self.effects_panel_open
-                                                    || self.spatial_audio_enabled,
-                                                |this| {
-                                                    this.bg(bar_accent)
-                                                        .text_color(p.primary_foreground)
-                                                },
-                                            )
-                                            .when(
-                                                !self.effects_panel_open
-                                                    && !self.spatial_audio_enabled,
-                                                |this| this.ghost().text_color(p.muted),
-                                            )
-                                            .small()
-                                            .icon(gpui_kit::assets::IconName::AudioLines)
-                                            .tooltip(if self.effects_panel_open {
-                                                "关闭空间音效设置"
-                                            } else if self.spatial_audio_enabled {
-                                                "空间音效设置（已开启）"
+                                        div()
+                                            .w_full()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(if fetching.is_some() {
+                                                p.primary
                                             } else {
-                                                "空间音效设置（已关闭）"
+                                                p.muted
                                             })
-                                            .accessibility_label("空间音效")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.effects_panel_open = !this.effects_panel_open;
-                                                cx.notify();
-                                            })),
+                                            .child(subtitle),
                                     ),
                             ),
                     )
                     .child(
-                        // 播放方式：顺序 / 列表循环 / 随机循环 / 单曲循环。
-                        Button::new("player-mode")
-                            .ghost()
-                            .small()
-                            .text_color(bar_accent)
-                            .icon(match self.playback_mode {
-                                PlaybackMode::SingleLoop => gpui_kit::assets::IconName::Repeat1,
-                                PlaybackMode::Shuffle => gpui_kit::assets::IconName::Shuffle,
-                                PlaybackMode::ListLoop => gpui_kit::assets::IconName::Repeat,
-                                PlaybackMode::Sequence => gpui_kit::assets::IconName::ListOrdered,
-                            })
-                            .tooltip(self.playback_mode.label())
-                            .accessibility_label("播放方式")
-                            .on_click(cx.listener(|this, _, _, cx| this.cycle_playback_mode(cx))),
-                    )
-                    .child(
-                        Button::new("player-previous")
-                            .ghost()
-                            .small()
-                            .text_color(bar_accent)
-                            .icon(gpui_kit::assets::IconName::SkipBack)
-                            .tooltip("上一首")
-                            .accessibility_label("上一首")
-                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(-1, cx))),
-                    )
-                    .child(match fetching.clone() {
-                        // 获取中：把播放键换成转圈，明确告诉用户正在取歌。
-                        Some(_) => div()
-                            .size(px(32.0))
+                        h_flex()
                             .flex_shrink_0()
-                            .rounded(px(999.0))
-                            .bg(p.primary)
-                            .flex()
                             .items_center()
-                            .justify_center()
+                            .gap(px(6.0))
                             .child(
-                                Spinner::new()
-                                    .with_size(px(16.0))
-                                    .color(p.primary_foreground),
+                                // 收藏：把当前歌曲加入 / 移出「我的收藏」，与右键菜单同一套数据。
+                                Button::new("player-favorite")
+                                    .ghost()
+                                    .small()
+                                    .text_color(if is_favorite { bar_accent } else { p.muted })
+                                    .icon(if is_favorite {
+                                        gpui_kit::assets::IconName::Heart
+                                    } else {
+                                        gpui_kit::assets::IconName::HeartOff
+                                    })
+                                    .tooltip(if is_favorite {
+                                        "从「我的收藏」移除"
+                                    } else {
+                                        "添加到「我的收藏」"
+                                    })
+                                    .accessibility_label("收藏")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.toggle_current_favorite(cx)
+                                    })),
                             )
-                            .into_any_element(),
-                        // 播放键沿用 LX 的高亮绿实心圆，而不是主题的黑底。
-                        None => Button::new("player-toggle")
-                            .bg(bar_accent)
-                            .text_color(p.primary_foreground)
-                            .rounded(px(999.0))
-                            .icon(if playing {
-                                gpui_kit::assets::IconName::Pause
-                            } else {
-                                gpui_kit::assets::IconName::Play
+                            .child(
+                                // LRC：开关桌面歌词，等价于托盘里的「桌面歌词」开关。
+                                Button::new("player-lyrics")
+                                    .selected(self.lyrics_enabled)
+                                    // 开启时用高亮绿实心块，关闭时是普通文字按钮，
+                                    // 一眼能看出桌面歌词是开还是关。
+                                    .when(self.lyrics_enabled, |this| {
+                                        this.bg(bar_accent).text_color(p.primary_foreground)
+                                    })
+                                    .when(!self.lyrics_enabled, |this| {
+                                        this.ghost().text_color(p.muted)
+                                    })
+                                    .small()
+                                    .icon(gpui_kit::assets::IconName::Captions)
+                                    .tooltip(if self.lyrics_enabled {
+                                        "关闭桌面歌词"
+                                    } else {
+                                        "开启桌面歌词"
+                                    })
+                                    .accessibility_label("桌面歌词")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let enabled = !this.lyrics_enabled;
+                                        this.set_lyrics_enabled(enabled, cx)
+                                    })),
+                            )
+                            .child(
+                                // 音量图标按钮：点击静音 / 取消静音（沿用原有语义）。
+                                Button::new("player-volume")
+                                    .ghost()
+                                    .small()
+                                    .text_color(p.muted)
+                                    .icon(if self.muted_volume.is_some() {
+                                        gpui_kit::assets::IconName::VolumeX
+                                    } else {
+                                        gpui_kit::assets::IconName::Volume2
+                                    })
+                                    .tooltip("静音 / 取消静音")
+                                    .accessibility_label("静音")
+                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
+                            )
+                            .child(
+                                // 紧凑音量滑块，保留现有 volume_slider / set_volume_percent。
+                                div().w(px(72.0)).h(px(18.0)).flex().items_center().child(
+                                    Slider::new(
+                                        self.volume_slider
+                                            .as_ref()
+                                            .expect("volume slider initialized"),
+                                    )
+                                    .w_full(),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .relative()
+                                    .when(self.show_now_playing, |this| {
+                                        this.child(self.spatial_audio_panel(cx))
+                                    })
+                                    .child(
+                                        div()
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                                                    cx.stop_propagation()
+                                                }),
+                                            )
+                                            .child(
+                                                Button::new("player-spatial-audio")
+                                                    .selected(
+                                                        self.effects_panel_open
+                                                            || self.spatial_audio_enabled,
+                                                    )
+                                                    .when(
+                                                        self.effects_panel_open
+                                                            || self.spatial_audio_enabled,
+                                                        |this| {
+                                                            this.bg(bar_accent)
+                                                                .text_color(p.primary_foreground)
+                                                        },
+                                                    )
+                                                    .when(
+                                                        !self.effects_panel_open
+                                                            && !self.spatial_audio_enabled,
+                                                        |this| this.ghost().text_color(p.muted),
+                                                    )
+                                                    .small()
+                                                    .icon(gpui_kit::assets::IconName::AudioLines)
+                                                    .tooltip(if self.effects_panel_open {
+                                                        "关闭空间音效设置"
+                                                    } else if self.spatial_audio_enabled {
+                                                        "空间音效设置（已开启）"
+                                                    } else {
+                                                        "空间音效设置（已关闭）"
+                                                    })
+                                                    .accessibility_label("空间音效")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.effects_panel_open =
+                                                            !this.effects_panel_open;
+                                                        cx.notify();
+                                                    })),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                // 播放方式：顺序 / 列表循环 / 随机循环 / 单曲循环。
+                                Button::new("player-mode")
+                                    .ghost()
+                                    .small()
+                                    .text_color(p.muted)
+                                    .icon(match self.playback_mode {
+                                        PlaybackMode::SingleLoop => {
+                                            gpui_kit::assets::IconName::Repeat1
+                                        }
+                                        PlaybackMode::Shuffle => {
+                                            gpui_kit::assets::IconName::Shuffle
+                                        }
+                                        PlaybackMode::ListLoop => {
+                                            gpui_kit::assets::IconName::Repeat
+                                        }
+                                        PlaybackMode::Sequence => {
+                                            gpui_kit::assets::IconName::ListOrdered
+                                        }
+                                    })
+                                    .tooltip(self.playback_mode.label())
+                                    .accessibility_label("播放方式")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.cycle_playback_mode(cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("player-previous")
+                                    .ghost()
+                                    .small()
+                                    .text_color(p.muted)
+                                    .icon(gpui_kit::assets::IconName::SkipBack)
+                                    .tooltip("上一首")
+                                    .accessibility_label("上一首")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.play_offset(-1, cx)),
+                                    ),
+                            )
+                            .child(match fetching.clone() {
+                                // 获取中：把播放键换成转圈，明确告诉用户正在取歌。
+                                Some(_) => div()
+                                    .size(px(32.0))
+                                    .flex_shrink_0()
+                                    .rounded(px(999.0))
+                                    .bg(p.primary)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        Spinner::new()
+                                            .with_size(px(16.0))
+                                            .color(p.primary_foreground),
+                                    )
+                                    .into_any_element(),
+                                // 播放键沿用 LX 的高亮绿实心圆，而不是主题的黑底。
+                                None => Button::new("player-toggle")
+                                    .bg(bar_accent)
+                                    .text_color(p.primary_foreground)
+                                    .rounded(px(999.0))
+                                    .icon(if playing {
+                                        gpui_kit::assets::IconName::Pause
+                                    } else {
+                                        gpui_kit::assets::IconName::Play
+                                    })
+                                    .tooltip(if playing { "暂停" } else { "播放" })
+                                    .accessibility_label(if playing { "暂停" } else { "播放" })
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_playback(cx)),
+                                    )
+                                    .into_any_element(),
                             })
-                            .tooltip(if playing { "暂停" } else { "播放" })
-                            .accessibility_label(if playing { "暂停" } else { "播放" })
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
-                            .into_any_element(),
-                    })
-                    .child(
-                        Button::new("player-next")
-                            .ghost()
-                            .small()
-                            .text_color(bar_accent)
-                            .icon(gpui_kit::assets::IconName::SkipForward)
-                            .tooltip("下一首")
-                            .accessibility_label("下一首")
-                            .on_click(cx.listener(|this, _, _, cx| this.play_offset(1, cx))),
+                            .child(
+                                Button::new("player-next")
+                                    .ghost()
+                                    .small()
+                                    .text_color(p.muted)
+                                    .icon(gpui_kit::assets::IconName::SkipForward)
+                                    .tooltip("下一首")
+                                    .accessibility_label("下一首")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.play_offset(1, cx)),
+                                    ),
+                            ),
                     ),
             )
     }
@@ -6310,13 +6399,19 @@ impl Render for MusicApp {
                 .flex_1()
                 .min_h_0()
                 .w_full()
+                .px(px(32.0))
+                .pt(px(28.0))
+                .pb(px(20.0))
                 .overflow_y_scroll()
                 .child(page_content),
         )
-        .when(matches!(self.active_tab, Tab::Rankings | Tab::Playlists), |this| {
-            // 双栏页由内层列表滚动，外层只负责裁剪。
-            this.overflow_hidden()
-        });
+        .when(
+            matches!(self.active_tab, Tab::Rankings | Tab::Playlists),
+            |this| {
+                // 双栏页由内层列表滚动，外层只负责裁剪。
+                this.overflow_hidden()
+            },
+        );
         let content = div()
             .size_full()
             .flex()
@@ -6330,7 +6425,7 @@ impl Render for MusicApp {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .p(px(30.0))
+                    .min_w_0()
                     .child(library_scroll)
                     .child(self.player_bar(cx)),
             );
@@ -6359,6 +6454,30 @@ impl Render for MusicApp {
             .children(overlay)
             .children(track_menu)
     }
+}
+
+fn playback_indicator(playing: bool, elapsed_ms: u64, p: Palette) -> gpui::Div {
+    h_flex()
+        .w(px(18.0))
+        .h(px(16.0))
+        .flex_shrink_0()
+        .items_end()
+        .gap(px(2.0))
+        .children(
+            ui_theme::playback_levels(playing, elapsed_ms)
+                .into_iter()
+                .map(|height| {
+                    div()
+                        .w(px(3.0))
+                        .h(px(height))
+                        .rounded(px(1.0))
+                        .bg(if playing {
+                            p.primary
+                        } else {
+                            p.muted.opacity(0.55)
+                        })
+                }),
+        )
 }
 
 fn track_artwork(row: &TrackRow, p: Palette) -> gpui::AnyElement {
@@ -6878,21 +6997,6 @@ fn now_playing_lyric_text(
     div().relative().child(text_layer(text_color)).child(clipped)
 }
 
-/// 专享模式的歌曲信息行：灰色标签 + 值。
-fn now_playing_info(
-    label: &'static str,
-    value: impl Into<SharedString>,
-    p: Palette,
-) -> gpui::AnyElement {
-    h_flex()
-        .items_start()
-        .gap(px(2.0))
-        .text_sm()
-        .child(div().flex_shrink_0().text_color(p.muted).child(label))
-        .child(div().text_color(p.foreground).child(value.into()))
-        .into_any_element()
-}
-
 /// 歌词区域的居中提示（加载中 / 暂无歌词）。
 fn centered_status(
     title: impl Into<SharedString>,
@@ -7133,6 +7237,7 @@ fn install_ui_font(cx: &mut App) {
         .unwrap_or_else(|| ".SystemUIFont".to_owned());
     eprintln!("界面字体：{family}");
     Theme::global_mut(cx).font_family = family.into();
+    ui_theme::install(cx);
 }
 
 /// 崩溃时把 panic 信息追加到 `%APPDATA%\wcmusic\panic.log`，方便用户反馈问题时排查。
