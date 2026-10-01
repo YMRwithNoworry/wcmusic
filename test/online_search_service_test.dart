@@ -336,7 +336,7 @@ void main() {
           'http://img4.kuwo.cn/star/albumcover/120/s4s81/95/playlist.jpg',
       'musiclist': [
         {
-          'id': '624683929',
+          'id': 'MUSIC_624683929',
           'name': '酷我榜单歌曲',
           'artist': '榜单歌手',
           'album': '榜单专辑',

@@ -776,7 +776,8 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   }
 
   Track? _parseKuwoRankingTrack(Map<dynamic, dynamic> value) {
-    final sourceId = _text(value['id'] ?? value['musicrid']);
+    final rawSourceId = _text(value['id'] ?? value['musicrid']);
+    final sourceId = rawSourceId?.replaceFirst(RegExp(r'^MUSIC_'), '');
     final title = _cleanHtml(_text(value['name'] ?? value['songname']));
     final artist = _cleanHtml(_text(value['artist']));
     if (sourceId == null || title == null || artist == null) return null;
