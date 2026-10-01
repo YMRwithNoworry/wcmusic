@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/models/playback_quality.dart';
+import '../../core/app_theme_controller.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
 import 'feedback_dialog.dart';
@@ -64,10 +65,43 @@ class _SettingsViewState extends State<SettingsView> {
                 title: const Text('减少动态效果'),
                 subtitle: const Text('保留状态反馈，关闭呼吸与大幅转场'),
               ),
-              const ListTile(
-                title: Text('主题'),
-                subtitle: Text('跟随系统'),
-                trailing: Icon(Icons.chevron_right),
+              ListTile(
+                title: const Text('主题模式'),
+                subtitle: const Text('选择日间、夜间或跟随系统'),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<ThemeMode>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.system,
+                        icon: Icon(Icons.settings_brightness_outlined),
+                        label: Text('系统'),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.light,
+                        icon: Icon(Icons.light_mode_outlined),
+                        label: Text('日间'),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.dark,
+                        icon: Icon(Icons.dark_mode_outlined),
+                        label: Text('夜间'),
+                      ),
+                    ],
+                    selected: {context.watch<AppThemeController>().mode},
+                    onSelectionChanged: (selection) {
+                      if (selection.isNotEmpty) {
+                        context.read<AppThemeController>().setMode(
+                          selection.first,
+                        );
+                      }
+                    },
+                  ),
+                ),
               ),
             ],
           ),
