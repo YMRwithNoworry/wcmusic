@@ -25,11 +25,11 @@ use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, Entity, Hsla,
+    AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, Div, Entity, Hsla,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
     SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBackgroundAppearance,
     WindowBounds, WindowOptions, checkerboard, div, hsla, img, linear_color_stop, linear_gradient,
-    point, prelude::*, px, size,
+    point, prelude::*, px, relative, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformPlaylist, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -540,6 +540,10 @@ struct MusicApp {
     lyric_scroll_index: Option<usize>,
     /// 本次滚动动画的开始时刻；由帧时钟按真实时间算进度。
     lyric_scroll_started: Option<std::time::Instant>,
+    /// 专享模式逐字填充的平滑位置（毫秒），让填充在 250ms 的进度回调之间连续推进。
+    lyric_karaoke_position_ms: f32,
+    /// 上一帧的时间戳，用来按真实帧间隔推进逐字填充。
+    lyric_karaoke_last_frame: Option<std::time::Instant>,
     /// 全局快捷键设置，与 `hotkey_manager` 保持一致。
     hotkeys: HotKeySettings,
     hotkey_manager: Option<Arc<HotKeyManager>>,
@@ -648,6 +652,8 @@ impl MusicApp {
             lyric_scroll_animating: false,
             lyric_scroll_index: None,
             lyric_scroll_started: None,
+            lyric_karaoke_position_ms: 0.0,
+            lyric_karaoke_last_frame: None,
             hotkeys: settings.hotkeys.clone(),
             hotkey_manager: None,
             hotkey_event_slot: Arc::new(Mutex::new(None)),
@@ -2178,6 +2184,7 @@ impl MusicApp {
             self.lyric_lines_error = None;
             self.lyric_lines_key = None;
             self.reset_lyric_scroll();
+            self.reset_lyric_karaoke();
             if let Some(overlay) = &self.lyrics_overlay {
                 overlay.update(cx, |overlay, cx| overlay.set_lyrics(Vec::new(), cx));
             }
@@ -2207,6 +2214,7 @@ impl MusicApp {
                         this.lyric_lines = lines.clone();
                         // 歌词被整段替换：重置滚动状态，下一次直接对齐到当前行。
                         this.reset_lyric_scroll();
+                        this.reset_lyric_karaoke();
                         if let Some(overlay) = &this.lyrics_overlay {
                             overlay
                                 .update(cx, |overlay, cx| overlay.set_lyrics(lines, cx));
@@ -2216,6 +2224,7 @@ impl MusicApp {
                         this.lyric_lines.clear();
                         this.lyric_lines_error = Some(error.clone().into());
                         this.reset_lyric_scroll();
+                        this.reset_lyric_karaoke();
                         if let Some(overlay) = &this.lyrics_overlay {
                             overlay.update(cx, |overlay, cx| overlay.set_message(error, cx));
                         }
@@ -2348,6 +2357,7 @@ impl MusicApp {
         self.seeking_progress = false;
         // 切歌时旧歌词还没被替换：先清空滚动动画，避免在新歌词到来前乱滚。
         self.reset_lyric_scroll();
+        self.reset_lyric_karaoke();
         let source_label = match track.source {
             TrackSource::Kw => OnlineSearchChannel::Kuwo.label(),
             TrackSource::Kg => OnlineSearchChannel::Kugou.label(),
@@ -2553,6 +2563,8 @@ impl MusicApp {
             }
         }
         self.elapsed_ms = target.as_millis() as u64;
+        // seek 之后逐字填充要立刻落在新位置上，不能从旧位置慢慢追。
+        self.reset_lyric_karaoke();
         self.sync_lyrics_playback(cx);
         cx.notify();
     }
@@ -2568,6 +2580,8 @@ impl MusicApp {
         }
         self.elapsed_ms = position_ms;
         self.seeking_progress = false;
+        // 同上：点歌词跳转后填充直接对齐到新行。
+        self.reset_lyric_karaoke();
         self.sync_lyrics_playback(cx);
         cx.notify();
     }
@@ -2587,6 +2601,52 @@ impl MusicApp {
             }
         }
         Some(index)
+    }
+
+    /// 当前行已经唱到的比例（0.0..=1.0），供专享模式的逐字填充使用。
+    ///
+    /// 与桌面歌词同源：以「本行起点 → 下一行起点」为跨度，再按已平滑的播放位置取
+    /// 比例。最后一行没有下一行时按 4 秒兜底，避免除以 0 或瞬间填满。
+    fn current_line_progress_fraction(&self) -> f32 {
+        let Some(index) = self.current_lyric_index() else {
+            return 0.0;
+        };
+        let Some(current) = self.lyric_lines.get(index) else {
+            return 0.0;
+        };
+        let next_start = self
+            .lyric_lines
+            .get(index + 1)
+            .map(|line| line.time_ms)
+            .unwrap_or(current.time_ms + 4_000);
+        let duration = next_start.saturating_sub(current.time_ms).max(1);
+        let elapsed = (self.lyric_karaoke_position_ms - current.time_ms as f32).max(0.0);
+        (elapsed / duration as f32).clamp(0.0, 1.0)
+    }
+
+    /// 按真实帧间隔推进逐字填充的平滑位置。
+    ///
+    /// 进度回调只有 250ms 粒度，直接拿它算填充会在两步之间"跳"。这里让填充位置
+    /// 每帧匀速追向真实位置，并允许小幅领先（`LYRIC_KARAOKE_LEAD_MS`），
+    /// 与桌面歌词的推进方式一致。
+    fn advance_lyric_karaoke(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed_ms = match self.lyric_karaoke_last_frame.replace(now) {
+            // 第一帧只对齐时间基准，不位移。
+            None => 0.0,
+            Some(previous) => (now - previous).as_secs_f32() * 1000.0,
+        };
+        let target = (self.elapsed_ms as i64 + self.lyrics_offset_ms()).max(0) as u64 as f32;
+        self.lyric_karaoke_position_ms =
+            advance_karaoke_position(self.lyric_karaoke_position_ms, target, elapsed_ms);
+        // 只有真的需要逐字推进时才要求继续出帧。
+        self.is_playing && !self.lyric_lines.is_empty() && self.lyrics.karaoke
+    }
+
+    /// 切歌 / 歌词重载 / seek 后重置逐字填充，下一次直接对齐到真实位置。
+    fn reset_lyric_karaoke(&mut self) {
+        self.lyric_karaoke_position_ms = 0.0;
+        self.lyric_karaoke_last_frame = None;
     }
 
     fn lyrics_offset_ms(&self) -> i64 {
@@ -3306,6 +3366,10 @@ impl MusicApp {
         // 动画中的小数行号：同时决定面板平移与每行歌词的强调程度。
         let displayed_position = self.displayed_lyric_position();
         let accent = crate::lyrics::tint(NOW_PLAYING_ACCENT, 1.0);
+        // 逐字填充只作用在当前行；桌面歌词的「卡拉OK」开关与这里共用同一份设置。
+        let karaoke_enabled = self.lyrics.karaoke;
+        let current_index = self.current_lyric_index();
+        let line_progress = self.current_line_progress_fraction();
         let total = self.lyric_lines.len() as f32 * LYRIC_ROW_HEIGHT;
         // 让当前行的中心落在面板中心：整体居中后再平移。
         // 用缓动中的小数行号，动画结束后与原来的整数行号位置完全一致。
@@ -3323,12 +3387,29 @@ impl MusicApp {
             let font_size = LYRIC_BASE_TEXT_SIZE * (0.94 + 0.14 * emphasis);
             let text_color = mix_hsla(p.muted, accent, highlight);
             let time_ms = line.time_ms;
-            let text = div()
-                .whitespace_nowrap()
-                .text_size(px(font_size))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(text_color)
-                .child(line.text.clone());
+            // 当前行在开启逐字填充时，由"未唱"色随播放进度填成完整高亮色；
+            // 其余行照旧只画单层。
+            //
+            // 「未唱」色只朝高亮色混 45%（与桌面歌词同一比例）：当前行的 `highlight`
+            // 本来就是 1.0，直接拿它当底色会和填充色一样，整行看起来是静态的绿色，
+            // 看不出逐字推进。留出这段色差，填充边界才清晰。
+            let text = if karaoke_enabled && current_index == Some(index) {
+                let unsung_color = mix_hsla(p.muted, accent, highlight * 0.45);
+                now_playing_lyric_text(
+                    &line.text,
+                    font_size,
+                    unsung_color,
+                    accent,
+                    Some(line_progress),
+                )
+            } else {
+                div()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(text_color)
+                    .child(line.text.clone())
+            };
             let mut column = div()
                 .flex()
                 .flex_col()
@@ -5768,9 +5849,14 @@ impl Render for MusicApp {
             self.update_lyric_scroll();
             // 用窗口帧时钟驱动动画：垂直同步逐帧重绘，不会像 16ms 定时器那样抖动。
             self.advance_lyric_scroll();
-            if self.lyric_scroll_animating {
+            // 逐字填充同样按帧钟推进：进度回调只有 250ms 粒度，靠帧钟补出连续填充。
+            let karaoke_running = self.advance_lyric_karaoke();
+            if self.lyric_scroll_animating || karaoke_running {
                 window.request_animation_frame();
             }
+        } else {
+            // 退出专享模式后不再需要逐字推进，重置时间基准即可。
+            self.lyric_karaoke_last_frame = None;
         }
         // 此刻页第一次显示时懒加载平台热门歌单（后台线程，不阻塞 UI）。
         if matches!(self.active_tab, Tab::Home) && !self.home_playlists_requested {
@@ -6221,6 +6307,11 @@ fn setting_info_row(label: &'static str, value: impl Into<SharedString>, p: Pale
 
 /// 专享模式下每行歌词的高度，用来让当前行稳定地停在面板中间。
 const LYRIC_ROW_HEIGHT: f32 = 66.0;
+/// 专享模式逐字填充可领先真实播放位置的上限（毫秒）。
+///
+/// 进度回调只有 250ms 粒度，若填充严格跟着回调走会一跳一跳；允许填充小幅领先，
+/// 再按帧钟匀速追上，听感与视觉才连贯。与桌面歌词的 `KARAOKE_LEAD_MS` 同源。
+const LYRIC_KARAOKE_LEAD_MS: f32 = 320.0;
 /// 专享模式歌词行切换的滚动时长（秒）。稍长一点、配合缓入缓出，收尾更从容。
 const LYRIC_SCROLL_SECONDS: f32 = 0.42;
 /// 专享模式歌词的基础字号（像素）。
@@ -6269,6 +6360,72 @@ fn lyric_scroll_position(from: f32, to: f32, progress: f32) -> f32 {
 /// 与桌面歌词共用同一条曲线，避免两处淡出手感不一致。
 fn lyric_emphasis(index: usize, displayed_position: f32) -> f32 {
     crate::lyrics::line_emphasis(index, displayed_position)
+}
+
+/// 推进逐字填充的平滑位置。
+///
+/// 落后真实播放位置时直接对齐（切歌 / seek / 刚开始 / 掉帧后追上），否则按这一帧
+/// 的真实间隔匀速前进，并且最多领先真实位置 `LYRIC_KARAOKE_LEAD_MS`。
+///
+/// 抽成纯函数是为了能直接单测边界：填充既不能落后太多（看起来卡住），
+/// 也不能无限领先（歌词比声音快）。
+fn advance_karaoke_position(current_ms: f32, target_ms: f32, elapsed_ms: f32) -> f32 {
+    let elapsed_ms = elapsed_ms.clamp(0.0, 100.0);
+    if current_ms < target_ms {
+        target_ms
+    } else {
+        (current_ms + elapsed_ms).min(target_ms + LYRIC_KARAOKE_LEAD_MS)
+    }
+}
+
+/// 单行歌词：普通行只画一遍；当前行按播放进度逐字填充高亮色。
+///
+/// 做法与桌面歌词的 `karaoke_block` 同源 —— 底层整行画「未唱」色，上层用完全
+/// 相同的文字画「已唱」色，再把上层按进度裁剪宽度。
+///
+/// 这里用 `relative(progress)` 按百分比裁，而不是先量文字再算像素：裁剪层的宽度
+/// 是自身内容宽度的百分比，所以填充边界天然跟着文字排版走，中英文混排、不同字号
+/// 都不会错位，也省掉了每行每帧的文字测量。
+///
+/// * `progress` 为 None：不是当前行，或逐字填充已关闭，只画单层；
+/// * `progress <= 0`：还没开始唱，只画「未唱」色，同样只画单层；
+/// * `progress >= 1`：整行唱完，直接把底层画成高亮色，省掉裁剪层；
+/// * 其余情况才真正叠两层做填充。
+fn now_playing_lyric_text(
+    text: &str,
+    font_size: f32,
+    text_color: Hsla,
+    highlight_color: Hsla,
+    progress: Option<f32>,
+) -> Div {
+    // 整行文本的公共样式：底层与填充层必须逐项一致，否则填充会和文字错位。
+    let text_layer = |color: Hsla| {
+        div()
+            .whitespace_nowrap()
+            .text_size(px(font_size))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(color)
+            .child(SharedString::from(text.to_owned()))
+    };
+
+    let progress = progress.map(|value| value.clamp(0.0, 1.0));
+    // 两端都不需要第二层：还没唱用「未唱」色，唱完了直接整体换成高亮色。
+    let fill = match progress {
+        Some(value) if value > 0.001 && value < 0.999 => value,
+        Some(value) if value >= 0.999 => return text_layer(highlight_color),
+        _ => return text_layer(text_color),
+    };
+
+    // `fill` 一定是 0..1 之间：裁剪层按内容宽度的百分比露出已唱部分。
+    let clipped = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .h_full()
+        .overflow_hidden()
+        .w(relative(fill))
+        .child(text_layer(highlight_color));
+    div().relative().child(text_layer(text_color)).child(clipped)
 }
 
 /// 专享模式的歌曲信息行：灰色标签 + 值。
@@ -6994,6 +7151,94 @@ mod tests {
         assert_eq!(lyric_emphasis(0, 10.0), 0.0);
         // smoothstep 后中点仍然落在中间，边缘过渡更柔。
         assert!((lyric_emphasis(3, 4.5) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn karaoke_progress_spans_the_current_line() {
+        // 逐字填充按「本行起点 → 下一行起点」取比例，与桌面歌词口径一致。
+        let mut app = MusicApp::new();
+        app.lyric_lines = vec![
+            LyricLine {
+                time_ms: 1_000,
+                text: "第一行".to_owned(),
+                translation: None,
+            },
+            LyricLine {
+                time_ms: 3_000,
+                text: "第二行".to_owned(),
+                translation: None,
+            },
+        ];
+        // 行进到一半：1s 起点 + 1s 的进度 = 50%。
+        app.elapsed_ms = 2_000;
+        app.lyric_karaoke_position_ms = 2_000.0;
+        assert_eq!(app.current_lyric_index(), Some(0));
+        assert!((app.current_line_progress_fraction() - 0.5).abs() < 1e-4);
+
+        // 刚开始唱时为 0，唱到下一行起点时满格。
+        app.lyric_karaoke_position_ms = 1_000.0;
+        assert!(app.current_line_progress_fraction().abs() < 1e-4);
+        app.lyric_karaoke_position_ms = 3_000.0;
+        assert!((app.current_line_progress_fraction() - 1.0).abs() < 1e-4);
+
+        // 还没到第一行时，填入位置按 0 处理，不能出现负数比例。
+        app.lyric_karaoke_position_ms = 0.0;
+        assert!(app.current_line_progress_fraction().abs() < 1e-4);
+    }
+
+    #[test]
+    fn karaoke_progress_falls_back_for_the_last_line() {
+        // 最后一行没有「下一行起点」，按 4 秒兜底，避免除零或瞬间填满。
+        let mut app = MusicApp::new();
+        app.lyric_lines = vec![LyricLine {
+            time_ms: 5_000,
+            text: "最后一行".to_owned(),
+            translation: None,
+        }];
+        app.elapsed_ms = 5_000;
+        app.lyric_karaoke_position_ms = 7_000.0;
+        assert!((app.current_line_progress_fraction() - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn karaoke_progress_is_zero_without_lyrics() {
+        // 没有歌词时不能有任何填充，也不该 panic。
+        let app = MusicApp::new();
+        assert!(app.current_lyric_index().is_none());
+        assert_eq!(app.current_line_progress_fraction(), 0.0);
+    }
+
+    #[test]
+    fn karaoke_advance_keeps_fill_close_to_playback() {
+        // 落后真实位置：直接对齐，不能继续慢慢追（否则切歌/seek 后歌词会卡住）。
+        assert_eq!(advance_karaoke_position(1_000.0, 5_000.0, 16.0), 5_000.0);
+
+        // 略微落后于领先上限：按这一帧的真实间隔前进，不跳。
+        assert_eq!(advance_karaoke_position(5_000.0, 5_000.0, 16.0), 5_016.0);
+
+        // 已经到达领先上限：不能继续超前，否则歌词会比声音快。
+        let at_limit = 5_000.0 + LYRIC_KARAOKE_LEAD_MS;
+        assert_eq!(advance_karaoke_position(at_limit, 5_000.0, 16.0), at_limit);
+
+        // 单帧间隔被钳到 100ms：窗口被遮挡后回来不会一次跳很远。
+        assert_eq!(
+            advance_karaoke_position(5_000.0, 5_000.0, 10_000.0),
+            5_000.0 + 100.0
+        );
+        // 负的间隔（时钟抖动）不能倒退。
+        assert_eq!(advance_karaoke_position(5_000.0, 5_000.0, -5.0), 5_000.0);
+    }
+
+    #[test]
+    fn karaoke_fill_never_exceeds_the_lead_window() {
+        // 连续推进若干帧后，填充位置始终不超过「真实位置 + 领先量」。
+        let target = 10_000.0_f32;
+        let mut position = target;
+        for _ in 0..600 {
+            position = advance_karaoke_position(position, target, 16.7);
+            assert!(position <= target + LYRIC_KARAOKE_LEAD_MS + 1e-3);
+        }
+        assert!(position > target, "填充应当能小幅领先，才连得起来");
     }
 
     #[test]
