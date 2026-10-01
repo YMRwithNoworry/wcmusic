@@ -180,6 +180,7 @@ impl SavedTrack {
 pub struct AppSettings {
     pub quality_index: usize,
     pub dark_theme: bool,
+    pub spatial_audio_enabled: bool,
     pub lyrics_enabled: bool,
     /// 桌面歌词的外观与交互设置。
     pub lyrics: LyricsStyle,
@@ -204,6 +205,7 @@ impl Default for AppSettings {
         Self {
             quality_index: 2,
             dark_theme: false,
+            spatial_audio_enabled: false,
             lyrics_enabled: false,
             lyrics: LyricsStyle::default(),
             hotkeys: HotKeySettings::default(),
@@ -360,6 +362,28 @@ mod tests {
 
         assert_eq!(loaded, settings);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn spatial_audio_setting_round_trips_in_both_states() {
+        for enabled in [false, true] {
+            let settings = AppSettings {
+                spatial_audio_enabled: enabled,
+                ..AppSettings::default()
+            };
+            let path = temp_path("spatial-audio");
+            settings.save_to(&path).unwrap();
+            let loaded = AppSettings::load_from(Some(&path)).unwrap();
+            assert_eq!(loaded.spatial_audio_enabled, enabled);
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn old_settings_default_to_unprocessed_audio() {
+        let settings: AppSettings = serde_json::from_str(r#"{"dark_theme":true}"#).unwrap();
+        assert!(settings.dark_theme);
+        assert!(!settings.spatial_audio_enabled);
     }
 
     #[test]

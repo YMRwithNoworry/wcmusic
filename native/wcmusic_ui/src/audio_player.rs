@@ -1,6 +1,9 @@
 use std::io::{BufReader, Cursor, Read};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+use crate::audio_effects::SpatialSource;
 
 use rodio::source::SeekError;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sample, Sink, Source};
@@ -156,6 +159,7 @@ pub struct AudioPlayer {
     _stream: OutputStream,
     handle: OutputStreamHandle,
     sink: Option<Sink>,
+    spatial_audio_enabled: Arc<AtomicBool>,
 }
 
 impl AudioPlayer {
@@ -166,6 +170,7 @@ impl AudioPlayer {
             _stream: stream,
             handle,
             sink: None,
+            spatial_audio_enabled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -178,10 +183,17 @@ impl AudioPlayer {
             MemorySource::from_bytes(bytes).map_err(|error| format!("无法解码音频: {error}"))?;
         let sink =
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
-        sink.append(source);
+        sink.append(SpatialSource::new(
+            source,
+            Arc::clone(&self.spatial_audio_enabled),
+        ));
         sink.play();
         self.sink = Some(sink);
         Ok(())
+    }
+
+    pub fn set_spatial_audio_enabled(&self, enabled: bool) {
+        self.spatial_audio_enabled.store(enabled, Ordering::Relaxed);
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -308,7 +320,7 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_seek_target, samples_to_skip, MemorySource};
+    use super::{MemorySource, clamp_seek_target, samples_to_skip};
     use rodio::Source;
     use std::sync::Arc;
     use std::time::Duration;
@@ -345,7 +357,10 @@ mod tests {
             clamp_seek_target(Duration::from_secs(10), Some(total)),
             Duration::from_secs(10)
         );
-        assert_eq!(clamp_seek_target(Duration::from_secs(60), Some(total)), total);
+        assert_eq!(
+            clamp_seek_target(Duration::from_secs(60), Some(total)),
+            total
+        );
         assert_eq!(
             clamp_seek_target(Duration::from_secs(60), None),
             Duration::from_secs(60)

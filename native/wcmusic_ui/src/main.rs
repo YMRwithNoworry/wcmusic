@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod audio_effects;
 mod audio_player;
 mod hotkey;
 mod lyrics;
@@ -514,6 +515,7 @@ struct MusicApp {
     /// 正在获取的歌曲，None 表示当前没有获取任务。
     fetching: Option<FetchingTrack>,
     quality_index: usize,
+    spatial_audio_enabled: bool,
     dark_theme: bool,
     lyrics_enabled: bool,
     /// 桌面歌词设置，与 `lyrics_store` 保持同步。
@@ -644,6 +646,7 @@ impl MusicApp {
             notice: "准备播放".into(),
             fetching: None,
             quality_index: settings.quality_index,
+            spatial_audio_enabled: settings.spatial_audio_enabled,
             dark_theme: settings.dark_theme,
             lyrics_enabled: settings.lyrics_enabled,
             lyrics: settings.lyrics.clone(),
@@ -708,6 +711,7 @@ impl MusicApp {
     fn current_settings(&self) -> AppSettings {
         AppSettings {
             quality_index: self.quality_index,
+            spatial_audio_enabled: self.spatial_audio_enabled,
             dark_theme: self.dark_theme,
             lyrics_enabled: self.lyrics_enabled,
             lyrics: self.lyrics.clone(),
@@ -2335,6 +2339,20 @@ impl MusicApp {
         cx.notify();
     }
 
+    fn toggle_spatial_audio(&mut self, cx: &mut Context<Self>) {
+        self.spatial_audio_enabled = !self.spatial_audio_enabled;
+        if let Some(player) = &self.audio_player {
+            player.set_spatial_audio_enabled(self.spatial_audio_enabled);
+        }
+        self.notice = if self.spatial_audio_enabled {
+            "空间音效：已开启".into()
+        } else {
+            "空间音效：已关闭".into()
+        };
+        self.persist_settings();
+        cx.notify();
+    }
+
     fn toggle_network_proxy(&mut self, cx: &mut Context<Self>) {
         self.use_network_proxy = !self.use_network_proxy;
         self.notice = if self.use_network_proxy {
@@ -2475,6 +2493,7 @@ impl MusicApp {
                                 }
                             },
                         };
+                        player.set_spatial_audio_enabled(this.spatial_audio_enabled);
                         player.set_volume(this.volume);
                         match player.play(bytes) {
                             Ok(()) => {
@@ -5413,6 +5432,20 @@ impl MusicApp {
                     )
                     .id("setting-quality")
                     .on_click(cx.listener(|this, _, _, cx| this.cycle_quality(cx))),
+                );
+                rows = rows.child(
+                    setting_toggle_row(
+                        "空间音效",
+                        self.spatial_audio_enabled,
+                        if self.spatial_audio_enabled {
+                            "已开启"
+                        } else {
+                            "已关闭"
+                        },
+                        p,
+                    )
+                    .id("setting-spatial-audio")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_spatial_audio(cx))),
                 );
             }
             SettingsSection::DesktopLyrics => {
