@@ -2533,11 +2533,12 @@ impl MusicApp {
             return;
         };
         let title = row.title.clone();
-        // 曲目播完后进度计时器会把 `is_playing` 置为 false、并把 `elapsed_ms`
-        // 停在总时长；此时再点播放如果直接 resume，只会「续播」一首已经结束的曲子。
-        // 所以先判断当前行是否已播完，是的话按当前上下文取下一首（循环）。
-        let duration_ms = row.track.duration_ms;
-        if track_finished(self.elapsed_ms, duration_ms) {
+        // 已耗尽的音频流不能直接 resume；不能用榜单元数据时长判断播完。
+        if self
+            .audio_player
+            .as_ref()
+            .is_some_and(AudioPlayer::has_finished)
+        {
             self.notice = format!("已播完 {title}，继续播放下一首").into();
             self.play_offset(1, cx);
             cx.notify();
@@ -2826,11 +2827,12 @@ impl MusicApp {
                             this.audio_player.as_ref().and_then(AudioPlayer::position)
                         {
                             this.elapsed_ms = position.as_millis() as u64;
-                            // 先把时长取出来，避免在调用下面的可变更方法时还持有
-                            // `current_row()` 的不可变借用。
-                            let duration_ms =
-                                this.current_row().map(|row| row.track.duration_ms).unwrap_or(0);
-                            if track_finished(this.elapsed_ms, duration_ms) {
+                            // 歌曲元数据只用于显示；音频流耗尽后才自动切歌。
+                            if this
+                                .audio_player
+                                .as_ref()
+                                .is_some_and(AudioPlayer::has_finished)
+                            {
                                 this.is_playing = false;
                                 // 按当前播放方式决定是重播、随机、循环还是停在末尾。
                                 // 新曲会由 `start_playback` 成功回调重新起一个计时器，
@@ -6789,14 +6791,6 @@ fn fetching_badge(label: impl Into<SharedString>, p: Palette) -> gpui::AnyElemen
         .into_any_element()
 }
 
-/// 当前曲目是否已经播到（或越过）结尾。
-///
-/// 抽成纯函数方便单测：`duration_ms == 0`（未知时长）时永远返回 `false`，
-/// 避免把「还不知道多长」误判成「已播完」。
-fn track_finished(elapsed_ms: u64, duration_ms: u64) -> bool {
-    duration_ms > 0 && elapsed_ms >= duration_ms
-}
-
 /// 播放进度的时间文本：分钟补零，底栏把它拼成 `00:14 / 02:53` 这样的时间块。
 fn format_playback_time(ms: u64) -> String {
     let seconds = ms / 1000;
@@ -7668,37 +7662,6 @@ mod tests {
         playlist.track_count = Some(30);
         playlist.play_count = Some(12_000);
         assert_eq!(playlist_meta_line(&playlist), "30 首 · 1.2万 播放");
-    }
-
-    #[test]
-    fn track_finished_is_false_while_playing() {
-        // 还没播完：暂停/继续都要保持原来的中途行为。
-        assert!(!track_finished(0, 180_000));
-        assert!(!track_finished(89_999, 180_000));
-        assert!(!track_finished(179_999, 180_000));
-        assert!(!track_finished(1, 1_000));
-    }
-
-    #[test]
-    fn track_finished_is_true_exactly_at_the_end() {
-        // 进度计时器会把 elapsed 停在总时长：刚好播完也算播完。
-        assert!(track_finished(180_000, 180_000));
-        assert!(track_finished(1_000, 1_000));
-    }
-
-    #[test]
-    fn track_finished_is_true_past_the_end() {
-        // 位置越过总时长（seek 或解码器回传）同样算播完。
-        assert!(track_finished(180_001, 180_000));
-        assert!(track_finished(u64::MAX, 180_000));
-    }
-
-    #[test]
-    fn track_finished_is_false_when_duration_unknown() {
-        // 未知时长（duration_ms == 0）不能误判成已播完。
-        assert!(!track_finished(0, 0));
-        assert!(!track_finished(123_456, 0));
-        assert!(!track_finished(u64::MAX, 0));
     }
 
     #[test]

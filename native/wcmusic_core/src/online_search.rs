@@ -982,7 +982,10 @@ fn parse_ranking_tracks(
             OnlineSearchChannel::Netease => parse_netease(item),
             OnlineSearchChannel::QqMusic => parse_qq(item.get("data").unwrap_or(item)),
             OnlineSearchChannel::Kugou => parse_kugou_ranking(item),
-            OnlineSearchChannel::Kuwo => parse_kuwo_ranking(item),
+            // 榜单的 duration 不是歌曲时长，整曲秒数在 song_duration。
+            OnlineSearchChannel::Kuwo => {
+                parse_kuwo_track(item, integer(item.get("song_duration")).unwrap_or_default())
+            }
         })
         .take(100)
         .collect())
@@ -1144,7 +1147,12 @@ fn parse_kuwo_playlist_tracks(value: &Value) -> Result<Vec<Track>, OnlineSearchE
         .ok_or(OnlineSearchError::InvalidResponse(channel.label()))?;
     Ok(values
         .iter()
-        .filter_map(|item| parse_kuwo_ranking(item))
+        .filter_map(|item| {
+            let duration = integer(item.get("song_duration"))
+                .or_else(|| integer(item.get("duration").or_else(|| item.get("DURATION"))))
+                .unwrap_or_default();
+            parse_kuwo_track(item, duration)
+        })
         .take(PLAYLIST_TRACK_LIMIT)
         .collect())
 }
@@ -1350,7 +1358,7 @@ fn parse_qq(value: &Value) -> Option<Track> {
     )
 }
 
-fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
+fn parse_kuwo_track(value: &Value, duration_seconds: u64) -> Option<Track> {
     let music_rid = text(
         value
             .get("musicrid")
@@ -1372,8 +1380,7 @@ fn parse_kuwo_ranking(value: &Value) -> Option<Track> {
         clean_html(text(value.get("artist").or_else(|| value.get("ARTIST"))))?,
         clean_html(text(value.get("album").or_else(|| value.get("ALBUM"))))
             .unwrap_or_else(|| "单曲".to_owned()),
-        integer(value.get("duration").or_else(|| value.get("DURATION"))).unwrap_or_default()
-            * 1_000,
+        duration_seconds.saturating_mul(1_000),
         artwork,
         TrackSource::Kw,
         source_id,
@@ -1626,7 +1633,8 @@ mod tests {
                     "name": "酷我榜单歌曲",
                     "artist": "歌手",
                     "album": "专辑",
-                    "duration": "209",
+                    "duration": "3",
+                    "song_duration": "209",
                     "pic": "http://img1.kwcdn.kuwo.cn/star/albumcover/240/s4s81/95/song-cover.jpg"
                 }]
             }),
@@ -1638,6 +1646,35 @@ mod tests {
             tracks[0].artwork_uri.as_deref(),
             Some("https://img1.kwcdn.kuwo.cn/star/albumcover/240/s4s81/95/song-cover.jpg")
         );
+    }
+
+    #[test]
+    fn kuwo_ranking_uses_song_duration_instead_of_chart_duration() {
+        let tracks = parse_ranking_tracks(
+            OnlineSearchChannel::Kuwo,
+            &serde_json::json!({"musiclist": [
+                {"id": "653060123", "name": "榜单歌曲", "artist": "歌手", "duration": "3", "song_duration": "199"},
+                {"musicrid": "MUSIC_569217895", "name": "另一首歌曲", "artist": "歌手", "duration": "2", "song_duration": 244}
+            ]}),
+        ).unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].duration_ms, 199_000);
+        assert_eq!(tracks[1].duration_ms, 244_000);
+        assert_eq!(tracks[0].source_id.as_deref(), Some("653060123"));
+        assert_eq!(tracks[1].source_id.as_deref(), Some("569217895"));
+    }
+
+    #[test]
+    fn kuwo_ranking_never_uses_chart_duration_when_song_duration_is_missing() {
+        let tracks = parse_ranking_tracks(
+            OnlineSearchChannel::Kuwo,
+            &serde_json::json!({"musiclist": [
+                {"id": "1", "name": "歌曲", "artist": "歌手", "duration": "30"},
+                {"id": "2", "name": "歌曲", "artist": "歌手", "duration": "3", "song_duration": "unknown"}
+            ]}),
+        ).unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().all(|track| track.duration_ms == 0));
     }
 
     #[test]

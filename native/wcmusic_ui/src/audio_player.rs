@@ -208,6 +208,10 @@ impl AudioPlayer {
         Ok(())
     }
 
+    pub fn has_finished(&self) -> bool {
+        sink_finished(self.sink.as_ref())
+    }
+
     pub fn position(&self) -> Option<Duration> {
         self.sink.as_ref().map(Sink::get_pos)
     }
@@ -233,6 +237,10 @@ impl AudioPlayer {
             sink.stop();
         }
     }
+}
+
+fn sink_finished(sink: Option<&Sink>) -> bool {
+    sink.is_some_and(Sink::empty)
 }
 
 fn http_agent(use_proxy: bool) -> ureq::Agent {
@@ -320,9 +328,11 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::{MemorySource, clamp_seek_target, samples_to_skip};
-    use rodio::Source;
+    use super::{MemorySource, clamp_seek_target, samples_to_skip, sink_finished};
+    use crate::audio_effects::SpatialSource;
+    use rodio::{Sink, Source};
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
     #[test]
@@ -404,6 +414,40 @@ mod tests {
         // Native WAV seek: half a second leaves half the samples.
         assert!(source.try_seek(Duration::from_millis(500)).is_ok());
         assert_eq!(source.count(), 8_000);
+    }
+
+    #[test]
+    fn playback_finished_waits_for_the_entire_decoded_audio_stream() {
+        // 对应榜单 duration=3、song_duration=199：超过 3 秒仍不能切歌。
+        let frames = 199 * 100;
+        let samples = frames as usize * 2;
+        let source = MemorySource::from_bytes(Arc::new(silent_wav(100, 2, frames))).unwrap();
+        let source = SpatialSource::new(source, Arc::new(AtomicBool::new(false)));
+        let (sink, mut output) = Sink::new_idle();
+        sink.append(source);
+        output.by_ref().take(800).for_each(drop);
+        assert!(sink.get_pos() > Duration::from_secs(3));
+        assert!(!sink_finished(Some(&sink)));
+        output.by_ref().take(samples - 800 + 1).for_each(drop);
+        assert!(sink_finished(Some(&sink)));
+    }
+
+    #[test]
+    fn playback_finished_does_not_confuse_pause_with_the_end() {
+        let source = MemorySource::from_bytes(Arc::new(silent_wav(100, 2, 100))).unwrap();
+        let (sink, mut output) = Sink::new_idle();
+        sink.append(source);
+        sink.pause();
+        output.by_ref().take(500).for_each(drop);
+        assert!(!sink_finished(Some(&sink)));
+        sink.play();
+        output.by_ref().take(201).for_each(drop);
+        assert!(sink_finished(Some(&sink)));
+    }
+
+    #[test]
+    fn playback_finished_is_false_without_loaded_audio() {
+        assert!(!sink_finished(None));
     }
 
     #[test]
