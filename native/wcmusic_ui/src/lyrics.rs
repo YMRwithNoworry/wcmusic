@@ -369,8 +369,10 @@ fn ease_in_out(value: f32) -> f32 {
     p * p * p * (p * (p * 6.0 - 15.0) + 10.0)
 }
 
-/// 桌面歌词一次显示多少行就会淡出：与专享模式歌词的 3 行保持一致。
+/// 歌词淡出曲线的完整距离；距离更远时完全退到背景。
 const LYRIC_FADE_LINES: f32 = 3.0;
+/// 桌面歌词显示当前行上下各两行，共五行。
+const DESKTOP_LYRIC_SIDE_LINES: usize = 2;
 
 /// 行与动画位置的距离 -> 强调度（0 表示完全退到背景）。
 ///
@@ -379,6 +381,33 @@ const LYRIC_FADE_LINES: f32 = 3.0;
 fn lyric_fade(offset: f32) -> f32 {
     let linear = (1.0 - offset.abs() / LYRIC_FADE_LINES).clamp(0.0, 1.0);
     linear * linear * (3.0 - 2.0 * linear)
+}
+
+/// 计算桌面歌词在窗口当前高度下的行距，保证当前行上下各两行可以同时完整排入。
+fn desktop_lyric_spacing(font_size: f32, height: f32, has_translation: bool) -> f32 {
+    let natural = font_size * 1.86
+        + if has_translation {
+            font_size * 0.8
+        } else {
+            0.0
+        };
+    let sides = DESKTOP_LYRIC_SIDE_LINES as f32;
+    let outer_emphasis = lyric_fade(sides);
+    let outer_height = font_size * (0.86 + 0.14 * outer_emphasis) * 1.32;
+    let available_spacing = ((height - outer_height).max(1.0) / (2.0 * sides)).max(1.0);
+    natural.min(available_spacing)
+}
+
+/// 选取一个最多五行、尽量围绕当前动画位置的连续歌词范围。
+fn visible_lyric_range(position: f32, line_count: usize) -> Option<(usize, usize)> {
+    if line_count == 0 {
+        return None;
+    }
+    let visible_count = line_count.min(DESKTOP_LYRIC_SIDE_LINES * 2 + 1);
+    let center = (position.round() as isize).clamp(0, line_count as isize - 1);
+    let max_first = line_count - visible_count;
+    let first = (center - DESKTOP_LYRIC_SIDE_LINES as isize).clamp(0, max_first as isize) as usize;
+    Some((first, first + visible_count - 1))
 }
 
 /// 专享模式歌词：行号与动画位置之间的距离 -> 强调度（与桌面歌词同一套曲线）。
@@ -2012,9 +2041,9 @@ impl LyricsOverlay {
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
         // 翻译行变大后（0.72×/下限 16px），当前行的实际高度约增加
-        // `translation_size * 1.32 + 2.0`；相邻行中心距也要同步拉开，
-        // 否则相邻行会压在翻译行上。取 0.8× 主字号，比旧值 0.62× 更宽松。
-        let spacing = size * 1.86 + if has_translation { size * 0.8 } else { 0.0 };
+        // `translation_size * 1.32 + 2.0`；行距仍尽量拉开，但最多压到能完整放入
+        // 当前行上下各两行，避免翻译开启时外侧歌词被窗口边缘裁掉。
+        let spacing = desktop_lyric_spacing(size, height, has_translation);
         let position = self.displayed_position();
         let enter = self.enter_progress();
         let center_y = height * 0.5;
@@ -2048,9 +2077,11 @@ impl LyricsOverlay {
 
         // 与歌曲详情页一致：以动画位置为中心铺开一列歌词，按与它的距离
         // 连续地淡出/缩小，当前行用高亮色。
-        let fade = LYRIC_FADE_LINES.ceil() as isize;
-        let first = (position.floor() as isize - fade).max(0) as usize;
-        let last = ((position.ceil() as isize + fade).max(0) as usize).min(self.lines.len() - 1);
+        // 专享模式只显示五行：当前行上下各两行。范围跟随滚动动画移动，
+        // 列表首尾不足五行时自然显示可用的行数。
+        let Some((first, last)) = visible_lyric_range(position, self.lines.len()) else {
+            return layer.into_any_element();
+        };
         for index in first..=last {
             let offset = index as f32 - position;
             let y = center_y + offset * spacing;
@@ -2859,6 +2890,38 @@ mod tests {
         // 起步与收尾都要轻，保证切行不生硬。
         assert!(ease_in_out(0.1) < 0.05);
         assert!(ease_in_out(0.9) > 0.95);
+    }
+
+    #[test]
+    fn desktop_lyric_range_shows_five_lines_around_the_current_line() {
+        assert_eq!(visible_lyric_range(4.0, 12), Some((2, 6)));
+        assert_eq!(visible_lyric_range(4.4, 12), Some((2, 6)));
+        assert_eq!(visible_lyric_range(4.6, 12), Some((3, 7)));
+    }
+
+    #[test]
+    fn desktop_lyric_range_stays_within_short_lists() {
+        assert_eq!(visible_lyric_range(0.0, 0), None);
+        assert_eq!(visible_lyric_range(0.0, 1), Some((0, 0)));
+        assert_eq!(visible_lyric_range(1.0, 4), Some((0, 3)));
+        assert_eq!(visible_lyric_range(9.0, 8), Some((3, 7)));
+    }
+
+    #[test]
+    fn desktop_lyric_spacing_fits_five_lines_and_keeps_translation_clear() {
+        let font_size = 28.0;
+        let height = 260.0;
+        let spacing = desktop_lyric_spacing(font_size, height, true);
+        let outer_emphasis = lyric_fade(DESKTOP_LYRIC_SIDE_LINES as f32);
+        let outer_height = font_size * (0.86 + 0.14 * outer_emphasis) * 1.32;
+        assert!(spacing < font_size * 1.86 + font_size * 0.8);
+        assert!(spacing * 4.0 + outer_height <= height + 1e-3);
+
+        // 足够高的窗口不压缩自然行距。
+        assert_eq!(
+            desktop_lyric_spacing(font_size, 720.0, false),
+            font_size * 1.86
+        );
     }
 
     #[test]
