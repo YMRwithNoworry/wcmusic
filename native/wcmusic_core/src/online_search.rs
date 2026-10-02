@@ -32,7 +32,9 @@ impl OnlineSearchChannel {
             Self::Kuwo => "https://search.kuwo.cn/r.s",
             Self::Kugou => "https://songsearch.kugou.com/song_search_v2",
             Self::QqMusic => "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
-            Self::Netease => "https://music.163.com/api/search/get",
+            // 旧的 /api/search/get 只回 album.picId，没有封面地址（结果里封面一直是占位图）；
+            // /api/cloudsearch/pc 返回 al.picUrl，响应结构（result.songs）与旧接口一致。
+            Self::Netease => "https://music.163.com/api/cloudsearch/pc",
         }
     }
 
@@ -1843,6 +1845,52 @@ mod tests {
         assert_eq!(songs[0].id, "wy-1");
         assert_eq!(songs[1].id, "wy-2");
         assert_eq!(songs[1].duration_ms, 2_000);
+    }
+
+    /// 搜索改走 /api/cloudsearch/pc 后返回的是 al / ar / dt 这套字段，
+    /// 其中 al.picUrl 就是封面地址——少了它搜索结果只会显示占位图。
+    #[test]
+    fn parses_netease_cloudsearch_artwork() {
+        let tracks = parse_response(
+            OnlineSearchChannel::Netease,
+            &serde_json::json!({
+                "result": {"songs": [{
+                    "id": 3330620554u64,
+                    "name": "琵琶曲",
+                    "dt": 235975,
+                    "ar": [{"name": "郑浩Z-Hao"}, {"name": "冰洁"}],
+                    "al": {
+                        "id": 363700782,
+                        "name": "琵琶曲",
+                        "picUrl": "http://p1.music.126.net/VvGYXvFGD4LQs5WUdbe6dA==/109951173179274574.jpg"
+                    }
+                }]}
+            }),
+        )
+        .unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id, "wy-3330620554");
+        assert_eq!(tracks[0].artist, "郑浩Z-Hao / 冰洁");
+        assert_eq!(tracks[0].album, "琵琶曲");
+        assert_eq!(tracks[0].duration_ms, 235_975);
+        assert_eq!(
+            tracks[0].artwork_uri.as_deref(),
+            Some("https://p1.music.126.net/VvGYXvFGD4LQs5WUdbe6dA==/109951173179274574.jpg")
+        );
+    }
+
+    /// 需要联网：确认线上接口确实带回了封面地址。
+    /// 默认忽略，手动跑：`cargo test -- --ignored live_netease_search_returns_artwork`
+    #[test]
+    #[ignore]
+    fn live_netease_search_returns_artwork() {
+        let tracks = search_online_with_proxy("琵琶曲", OnlineSearchChannel::Netease, 3, false)
+            .expect("网易云在线搜索失败");
+        assert!(!tracks.is_empty(), "网易云搜索没有返回任何结果");
+        assert!(
+            tracks.iter().all(|track| track.artwork_uri.is_some()),
+            "网易云搜索结果缺少封面地址：{tracks:?}"
+        );
     }
 
     #[test]

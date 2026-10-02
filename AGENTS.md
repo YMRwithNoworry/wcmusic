@@ -26,6 +26,8 @@ jdk在这里D:\MC\jdk
 | `native/wcmusic_core` | 共享核心 crate（`crate-type = ["cdylib", "rlib"]`）：曲库索引与检索、SQLite 持久化、M3U/洛雪备份解析、洛雪自定义音源 QuickJS 运行时；公开 API 从 `lib.rs` re-export |
 | `native/wcmusic_core/src/ffi.rs` | 给 Dart/Android 的 C ABI（`wcmusic_*` 前缀，返回 JSON 字符串，Dart 侧用 `wcmusic_string_free` 释放） |
 | `native/wcmusic_ui` | Windows 桌面端（gpui-kit 0.6）。`main.rs` 是 7000+ 行的视图层单文件；`lyrics.rs`/`lyrics_window.rs` 桌面歌词；`settings.rs` 设置持久化；`audio_player.rs`、`tray.rs`、`hotkey.rs`、`smooth_scroll.rs`、`picker.rs` |
+| `native/wcmusic_ui/src/app_icon.rs` | 窗口/托盘图标的按尺寸装载（`LoadImageW` + `WM_SETICON`）与窗口标题常量 |
+| `native/tools/icon_gen` | 由 `assets/icons/app_icon.png` 生成多尺寸 ICO（去白底、裁边、小尺寸特写版），产物同步到 `assets/icons/` 与 `windows/runner/resources/` |
 | `native/vendor/rquickjs-sys` | `[patch.crates-io]` 里的本地 rquickjs-sys |
 | `lib/domain` | Flutter 领域模型与 Repository 接口 |
 | `lib/data` | Flutter 平台服务与 Repository 实现（原生桥、音源、搜索、下载、歌词、窗口） |
@@ -51,6 +53,7 @@ D:/tools/flutter/bin/flutter.bat test
 C:/Users/Administrator/.cargo/bin/cargo.exe test --manifest-path native/wcmusic_core/Cargo.toml
 nu build_gpui.nu                           # 等价于 cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
 nu build_android.nu                        # Flutter APK + cargo ndk 产物
+cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/icon_gen/Cargo.toml -- --preview native/tools/icon_gen/target/preview   # 重新生成多尺寸 ICO
 ```
 
 注意：

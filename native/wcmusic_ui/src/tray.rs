@@ -177,9 +177,10 @@ mod windows {
             icon_data.uID = TRAY_ICON_ID;
             icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
             icon_data.uCallbackMessage = TRAY_CALLBACK_MESSAGE;
-            // 优先读取当前 exe 内嵌的应用图标（资源 ID 1，由 build.rs 写入），
-            // 取不到时退回系统默认图标。
-            let embedded_icon = LoadIconW(instance, 1usize as *const u16);
+            // 优先读取当前 exe 内嵌的应用图标（资源 ID 1，由 build.rs 写入）。
+            // 走 app_icon 是为了按 SM_CXSMICON 的实际像素取图：LoadIconW 只会给
+            // 32×32，通知区域是 16~24px，二次缩放就糊了。
+            let embedded_icon = crate::app_icon::tray_icon();
             icon_data.hIcon = if embedded_icon.is_null() {
                 LoadIconW(null_mut(), IDI_APPLICATION)
             } else {

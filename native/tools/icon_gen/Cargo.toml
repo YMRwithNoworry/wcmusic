@@ -1,0 +1,10 @@
+[package]
+name = "icon_gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "由 assets/icons/app_icon.png 生成多尺寸、可裁边的 Windows ICO"
+
+[dependencies]
+# 只开 PNG 编解码：这个工具只读源图 PNG、写预览 PNG。
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod app_icon;
 mod audio_effects;
 mod audio_player;
 mod hotkey;
@@ -2029,7 +2030,8 @@ impl MusicApp {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: None,
+                    // 悬浮窗不在任务栏出现，但窗口列表 / 录屏选择器里能认出它。
+                    title: Some("WCMusic 桌面歌词".into()),
                     appears_transparent: true,
                     ..Default::default()
                 }),
@@ -5569,20 +5571,7 @@ impl MusicApp {
                     .id("setting-quality")
                     .on_click(cx.listener(|this, _, _, cx| this.cycle_quality(cx))),
                 );
-                rows = rows.child(
-                    setting_toggle_row(
-                        "空间音效",
-                        self.spatial_audio_enabled,
-                        if self.spatial_audio_enabled {
-                            "已开启"
-                        } else {
-                            "已关闭"
-                        },
-                        p,
-                    )
-                    .id("setting-spatial-audio")
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_spatial_audio(cx))),
-                );
+                // 空间音效不再占用设置页：开关只保留在播放页的「空间音效」按钮里。
             }
             SettingsSection::DesktopLyrics => {
                 rows = rows.child(
@@ -7298,9 +7287,21 @@ fn main() {
                 .open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        // 窗口名称：任务栏按钮、Alt+Tab 和窗口列表里显示的就是它。
+                        // 原生标题栏仍然是隐藏的（appears_transparent），外观交给自绘标题栏。
+                        titlebar: Some(TitlebarOptions {
+                            title: Some(app_icon::WINDOW_TITLE.into()),
+                            appears_transparent: true,
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     },
                     move |window, cx| {
+                        // GPUI 只会给窗口类挂一张 32×32 的图标，任务栏/托盘拿到的是
+                        // 被系统再缩一次的糊图。这里按当前缩放比装对应尺寸的图标。
+                        if let Some(hwnd) = tray::native_window_handle(window) {
+                            app_icon::install_window_icons(hwnd, window.scale_factor());
+                        }
                         if keep_in_tray {
                             window.on_window_should_close(cx, |window, _cx| {
                                 if let Some(hwnd) = tray::native_window_handle(window) {

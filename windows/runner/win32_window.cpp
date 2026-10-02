@@ -146,6 +146,25 @@ bool Win32Window::Create(const std::wstring& title,
 
   UpdateTheme(window);
 
+  // The window-class hIcon above comes from LoadIcon, which always returns the
+  // system default size (32x32); the taskbar and tray then rescale it to 16~24px
+  // and the illustration blurs. Load the multi-size ICO at the exact pixel size
+  // the shell asks for and hand it to the window via WM_SETICON instead.
+  const auto load_app_icon = [dpi](int metric) -> HICON {
+    const int size = MulDiv(GetSystemMetrics(metric), dpi, 96);
+    return static_cast<HICON>(LoadImage(GetModuleHandle(nullptr),
+                                        MAKEINTRESOURCE(IDI_APP_ICON),
+                                        IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
+  };
+  if (HICON small_icon = load_app_icon(SM_CXSMICON)) {
+    SendMessage(window, WM_SETICON, ICON_SMALL,
+                reinterpret_cast<LPARAM>(small_icon));
+  }
+  if (HICON big_icon = load_app_icon(SM_CXICON)) {
+    SendMessage(window, WM_SETICON, ICON_BIG,
+                reinterpret_cast<LPARAM>(big_icon));
+  }
+
   return OnCreate();
 }
 
