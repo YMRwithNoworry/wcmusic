@@ -53,7 +53,7 @@
             </a>
             <a class="text-link" href="#experience">看看它如何工作 <i data-lucide="arrow-down" aria-hidden="true"></i></a>
           </div>
-          <p class="hero-note">开源免费 · 无广告 · 版本 1.2.1</p>
+          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.2 · Android 1.2.1</p>
         </div>
         <div class="hero-caption" aria-hidden="true">
           <span>本地曲库</span><span>聚合搜索</span><span>自由音源</span>
@@ -121,11 +121,11 @@
               <h3>Windows x64</h3>
               <p class="meta">Windows 10 / 11 · ZIP 便携版</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic-releases/releases/download/v1.2.1/wcmusic-windows-x64.zip">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic-releases/releases/download/v1.2.2/wcmusic-windows-x64.zip">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Windows 版
             </a>
-            <p class="file-meta">版本 1.2.1 · x64</p>
+            <p class="file-meta">版本 1.2.2 · x64</p>
           </article>
           <article class="download-card reveal" data-platform="android">
             <div class="platform-icon clay"><i data-lucide="smartphone" aria-hidden="true"></i></div>
@@ -148,12 +148,13 @@
         <div class="section-kicker reveal"><span>03</span> 最新发布</div>
         <div class="release-layout">
           <div class="release-sticky reveal">
-            <p class="version">v1.2.1</p>
-            <h2 id="release-title">第四片叶子</h2>
-            <p>2026 年 9 月 16 日</p>
+            <p class="version">v1.2.2</p>
+            <h2 id="release-title">播放界面焕新</h2>
+            <p>2026 年 10 月 2 日</p>
             <span class="stable"><span></span> 稳定版</span>
           </div>
           <div class="changelog reveal">
+            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>GPUI 桌面体验全面焕新</h3><p>统一深浅主题与绿色强调色，重做侧栏、发现页、歌单封面和播放栏；播放中加入随进度变化的节奏反馈，暂停时保持静止。Windows 桌面版更新至 1.2.2，Android 版保持 1.2.1。</p></div></div>
             <div class="change-group"><span class="change-icon"><i data-lucide="gauge" aria-hidden="true"></i></span><div><h3>桌面歌词真 60fps</h3><p>根因是 GPUI 对「非激活窗口」的 30fps 帧节流（歌词浮窗为了鼠标穿透刻意不激活）。显式关闭该节流后，帧间隔 p50 从 42.7ms 降到 16.67ms，p95 17.0ms，掉帧率从 100% 降到 6.5%；顺带量化绘制字号让排版缓存命中，每帧 CPU 降到约 1/2.3。</p></div></div>
             <div class="change-group"><span class="change-icon"><i data-lucide="shield-check" aria-hidden="true"></i></span><div><h3>修掉一个会让程序闪退的崩溃</h3><p>60ms 快捷键轮询用了会 panic 的实体读取，撞上界面线程嵌套更新时会以「RefCell already mutably borrowed」直接结束进程（退出码 0xC000041D，多出现在播放/切歌时）。现在轮询不再触碰实体，托盘/进度/歌词位置等循环统一改成「借不到就跳过这一拍」。验收：连续交互运行 210 秒，panic.log 前后字节数与时间戳完全不变。</p></div></div>
             <div class="change-group"><span class="change-icon"><i data-lucide="type" aria-hidden="true"></i></span><div><h3>默认 MiSans Bold、翻译更大</h3><p>内置小米官方 MiSans-Bold（此前只有 Regular/Medium/Semibold，字重 700 只能落到 Semibold 或系统合成），桌面歌词默认更粗；翻译字号也加大：桌面歌词 0.56×（下限 12px）→ 0.72×（下限 16px）并同步放大行距，详情页 text_sm → text_base。</p></div></div>
