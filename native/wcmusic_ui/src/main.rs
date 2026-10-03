@@ -12,6 +12,7 @@ mod smooth_scroll;
 mod tray;
 mod ui_busy;
 mod ui_theme;
+mod update;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,6 +49,7 @@ use crate::lyrics::{
 use crate::settings::{
     AppSettings, HotKeySettings, PlaybackMode, SavedPlaylist, SavedTrack,
 };
+use crate::update::{UpdateCheck, check_latest_release};
 use crate::smooth_scroll::{
     SmoothScrollDiv, SmoothScrollState, advance_smooth_scroll,
 };
@@ -603,6 +605,10 @@ struct MusicApp {
     /// 不引入 rand 依赖：这里只需要「每次都换一首、单次会话内不重复」，
     /// 用播放次数做种子再配合列表长度取模就够，且行为完全可测。
     shuffle_cursor: u64,
+    /// 最近一次检查到的版本信息，None 表示还没查过 / 还没查完。
+    update_check: Option<UpdateCheck>,
+    /// 是否正在查询 GitHub Release（避免重复发起）。
+    update_checking: bool,
     /// 当前打开的轨道行右键菜单；None 表示关闭。
     track_menu: Option<TrackMenuState>,
     /// 歌单封面本地缓存：`渠道:id` -> 已下载到本地的图片路径。
@@ -704,6 +710,8 @@ impl MusicApp {
             saved_tracks: settings.saved_tracks.clone(),
             playback_mode: settings.playback_mode,
             shuffle_cursor: 0,
+            update_check: None,
+            update_checking: false,
             track_menu: None,
             playlist_cover_paths: std::collections::HashMap::new(),
             playlist_cover_requested: std::collections::HashSet::new(),
@@ -2343,6 +2351,41 @@ impl MusicApp {
         self.notice = format!("歌词偏移 {offset:+.1}s").into();
         self.sync_lyrics_playback(cx);
         cx.notify();
+    }
+
+    /// 检查 GitHub Release 是否有更新版本。
+    ///
+    /// `announce` 决定结果是否用通知条打扰用户：启动时后台静默检查（有更新才提示），
+    /// 在「关于」页手动点击时则无论结果都给出反馈。
+    fn check_for_updates(&mut self, announce: bool, cx: &mut Context<Self>) {
+        if self.update_checking {
+            return;
+        }
+        self.update_checking = true;
+        cx.notify();
+        let use_proxy = self.use_network_proxy;
+        let current_version = env!("CARGO_PKG_VERSION");
+        let task = cx.background_spawn(async move {
+            check_latest_release(current_version, use_proxy)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.update_checking = false;
+                let available = result.update_available();
+                let summary = result.summary();
+                // 启动时的静默检查只在真有新版本时提示。
+                if available {
+                    this.notice = format!("{summary}，可在「关于」页打开下载页").into();
+                } else if announce {
+                    this.notice = summary.into();
+                }
+                this.update_check = Some(result);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn toggle_spatial_audio(&mut self, cx: &mut Context<Self>) {
@@ -5864,6 +5907,52 @@ impl MusicApp {
                                 };
                                 cx.notify();
                             })),
+                    )
+                    // 更新检测：显示当前状态，点击即重新检查 GitHub Release。
+                    .child(
+                        setting_info_row(
+                            "版本更新",
+                            if self.update_checking {
+                                "正在检查…".to_owned()
+                            } else {
+                                match &self.update_check {
+                                    Some(check) => check.summary(),
+                                    None => "点击检查更新".to_owned(),
+                                }
+                            },
+                            p,
+                        )
+                        .id("setting-update-check")
+                        .cursor_pointer()
+                        .hover(|style| style.bg(p.surface_hover))
+                        .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(true, cx))),
+                    )
+                    .when(
+                        self.update_check
+                            .as_ref()
+                            .and_then(|check| check.release_url.clone())
+                            .is_some(),
+                        |this| {
+                            let url = self
+                                .update_check
+                                .as_ref()
+                                .and_then(|check| check.release_url.clone())
+                                .unwrap_or_default();
+                            this.child(
+                                setting_info_row("下载页", url.clone(), p)
+                                    .id("setting-release-page")
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(p.surface_hover))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.notice = if open_external_url(&url) {
+                                            "已在浏览器中打开下载页".into()
+                                        } else {
+                                            format!("打开失败，请手动访问 {url}").into()
+                                        };
+                                        cx.notify();
+                                    })),
+                            )
+                        },
                     );
             }
         }
@@ -6824,8 +6913,8 @@ fn setting_toggle_row(
         )
 }
 
-/// 项目仓库地址：关于页展示，也用于「打开仓库」。
-const PROJECT_REPOSITORY: &str = "https://github.com/YMRwithNoworry/wcmusic";
+/// 项目仓库地址：关于页展示，也用于「打开仓库」。与更新检测共用同一份定义。
+const PROJECT_REPOSITORY: &str = crate::update::REPOSITORY_URL;
 
 /// 用系统默认浏览器打开链接。
 ///
@@ -7332,6 +7421,8 @@ fn main() {
             view.update(cx, |this, cx| {
                 this.ensure_lyrics_store(cx);
                 this.ensure_hotkeys(cx);
+                // 启动后后台查一次 GitHub Release：只在真有新版本时提示，失败静默。
+                this.check_for_updates(false, cx);
             });
             let dark_theme = view.read(cx).dark_theme;
             let lyrics_enabled = view.read(cx).lyrics_enabled;
