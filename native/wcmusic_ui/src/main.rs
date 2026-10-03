@@ -42,7 +42,9 @@ use wcmusic_core::{
     search_online_with_proxy,
 };
 
-use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
+use crate::audio_player::{
+    AudioPlayer, download_artwork, download_audio_with_proxy, open_streaming_source,
+};
 use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
     LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore,
@@ -412,6 +414,15 @@ fn is_row_selected(current: Option<&TrackRow>, row: &TrackRow) -> bool {
         }
         None => false,
     }
+}
+
+/// 交给播放器的音频负载。
+///
+/// 正常情况走「边下边播」：`AudioStream::open` 只等响应头，解码器拿到文件头就出声。
+/// 打不开时退回整曲下载，保证与旧行为一致。
+enum PlaybackSource {
+    Streaming(crate::audio_player::StreamingSource),
+    Bytes(Vec<u8>),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -2525,8 +2536,16 @@ impl MusicApp {
                 use_proxy,
             )
             .map_err(|error| error.to_string())?;
-            let bytes = download_audio_with_proxy(&url, use_proxy)?;
-            Ok::<_, String>((url, bytes))
+            // 优先边下边播：只等响应头与文件头，第一帧音频几百毫秒内就能出声，
+            // 整曲在后台继续下载（seek 仍可回到任意位置）。
+            match open_streaming_source(&url, use_proxy) {
+                Ok(source) => Ok::<_, String>((url, PlaybackSource::Streaming(source))),
+                // 连接/格式不支持边下边播时退回整曲下载，与旧行为一致。
+                Err(_) => {
+                    let bytes = download_audio_with_proxy(&url, use_proxy)?;
+                    Ok((url, PlaybackSource::Bytes(bytes)))
+                }
+            }
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -2537,7 +2556,7 @@ impl MusicApp {
                 // 获取结束（成功或失败）后取消「获取中」标记。
                 this.fetching = None;
                 match result {
-                    Ok((_url, bytes)) => {
+                    Ok((_url, source)) => {
                         let player = match this.audio_player.as_mut() {
                             Some(player) => player,
                             None => match AudioPlayer::new() {
@@ -2557,7 +2576,11 @@ impl MusicApp {
                         };
                         player.set_spatial_audio_enabled(this.spatial_audio_enabled);
                         player.set_volume(this.volume);
-                        match player.play(bytes) {
+                        let played = match source {
+                            PlaybackSource::Streaming(source) => player.play_stream(source),
+                            PlaybackSource::Bytes(bytes) => player.play(bytes),
+                        };
+                        match played {
                             Ok(()) => {
                                 this.is_playing = true;
                                 this.schedule_progress_timer(cx);

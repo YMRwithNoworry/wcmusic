@@ -1,5 +1,5 @@
-use std::io::{BufReader, Cursor, Read};
-use std::sync::Arc;
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -144,6 +144,285 @@ impl Source for MemorySource {
     }
 }
 
+/// 边下边播的音频字节流。
+///
+/// 后台线程持续把响应体追加进共享缓冲，`Read` 在数据还没到时会阻塞等待，
+/// 于是 rodio 的解码器**拿到文件头就能出声**，不必等整曲下载完。
+/// 已下载的部分会一直留着，seek 时重建解码器仍然从头读同一份缓冲。
+pub struct AudioStream {
+    state: Arc<StreamState>,
+    /// 当前读取位置；每个解码器句柄各有一份（重建时从 0 开始）。
+    pos: u64,
+}
+
+struct StreamState {
+    inner: Mutex<StreamInner>,
+    ready: Condvar,
+    /// 切歌 / 停止播放后置位：下载线程看到就直接收工，不把整曲白白下完。
+    abandoned: AtomicBool,
+}
+
+impl StreamState {
+    /// 叫停后台下载，并叫醒可能正卡在 `read` 里的解码线程。
+    ///
+    /// 只置 `abandoned` 不够：下载线程可能正阻塞在一次网络读上，短时间内回不来，
+    /// 而音频线程此刻可能正等在这条流上——必须同时把流标记成结束并唤醒它，
+    /// 否则那个线程会一直等一个再也不会到来的数据块。
+    fn abandon(&self) {
+        self.abandoned.store(true, Ordering::Relaxed);
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        inner.finished = true;
+        drop(inner);
+        self.ready.notify_all();
+    }
+}
+
+struct StreamInner {
+    buffer: Vec<u8>,
+    finished: bool,
+    error: Option<String>,
+    /// 响应头里的 `Content-Length`；用来支持 `SeekFrom::End`。
+    total: Option<u64>,
+}
+
+impl AudioStream {
+    /// 发起请求并立刻返回：这里只等响应头，不等整个响应体。
+    pub fn open(url: &str, use_proxy: bool) -> Result<Self, String> {
+        let response = http_agent(use_proxy)
+            .get(url)
+            .set(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WCMusic/1.0",
+            )
+            .call()
+            .map_err(|error| format!("下载整曲失败: {error}"))?;
+        let total = response
+            .header("content-length")
+            .and_then(|value| value.parse::<u64>().ok());
+        if total.is_some_and(|length| length > MAX_AUDIO_BYTES) {
+            return Err("音频文件超过 128 MB 限制".into());
+        }
+
+        Ok(Self::spawn(response.into_reader(), total))
+    }
+
+    /// 起一个后台线程把 `reader` 的内容追加进共享缓冲。
+    fn spawn(reader: Box<dyn Read + Send>, total: Option<u64>) -> Self {
+        let mut reader = reader;
+        let state = Arc::new(StreamState {
+            inner: Mutex::new(StreamInner {
+                buffer: Vec::new(),
+                finished: false,
+                error: None,
+                total,
+            }),
+            ready: Condvar::new(),
+            abandoned: AtomicBool::new(false),
+        });
+        let worker = Arc::clone(&state);
+        std::thread::spawn(move || {
+            let mut chunk = vec![0u8; 64 * 1024];
+            loop {
+                if worker.abandoned.load(Ordering::Relaxed) {
+                    break;
+                }
+                match reader.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        let mut inner = lock(&worker);
+                        if inner.buffer.len() as u64 + count as u64 > MAX_AUDIO_BYTES {
+                            inner.error = Some("音频文件超过 128 MB 限制".into());
+                            break;
+                        }
+                        inner.buffer.extend_from_slice(&chunk[..count]);
+                        drop(inner);
+                        worker.ready.notify_all();
+                    }
+                    Err(error) => {
+                        lock(&worker).error = Some(format!("读取整曲失败: {error}"));
+                        break;
+                    }
+                }
+            }
+            let mut inner = lock(&worker);
+            inner.finished = true;
+            drop(inner);
+            worker.ready.notify_all();
+        });
+
+        Self { state, pos: 0 }
+    }
+
+    /// 让后台下载立刻收工：切歌或停止播放时调用，避免旧歌曲继续占带宽与内存。
+    fn abandon(&self) {
+        self.state.abandon();
+    }
+
+    /// 复制一个从 0 开始读的句柄：重建解码器时用，共享同一份下载缓冲。
+    fn rewind(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            pos: 0,
+        }
+    }
+}
+
+/// 锁中毒时直接取回内部值：这里的状态只是下载缓冲，没有需要靠 panic 保护的invariant。
+fn lock(state: &Arc<StreamState>) -> std::sync::MutexGuard<'_, StreamInner> {
+    state
+        .inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl Read for AudioStream {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if out.is_empty() {
+            return Ok(0);
+        }
+        let mut inner = lock(&self.state);
+        loop {
+            if self.pos < inner.buffer.len() as u64 {
+                let start = self.pos as usize;
+                let end = (start + out.len()).min(inner.buffer.len());
+                out[..end - start].copy_from_slice(&inner.buffer[start..end]);
+                self.pos += (end - start) as u64;
+                return Ok(end - start);
+            }
+            if let Some(error) = inner.error.clone() {
+                return Err(std::io::Error::other(error));
+            }
+            if inner.finished {
+                return Ok(0);
+            }
+            // 数据还没下到：等下载线程叫醒，解码器在这里自然地「边下边解」。
+            inner = self
+                .state
+                .ready
+                .wait(inner)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+}
+
+impl Seek for AudioStream {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        let target = match position {
+            SeekFrom::Start(offset) => offset as i64,
+            SeekFrom::Current(delta) => self.pos as i64 + delta,
+            SeekFrom::End(delta) => match lock(&self.state).total {
+                Some(total) => total as i64 + delta,
+                None => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "响应没有 Content-Length，无法从末尾定位",
+                    ));
+                }
+            },
+        };
+        if target < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "定位到文件开头之前",
+            ));
+        }
+        // 只记位置不搬数据：真读到这里时 `read` 会等下载追上。
+        self.pos = target as u64;
+        Ok(self.pos)
+    }
+}
+
+type StreamingDecoder = Decoder<BufReader<AudioStream>>;
+
+/// 边下边播的 `rodio::Source`：seek 语义与 [`MemorySource`] 一致，
+/// 只是字节来自还在增长的网络缓冲。
+pub struct StreamingSource {
+    inner: StreamingDecoder,
+    stream: AudioStream,
+}
+
+impl StreamingSource {
+    /// 建立解码器。这里会阻塞到文件头到达（通常几十毫秒），所以要在后台线程调用。
+    pub fn new(stream: AudioStream) -> Result<Self, rodio::decoder::DecoderError> {
+        let inner = Self::build_decoder(&stream)?;
+        Ok(Self { inner, stream })
+    }
+
+    fn build_decoder(
+        stream: &AudioStream,
+    ) -> Result<StreamingDecoder, rodio::decoder::DecoderError> {
+        Decoder::new(BufReader::new(stream.rewind()))
+    }
+
+    /// 交给播放器保管：停止/切歌时用它取消后台下载。
+    fn abandon_handle(&self) -> Arc<StreamState> {
+        Arc::clone(&self.stream.state)
+    }
+
+    /// 与 [`MemorySource::reseek`] 同一套兜底：重建解码器再丢样本。
+    /// 目标位置若还没下到，`read` 会等下载追上——下载通常远快于播放，
+    /// 真正卡住的只有「刚开始就拖到很后面」这种极端情况。
+    fn reseek(&mut self, target: Duration) -> Result<(), SeekError> {
+        let mut decoder =
+            Self::build_decoder(&self.stream).map_err(|error| SeekError::Other(Box::new(error)))?;
+        let target = clamp_seek_target(target, decoder.total_duration());
+        let skip = samples_to_skip(target, decoder.sample_rate(), decoder.channels());
+        for _ in 0..skip {
+            if decoder.next().is_none() {
+                break;
+            }
+        }
+        self.inner = decoder;
+        Ok(())
+    }
+}
+
+impl Iterator for StreamingSource {
+    type Item = f32;
+
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        self.inner.next().map(|sample| sample.to_f32())
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl Source for StreamingSource {
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        self.inner.current_frame_len()
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        self.inner.channels()
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+
+    #[inline]
+    fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
+        if self.inner.try_seek(pos).is_ok() {
+            return Ok(());
+        }
+        self.reseek(pos)
+    }
+}
 /// Number of interleaved samples to drop to reach `target`.
 ///
 /// Saturates to `u64::MAX` instead of overflowing, so a position far past the
@@ -206,6 +485,8 @@ pub struct AudioPlayer {
     sink: Option<Sink>,
     spatial_audio_enabled: Arc<AtomicBool>,
     volume: VolumeMemory,
+    /// 当前边下边播的下载句柄；停止时用它取消后台下载。
+    streaming: Option<Arc<StreamState>>,
 }
 
 impl AudioPlayer {
@@ -218,6 +499,7 @@ impl AudioPlayer {
             sink: None,
             spatial_audio_enabled: Arc::new(AtomicBool::new(false)),
             volume: VolumeMemory::new(),
+            streaming: None,
         })
     }
 
@@ -231,6 +513,22 @@ impl AudioPlayer {
         let sink =
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
         // 新 sink 默认音量是 1.0，先把用户设置的音量套上再出声。
+        self.volume.apply_to(&sink);
+        sink.append(SpatialSource::new(
+            source,
+            Arc::clone(&self.spatial_audio_enabled),
+        ));
+        sink.play();
+        self.sink = Some(sink);
+        Ok(())
+    }
+
+    /// 边下边播：解码器一拿到文件头就开始出声，整曲在后台继续下载。
+    pub fn play_stream(&mut self, source: StreamingSource) -> Result<(), String> {
+        self.stop();
+        self.streaming = Some(source.abandon_handle());
+        let sink =
+            Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
         self.volume.apply_to(&sink);
         sink.append(SpatialSource::new(
             source,
@@ -284,6 +582,10 @@ impl AudioPlayer {
     }
 
     pub fn stop(&mut self) {
+        // 先叫停后台下载：切歌时旧歌曲没必要继续下完。
+        if let Some(state) = self.streaming.take() {
+            state.abandon();
+        }
         if let Some(sink) = self.sink.take() {
             sink.stop();
         }
@@ -294,12 +596,22 @@ fn sink_finished(sink: Option<&Sink>) -> bool {
     sink.is_some_and(Sink::empty)
 }
 
+/// 音频与封面下载复用的 HTTP 客户端。
+///
+/// 同一批封面往往来自同一个 CDN，复用连接后 24 张封面不必做 24 次 TLS 握手。
 fn http_agent(use_proxy: bool) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .try_proxy_from_env(use_proxy)
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .build()
+    static DIRECT: OnceLock<ureq::Agent> = OnceLock::new();
+    static PROXIED: OnceLock<ureq::Agent> = OnceLock::new();
+    let cached = if use_proxy { &PROXIED } else { &DIRECT };
+    cached
+        .get_or_init(|| {
+            ureq::AgentBuilder::new()
+                .try_proxy_from_env(use_proxy)
+                .timeout_connect(Duration::from_secs(10))
+                .timeout_read(Duration::from_secs(30))
+                .build()
+        })
+        .clone()
 }
 
 pub fn download_audio_with_proxy(url: &str, use_proxy: bool) -> Result<Vec<u8>, String> {
@@ -336,6 +648,14 @@ pub fn download_audio_with_proxy(url: &str, use_proxy: bool) -> Result<Vec<u8>, 
     // `Arc` 常驻到切歌为止，先把多余容量还回去，避免白白多占峰值内存。
     bytes.shrink_to_fit();
     Ok(bytes)
+}
+
+/// 打开「边下边播」的音频源：只等响应头 + 文件头，不等整曲下载完。
+///
+/// 整曲仍会在后台继续下载（供 seek 使用），但第一帧音频通常几百毫秒内就能出声。
+pub fn open_streaming_source(url: &str, use_proxy: bool) -> Result<StreamingSource, String> {
+    let stream = AudioStream::open(url, use_proxy)?;
+    StreamingSource::new(stream).map_err(|error| format!("无法解码音频: {error}"))
 }
 
 pub fn download_audio(url: &str) -> Result<Vec<u8>, String> {
@@ -433,12 +753,13 @@ fn artwork_target_size(width: u32, height: u32) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ARTWORK_MAX_EDGE, MemorySource, artwork_pixels_allowed, artwork_target_size,
-        clamp_seek_target, normalize_artwork, samples_to_skip, sink_finished,
+        ARTWORK_MAX_EDGE, AudioStream, MemorySource, StreamingSource, artwork_pixels_allowed,
+        artwork_target_size, clamp_seek_target, lock, normalize_artwork, samples_to_skip,
+        sink_finished,
     };
     use crate::audio_effects::SpatialSource;
     use rodio::{Sink, Source};
-    use std::io::Cursor;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
@@ -552,6 +873,93 @@ mod tests {
         // Native WAV seek: half a second leaves half the samples.
         assert!(source.try_seek(Duration::from_millis(500)).is_ok());
         assert_eq!(source.count(), 8_000);
+    }
+
+
+    /// 分批、带间隔地吐字节，模拟「还在下载」的响应体。
+    struct TrickleReader {
+        bytes: Vec<u8>,
+        pos: usize,
+    }
+
+    impl Read for TrickleReader {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.bytes.len() {
+                return Ok(0);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            let count = out.len().min(2_048).min(self.bytes.len() - self.pos);
+            out[..count].copy_from_slice(&self.bytes[self.pos..self.pos + count]);
+            self.pos += count;
+            Ok(count)
+        }
+    }
+
+    /// 边下边播：文件还在下载时就应该能解码出音频，而不是等整曲。
+    #[test]
+    fn streaming_source_decodes_while_the_body_is_still_arriving() {
+        let bytes = silent_wav(8_000, 2, 8_000);
+        let total = bytes.len() as u64;
+        let stream = AudioStream::spawn(Box::new(TrickleReader { bytes, pos: 0 }), Some(total));
+        let mut source = StreamingSource::new(stream).expect("streaming wav should decode");
+
+        assert_eq!(source.channels(), 2);
+        assert_eq!(source.sample_rate(), 8_000);
+        // 关键点：解码器就绪时整曲其实还没下完（TrickleReader 每 2ms 才给 2KB）。
+        let downloaded = lock(&source.stream.state).buffer.len();
+        assert!(
+            downloaded < total as usize,
+            "应当在整曲下完之前就开始解码，已下载 {downloaded}/{total}"
+        );
+        assert!(source.next().is_some());
+    }
+
+    /// 流式源的 seek 必须与内存源一致：同一套解码器，只是字节来自还在增长的缓冲。
+    #[test]
+    fn streaming_seek_matches_the_in_memory_source() {
+        let bytes = silent_wav(8_000, 2, 8_000);
+
+        let mut memory = MemorySource::from_bytes(Arc::new(bytes.clone())).expect("wav");
+        assert!(memory.try_seek(Duration::from_millis(500)).is_ok());
+        let memory_rest = memory.count();
+
+        let total = bytes.len() as u64;
+        let stream = AudioStream::spawn(Box::new(TrickleReader { bytes, pos: 0 }), Some(total));
+        let mut streaming = StreamingSource::new(stream).expect("wav");
+        assert!(streaming.try_seek(Duration::from_millis(500)).is_ok());
+
+        assert_eq!(streaming.count(), memory_rest);
+        assert_eq!(memory_rest, 8_000);
+    }
+
+    /// `SeekFrom::End` 依赖响应头里的 `Content-Length`；拿不到时必须明确报错，
+    /// 而不是按错误的位置继续解码。
+    #[test]
+    fn streaming_seek_from_end_needs_a_known_length() {
+        let bytes = silent_wav(8_000, 2, 100);
+        let mut known =
+            AudioStream::spawn(Box::new(Cursor::new(bytes.clone())), Some(bytes.len() as u64));
+        assert_eq!(known.seek(SeekFrom::End(0)).unwrap(), bytes.len() as u64);
+
+        let mut unknown = AudioStream::spawn(Box::new(Cursor::new(bytes)), None);
+        assert!(unknown.seek(SeekFrom::End(0)).is_err());
+    }
+
+    /// 切歌后旧歌曲的后台下载应当立刻收工，而不是继续把整曲下完。
+    #[test]
+    fn abandoning_a_stream_stops_the_background_download() {
+        // 约 400 KB：TrickleReader 每 2ms 才给 2KB，整曲要下 400ms 左右。
+        let bytes = silent_wav(8_000, 2, 100_000);
+        let total = bytes.len() as u64;
+        let stream = AudioStream::spawn(Box::new(TrickleReader { bytes, pos: 0 }), Some(total));
+        stream.abandon();
+        std::thread::sleep(Duration::from_millis(80));
+
+        let downloaded = lock(&stream.state).buffer.len();
+        assert!(
+            downloaded < total as usize,
+            "取消后不该把整曲下完，已下载 {downloaded}/{total}"
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use md5::{Digest, Md5};
@@ -408,6 +409,24 @@ fn http_error_message(error: ureq::Error) -> String {
     }
 }
 
+/// 音源脚本发请求时复用的 HTTP 客户端。
+///
+/// 脚本解析一首歌往往要连打几个接口，每个请求都新建 `Agent` 就等于每次都重做
+/// 一遍 TCP + TLS 握手；复用同一个实例后同一主机的后续请求走 keep-alive。
+fn shared_agent(use_proxy: bool) -> ureq::Agent {
+    static DIRECT: OnceLock<ureq::Agent> = OnceLock::new();
+    static PROXIED: OnceLock<ureq::Agent> = OnceLock::new();
+    let cached = if use_proxy { &PROXIED } else { &DIRECT };
+    cached
+        .get_or_init(|| {
+            ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(15))
+                .try_proxy_from_env(use_proxy)
+                .build()
+        })
+        .clone()
+}
+
 fn http_request_json(
     url: &str,
     method: &str,
@@ -417,10 +436,7 @@ fn http_request_json(
 ) -> Result<String, String> {
     let headers: BTreeMap<String, String> =
         serde_json::from_str(headers_json).map_err(|error| format!("请求头格式无效：{error}"))?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let mut request = agent.request(method, url);
     for (name, value) in headers {
         request = request.set(&name, &value);
