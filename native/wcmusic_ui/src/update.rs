@@ -12,16 +12,13 @@ use serde::{Deserialize, Serialize};
 /// 项目仓库（与「关于」页展示的地址一致）。
 pub const REPOSITORY_URL: &str = "https://github.com/YMRwithNoworry/wcmusic";
 
-/// 发布仓库：安装包（`wcmusic-windows-x64.zip` / `wcmusic-android-arm64.apk`）
-/// 走 GitHub Release 放在这里，和源码仓库分开，避免大文件拖慢 clone。
-pub const RELEASES_REPOSITORY_URL: &str = "https://github.com/YMRwithNoworry/wcmusic-releases";
 
 /// GitHub 发布列表接口（取第一条即最新发布）。
 ///
 /// 不用 `/releases/latest`：仓库还没发布过版本时它返回 404，而列表接口会正常
 /// 返回 `[]`，两种情况都能走同一条「解析不出 tag 就是暂无版本」的路径。
 const LATEST_RELEASE_ENDPOINT: &str =
-    "https://api.github.com/repos/YMRwithNoworry/wcmusic-releases/releases?per_page=1";
+    "https://api.github.com/repos/YMRwithNoworry/wcmusic/releases?per_page=1";
 
 /// 检测结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,7 +121,7 @@ fn parse_release_url(body: &str) -> Option<String> {
     let release = parse_latest_release(body)?;
     match release.get("html_url").and_then(serde_json::Value::as_str) {
         Some(url) => Some(url.to_owned()),
-        None => Some(RELEASES_REPOSITORY_URL.to_owned()),
+        None => Some(REPOSITORY_URL.to_owned()),
     }
 }
 
@@ -263,7 +260,7 @@ mod tests {
         let outdated = UpdateCheck {
             current_version: "1.2.2".to_owned(),
             latest_version: Some("1.3.0".to_owned()),
-            release_url: Some(RELEASES_REPOSITORY_URL.to_owned()),
+            release_url: Some(REPOSITORY_URL.to_owned()),
         };
         assert!(outdated.update_available());
         assert_eq!(outdated.summary(), "发现新版本 1.3.0（当前 1.2.2）");

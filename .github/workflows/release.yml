@@ -1,0 +1,187 @@
+name: Release
+
+# 每次推送到 main：递增版本号 -> 构建 Windows / Android -> 发布 GitHub Release -> 同步官网。
+# 版本号提交与官网提交都带 [skip ci]，所以不会自己触发自己。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 版本号递增方式
+        type: choice
+        options: [patch, minor, major, none]
+        default: patch
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: 递增版本号
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      previous: ${{ steps.bump.outputs.previous }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: bump
+        name: 计算新版本号
+        run: node scripts/release/bump-version.mjs "${{ inputs.bump || 'patch' }}"
+      - name: 提交版本号
+        run: |
+          set -e
+          if git diff --quiet; then
+            echo "版本号未变化，跳过提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/wcmusic_ui/Cargo.toml native/wcmusic_ui/Cargo.lock pubspec.yaml
+          git commit -m "chore(release): ${{ steps.bump.outputs.tag }} [skip ci]"
+          git push origin main
+
+  windows:
+    name: 构建 Windows 包
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/wcmusic_ui
+      - name: cargo build --release
+        run: cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+      - name: 打包 zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item native\wcmusic_ui\target\release\wcmusic_ui.exe dist\wcmusic_ui.exe
+          Compress-Archive -Path dist\wcmusic_ui.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
+          Get-Item dist\wcmusic-windows-x64.zip | Format-List Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/wcmusic-windows-x64.zip
+          if-no-files-found: error
+
+  # Android 端依赖 cargo-ndk 与 NDK，属于尽力而为：失败也不影响 Windows 包发布，
+  # 只是本次 Release 不带 APK（官网的 Android 链接会保持原样）。
+  android:
+    name: 构建 Android 包
+    needs: version
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.8"
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/wcmusic_core
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - run: flutter pub get
+      - name: flutter build apk
+        run: flutter build apk --release --target-platform android-arm64
+      - name: 收集 APK
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/wcmusic-android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/wcmusic-android-arm64.apk
+          if-no-files-found: error
+
+  release:
+    name: 发布 Release 并同步官网
+    needs: [version, windows, android]
+    if: ${{ always() && needs.version.result == 'success' && needs.windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: android
+          path: dist
+      - name: 检查资产
+        id: assets
+        run: |
+          set -e
+          ls -la dist
+          if [ -f dist/wcmusic-android-arm64.apk ]; then
+            echo "android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Android 构建没有产出 APK，本次 Release 只包含 Windows 包"
+          fi
+      - name: 生成 Release 说明与官网改动
+        run: |
+          node scripts/release/sync-site.mjs \
+            --version "${{ needs.version.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --previous "v${{ needs.version.outputs.previous }}" \
+            --android "${{ steps.assets.outputs.android }}" \
+            --notes release-notes.md
+          git --no-pager diff --stat
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          assets="dist/wcmusic-windows-x64.zip"
+          if [ -f dist/wcmusic-android-arm64.apk ]; then
+            assets="$assets dist/wcmusic-android-arm64.apk"
+          fi
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --target main \
+            --title "WCMusic ${{ needs.version.outputs.version }}" \
+            --notes-file release-notes.md \
+            $assets
+      - name: 提交官网改动
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/index.html site/app.js
+          if git diff --cached --quiet; then
+            echo "官网无需改动"
+            exit 0
+          fi
+          git commit -m "chore(site): 同步 v${{ needs.version.outputs.version }} [skip ci]"
+          git push origin main

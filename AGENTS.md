@@ -63,7 +63,8 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
 - Windows 侧只改 Flutter 代码不会影响桌面客户端，桌面 UI 的改动要落在 `native/wcmusic_ui`。
 - 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.3）。
-- 安装包发布在**独立的发布仓库** `YMRwithNoworry/wcmusic-releases`（不是源码仓库）：`gh release create v<版本> -R YMRwithNoworry/wcmusic-releases --title "WCMusic <版本>" --notes-file <notes> <zip> <apk>`，资产名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`。发布后要同步 `site/index.html` 与 `site/app.js` 里的下载链接和版本号；应用内更新检测（`native/wcmusic_ui/src/update.rs`）查的也是这个发布仓库。
+- **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步 `Cargo.toml` / `Cargo.lock` / `pubspec.yaml`）→ 构建 Windows 包（必成）与 Android 包（尽力而为，失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。
+- 安装包发布在**源码仓库** `YMRwithNoworry/wcmusic` 的 Release 里（历史版本仍留在 `YMRwithNoworry/wcmusic-releases`），资产名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`；应用内更新检测（`native/wcmusic_ui/src/update.rs`）查的就是源码仓库的 Release。
 - Android 侧 `:app:buildRustCore` 依赖 `cargo-ndk` 与 `aarch64-linux-android` target，本机都没装（`rustup target list --installed` 只有两个 Windows target），需要先 `rustup target add aarch64-linux-android` 与 `cargo install cargo-ndk` 才能重新构建 APK。
 
 ## 代码约定
