@@ -3626,24 +3626,30 @@ impl MusicApp {
                 } else {
                     translation_button.ghost()
                 };
+                // 退出按钮：回到普通页面。
+                //
+                // 之前只能靠 Esc 或再点一次封面退出，入口太隐蔽；这里给一个显式按钮。
+                let exit_button = Button::new("now-playing-exit-button")
+                    .small()
+                    .ghost()
+                    .icon(IconName::Close)
+                    .tooltip("退出歌曲详情页")
+                    .accessibility_label("退出歌曲详情页")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)));
                 div()
-                    // 「翻译」快捷开关：只保留按钮本身的一小块遮挡区。
+                    // 「翻译 / 退出」两个按钮的遮挡区。
                     //
                     // 下面的歌词每一行都是整行可点（点了跳转到该行）；按钮周围
                     // 的留白如果完全不挡，点偏几像素就会落到歌词行上执行 seek。
-                    // 之前这里连着「返回」按钮一起铺了 146×60 的死区，返回按钮
-                    // 去掉后把遮挡区收到贴着按钮的大小，避免大块空白挡住歌词行点击
-                    // （退出专享模式改走 Esc / 底栏封面）。
+                    // 遮挡区只包住这两个按钮，不再铺满右上角，避免挡住歌词行点击。
                     .id("now-playing-exit")
                     .occlude()
                     .absolute()
                     .top_0()
                     .right_0()
-                    .w(px(84.0))
-                    .h(px(44.0))
                     .flex()
-                    .justify_end()
-                    .items_start()
+                    .items_center()
+                    .gap_2()
                     .p(px(6.0))
                     .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
                     .child(translation_button.on_click(cx.listener(|this, _, _, cx| {
@@ -3651,6 +3657,7 @@ impl MusicApp {
                             style.show_translation = !style.show_translation
                         })
                     })))
+                    .child(exit_button)
             })
             .into_any_element()
     }
