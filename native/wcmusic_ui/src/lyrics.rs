@@ -300,6 +300,23 @@ const ANIMATION_SECONDS: f32 = 0.42;
 /// How far the smoothed karaoke position may run ahead of the real playback position.
 const KARAOKE_LEAD_MS: f32 = 320.0;
 
+/// 位置外推的上限。
+///
+/// 主程序 250ms 推一次播放位置，超出这个跨度说明回调断了（暂停、卡顿、窗口被挂起），
+/// 此时不能再往前猜，否则歌词会跑飞。
+const POSITION_EXTRAPOLATION_LIMIT_MS: u64 = 400;
+
+/// 把「采样到的播放位置」外推到当前时刻。
+///
+/// 位置回调是 250ms 粒度，只按回调切行会让歌词稳定慢半拍：这一拍里音乐早就唱到
+/// 下一句了。播放中用真实经过时间补齐，暂停或回调超时则保持原值。
+fn extrapolate_position_ms(position_ms: u64, playing: bool, since_sample_ms: u64) -> u64 {
+    if !playing {
+        return position_ms;
+    }
+    position_ms.saturating_add(since_sample_ms.min(POSITION_EXTRAPOLATION_LIMIT_MS))
+}
+
 /// 可选字体，与主界面设置共用。第一项是默认字体（程序内置 MiSans）。
 pub const FONT_FAMILIES: [&str; 7] = [
     "MiSans",
@@ -1222,6 +1239,11 @@ pub struct LyricsOverlay {
     raw_position_ms: u64,
     /// 应用歌词偏移后的播放位置。
     position_ms: u64,
+    /// 上一次收到播放位置的时刻。
+    ///
+    /// 主程序每 250ms 推一次位置，歌词窗口如果只在这时候更新行，歌词就会整体慢
+    /// 一拍。记下采样时刻后，帧钟可以把位置外推到「现在」，歌词随之提前对上。
+    position_sampled_at: Option<std::time::Instant>,
     /// 平滑后的播放位置，让逐字填充在 250ms 的进度回调之间也能连续推进。
     smooth_position_ms: f32,
     playing: bool,
@@ -1267,6 +1289,7 @@ impl LyricsOverlay {
             current_index: None,
             raw_position_ms: 0,
             position_ms: 0,
+            position_sampled_at: None,
             smooth_position_ms: 0.0,
             playing: false,
             message: Some("正在加载歌词…".into()),
@@ -1331,7 +1354,20 @@ impl LyricsOverlay {
 
     pub fn set_position(&mut self, position_ms: u64, cx: &mut Context<Self>) {
         self.raw_position_ms = position_ms;
+        self.position_sampled_at = Some(std::time::Instant::now());
         self.apply_position(cx);
+    }
+
+    /// 把「上一次采样到的位置」外推到当前时刻。
+    ///
+    /// 位置回调是 250ms 粒度，只靠它切行会让歌词稳定慢半拍；播放中用真实经过时间
+    /// 外推就没有这一拍。暂停、位移不明显或时钟缺失时保持原值。
+    fn extrapolated_position_ms(&self) -> u64 {
+        let since_sample = self
+            .position_sampled_at
+            .map(|sampled_at| sampled_at.elapsed().as_millis() as u64)
+            .unwrap_or_default();
+        extrapolate_position_ms(self.position_ms, self.playing, since_sample)
     }
 
     fn apply_position(&mut self, cx: &mut Context<Self>) {
@@ -1545,8 +1581,10 @@ impl LyricsOverlay {
             self.current_index = None;
         } else {
             let mut index = 0;
+            // 用外推后的位置：两次位置回调之间也要能按时切行。
+            let position_ms = self.extrapolated_position_ms();
             for (line_index, line) in self.lines.iter().enumerate() {
-                if line.time_ms <= self.position_ms {
+                if line.time_ms <= position_ms {
                     index = line_index;
                 } else {
                     break;
@@ -1636,7 +1674,9 @@ impl LyricsOverlay {
             }
         }
         if self.karaoke_running() {
-            let target = self.position_ms as f32;
+            // 先按外推位置补一次行号：位置回调之间也要按时切到下一句。
+            self.update_index();
+            let target = self.extrapolated_position_ms() as f32;
             if self.smooth_position_ms < target {
                 self.smooth_position_ms = target;
             } else {
@@ -2719,6 +2759,19 @@ impl Render for LyricsOverlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 桌面歌词的位置外推：补齐 250ms 回调之间的空档，但不能无限往前猜。
+    #[test]
+    fn position_is_extrapolated_between_callbacks() {
+        // 播放中：按经过时间补齐，歌词才追得上音乐。
+        assert_eq!(extrapolate_position_ms(1_000, true, 120), 1_120);
+        // 暂停时保持采样值，不继续往前跑。
+        assert_eq!(extrapolate_position_ms(1_000, false, 120), 1_000);
+        // 超过上限说明位置回调断了（卡顿 / 挂起），最多补到上限。
+        assert_eq!(extrapolate_position_ms(1_000, true, 10_000), 1_400);
+        // 边界值本身不被截断。
+        assert_eq!(extrapolate_position_ms(0, true, 400), 400);
+    }
 
     #[test]
     fn parses_standard_lrc_timestamps() {

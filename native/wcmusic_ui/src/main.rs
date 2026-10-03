@@ -2275,7 +2275,8 @@ impl MusicApp {
     /// 把播放状态与进度推给歌词窗口。
     fn sync_lyrics_playback(&self, cx: &mut Context<Self>) {
         if let Some(overlay) = &self.lyrics_overlay {
-            let position_ms = self.elapsed_ms;
+            // 推新鲜的播放位置：歌词窗口靠它对齐，用 250ms 缓存值会整体慢一拍。
+            let position_ms = self.lyric_position_ms();
             let playing = self.is_playing;
             overlay.update(cx, |overlay, cx| {
                 overlay.set_playing(playing, cx);
@@ -2638,12 +2639,24 @@ impl MusicApp {
         cx.notify();
     }
 
+    /// 当前播放位置（毫秒），供歌词对齐使用。
+    ///
+    /// 不直接用 250ms 轮询缓存的 `elapsed_ms`：那一拍延迟会原样加到歌词上。
+    fn lyric_position_ms(&self) -> u64 {
+        let fresh = self
+            .audio_player
+            .as_ref()
+            .and_then(AudioPlayer::position)
+            .map(|position| position.as_millis() as u64);
+        lyric_position_ms(self.elapsed_ms, fresh, self.seeking_progress)
+    }
+
     /// 歌词里排在当前播放位置之前的最后一行。
     fn current_lyric_index(&self) -> Option<usize> {
         if self.lyric_lines.is_empty() {
             return None;
         }
-        let offset = (self.elapsed_ms as i64 + self.lyrics_offset_ms()).max(0) as u64;
+        let offset = (self.lyric_position_ms() as i64 + self.lyrics_offset_ms()).max(0) as u64;
         let mut index = 0;
         for (line_index, line) in self.lyric_lines.iter().enumerate() {
             if line.time_ms <= offset {
@@ -2688,7 +2701,8 @@ impl MusicApp {
             None => 0.0,
             Some(previous) => (now - previous).as_secs_f32() * 1000.0,
         };
-        let target = (self.elapsed_ms as i64 + self.lyrics_offset_ms()).max(0) as u64 as f32;
+        let target =
+            (self.lyric_position_ms() as i64 + self.lyrics_offset_ms()).max(0) as u64 as f32;
         self.lyric_karaoke_position_ms =
             advance_karaoke_position(self.lyric_karaoke_position_ms, target, elapsed_ms);
         // 只有真的需要逐字推进时才要求继续出帧。
@@ -6894,6 +6908,18 @@ fn shuffle_next_index(current: usize, len: usize, cursor: u64) -> usize {
     (current + step) % len
 }
 
+/// 歌词使用的播放位置：优先用音频流的新鲜采样，回退到 250ms 轮询的缓存值。
+///
+/// 进度轮询是 250ms 一拍，直接用缓存值去对歌词，歌词最多会慢一整拍——听感就是
+/// 「歌词比音乐慢」。rodio 的位置每 5ms 更新一次，直接问它就没有这一拍延迟。
+/// 拖动进度条时以滑块上的值为准，避免缓存值把拖动位置拽回去。
+fn lyric_position_ms(cached_ms: u64, fresh_ms: Option<u64>, seeking: bool) -> u64 {
+    if seeking {
+        return cached_ms;
+    }
+    fresh_ms.unwrap_or(cached_ms)
+}
+
 /// 推进逐字填充的平滑位置。
 ///
 /// 落后真实播放位置时直接对齐（切歌 / seek / 刚开始 / 掉帧后追上），否则按这一帧
@@ -7815,6 +7841,17 @@ mod tests {
         );
         // 负的间隔（时钟抖动）不能倒退。
         assert_eq!(advance_karaoke_position(5_000.0, 5_000.0, -5.0), 5_000.0);
+    }
+
+    /// 歌词对齐用的是「新鲜」位置：不能用 250ms 缓存值，否则歌词稳定慢一拍。
+    #[test]
+    fn lyrics_prefer_the_fresh_playback_position() {
+        // 有新鲜采样时以它为准（缓存值落后 250ms）。
+        assert_eq!(lyric_position_ms(1_000, Some(1_250), false), 1_250);
+        // 没有新鲜采样（还没起播 / 取不到 sink）时退回缓存值。
+        assert_eq!(lyric_position_ms(1_000, None, false), 1_000);
+        // 拖动进度条时以滑块上的值为准，别被采样位置拽回去。
+        assert_eq!(lyric_position_ms(8_000, Some(1_250), true), 8_000);
     }
 
     #[test]
