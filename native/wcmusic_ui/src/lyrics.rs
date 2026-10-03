@@ -293,6 +293,11 @@ const PANEL_WIDTH: f32 = 392.0;
 const PANEL_TOP: f32 = 42.0;
 const PANEL_LEFT: f32 = 14.0;
 const PANEL_HEIGHT: f32 = 208.0;
+/// 歌词文字、工具条与设置面板共用的左右内边距。
+///
+/// 三处必须一致：之前歌词用 26px、工具条用 12px、面板用 14px，
+/// 右侧看起来就是「歌词比工具条缩进去一截」，贴屏幕边缘时也留着一条空隙。
+const CONTENT_INSET: f32 = 14.0;
 /// 工具条占据的区域，从这里按下不会拖动窗口。
 const TOOLBAR_TOP: f32 = 40.0;
 const TOOLBAR_RESERVED_WIDTH: f32 = 344.0;
@@ -2087,7 +2092,8 @@ impl LyricsOverlay {
         let position = self.displayed_position();
         let enter = self.enter_progress();
         let center_y = height * 0.5;
-        let padding = 26.0;
+        // 与工具条 / 设置面板共用同一内边距，三者左右边缘才对得齐。
+        let padding = CONTENT_INSET;
 
         let mut layer = div().absolute().left_0().top_0().w(px(width)).h(px(height));
         if style.single_line {
@@ -2344,7 +2350,7 @@ impl LyricsOverlay {
         div()
             .absolute()
             .top(px(9.0))
-            .right(px(12.0))
+            .right(px(CONTENT_INSET))
             .flex()
             .items_center()
             .gap(px(4.0))
@@ -3015,6 +3021,17 @@ mod tests {
                 assert_eq!(highlight, 0.0, "第 {index} 行不应被染色");
             }
         }
+    }
+
+    /// 歌词文字、工具条与设置面板必须共用同一左右内边距：
+    /// 三者不一致时右侧会出现「歌词缩进、工具条贴边」的错位，
+    /// 也就无法把内容对齐到屏幕边缘。
+    #[test]
+    fn lyrics_ui_shares_one_horizontal_inset() {
+        // 歌词行的左右内边距、工具条的右边距、面板的左边距都取同一常量，
+        // 这里把它固定下来，避免以后又各自写死不同的数值。
+        assert_eq!(CONTENT_INSET, 14.0);
+        assert_eq!(PANEL_LEFT, CONTENT_INSET, "设置面板左边距要和歌词内边距一致");
     }
 
     #[test]
