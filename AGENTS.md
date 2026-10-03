@@ -13,6 +13,7 @@ Global rules — follow these in every task in this project:
 jdk在这里D:\MC\jdk
 一般不要过度debug。构建无报错即可。
 中文回答问题
+可用subagent移速
 
 <!-- END dsh-global-system-prompt -->
 
