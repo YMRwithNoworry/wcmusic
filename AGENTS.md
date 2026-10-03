@@ -62,7 +62,9 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - `rquickjs-sys` 的构建脚本要调用 C 编译器（MSVC + Windows SDK）。`native/wcmusic_core/target` 和 `native/wcmusic_ui/target` 里的既有产物由 `stable-x86_64-pc-windows-msvc` 工具链生成；本机目前只有 gnu 工具链且没有 gcc/cl.exe，`cargo check` 会停在 `cc-rs: failed to find tool "gcc.exe"` —— 属环境缺工具链，不是代码问题，不要为此改代码。
 - `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
 - Windows 侧只改 Flutter 代码不会影响桌面客户端，桌面 UI 的改动要落在 `native/wcmusic_ui`。
-- 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.1）。
+- 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.3）。
+- 安装包发布在**独立的发布仓库** `YMRwithNoworry/wcmusic-releases`（不是源码仓库）：`gh release create v<版本> -R YMRwithNoworry/wcmusic-releases --title "WCMusic <版本>" --notes-file <notes> <zip> <apk>`，资产名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`。发布后要同步 `site/index.html` 与 `site/app.js` 里的下载链接和版本号；应用内更新检测（`native/wcmusic_ui/src/update.rs`）查的也是这个发布仓库。
+- Android 侧 `:app:buildRustCore` 依赖 `cargo-ndk` 与 `aarch64-linux-android` target，本机都没装（`rustup target list --installed` 只有两个 Windows target），需要先 `rustup target add aarch64-linux-android` 与 `cargo install cargo-ndk` 才能重新构建 APK。
 
 ## 代码约定
 
