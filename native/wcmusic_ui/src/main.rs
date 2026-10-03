@@ -520,7 +520,6 @@ struct MusicApp {
     current_online_track: Option<TrackRow>,
     is_playing: bool,
     show_now_playing: bool,
-    effects_panel_open: bool,
     volume: f32,
     /// 静音前的音量，用于取消静音。
     muted_volume: Option<f32>,
@@ -658,7 +657,6 @@ impl MusicApp {
             current_online_track: None,
             is_playing: false,
             show_now_playing: false,
-            effects_panel_open: false,
             volume: 0.8,
             muted_volume: None,
             progress_slider: None,
@@ -2665,7 +2663,6 @@ impl MusicApp {
 
     fn close_now_playing(&mut self, cx: &mut Context<Self>) {
         self.show_now_playing = false;
-        self.effects_panel_open = false;
         cx.notify();
     }
 
@@ -3559,15 +3556,6 @@ impl MusicApp {
         div()
             .size_full()
             .relative()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                    if this.effects_panel_open {
-                        this.effects_panel_open = false;
-                        cx.notify();
-                    }
-                }),
-            )
             .flex()
             .gap_10()
             .child(
@@ -3665,65 +3653,6 @@ impl MusicApp {
                     })))
             })
             .into_any_element()
-    }
-
-    fn spatial_audio_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Palette::new(cx);
-        let enabled = self.spatial_audio_enabled;
-
-        div()
-            .id("now-playing-effects-panel")
-            .absolute()
-            .bottom(px(42.0))
-            .right_0()
-            .w(px(280.0))
-            .p(px(14.0))
-            .rounded_md()
-            .bg(p.surface)
-            .border_1()
-            .border_color(p.border)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
-            )
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(p.foreground)
-                                    .child("空间音效"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(if enabled { p.primary } else { p.muted })
-                                    .child(if enabled { "已开启" } else { "已关闭" }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("now-playing-spatial-audio-toggle")
-                            .w(px(40.0))
-                            .h(px(22.0))
-                            .px(px(3.0))
-                            .rounded(px(999.0))
-                            .bg(if enabled { p.primary } else { p.track })
-                            .flex()
-                            .items_center()
-                            .when(enabled, |this| this.justify_end())
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_spatial_audio(cx)))
-                            .child(div().size(px(16.0)).rounded(px(999.0)).bg(p.background)),
-                    ),
-            )
     }
 
     /// 歌词面板：当前行高亮居中，前后几句淡出，点歌词可跳转。
@@ -6160,15 +6089,6 @@ impl MusicApp {
             .border_t_1()
             .border_color(p.border)
             .relative()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                    if this.effects_panel_open {
-                        this.effects_panel_open = false;
-                        cx.notify();
-                    }
-                }),
-            )
             .flex()
             .flex_col()
             .gap_2()
@@ -6351,9 +6271,6 @@ impl MusicApp {
                             .child(
                                 div()
                                     .relative()
-                                    .when(self.show_now_playing, |this| {
-                                        this.child(self.spatial_audio_panel(cx))
-                                    })
                                     .child(
                                         div()
                                             .on_mouse_down(
@@ -6363,38 +6280,26 @@ impl MusicApp {
                                                 }),
                                             )
                                             .child(
+                                                // 直接开关空间音效：不再弹出只有单个开关的卡片。
                                                 Button::new("player-spatial-audio")
-                                                    .selected(
-                                                        self.effects_panel_open
-                                                            || self.spatial_audio_enabled,
-                                                    )
-                                                    .when(
-                                                        self.effects_panel_open
-                                                            || self.spatial_audio_enabled,
-                                                        |this| {
-                                                            this.bg(bar_accent)
-                                                                .text_color(p.primary_foreground)
-                                                        },
-                                                    )
-                                                    .when(
-                                                        !self.effects_panel_open
-                                                            && !self.spatial_audio_enabled,
-                                                        |this| this.ghost().text_color(p.muted),
-                                                    )
+                                                    .selected(self.spatial_audio_enabled)
+                                                    .when(self.spatial_audio_enabled, |this| {
+                                                        this.bg(bar_accent)
+                                                            .text_color(p.primary_foreground)
+                                                    })
+                                                    .when(!self.spatial_audio_enabled, |this| {
+                                                        this.ghost().text_color(p.muted)
+                                                    })
                                                     .small()
                                                     .icon(gpui_kit::assets::IconName::AudioLines)
-                                                    .tooltip(if self.effects_panel_open {
-                                                        "关闭空间音效设置"
-                                                    } else if self.spatial_audio_enabled {
-                                                        "空间音效设置（已开启）"
+                                                    .tooltip(if self.spatial_audio_enabled {
+                                                        "关闭空间音效"
                                                     } else {
-                                                        "空间音效设置（已关闭）"
+                                                        "开启空间音效"
                                                     })
                                                     .accessibility_label("空间音效")
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.effects_panel_open =
-                                                            !this.effects_panel_open;
-                                                        cx.notify();
+                                                        this.toggle_spatial_audio(cx)
                                                     })),
                                             ),
                                     ),
@@ -6583,12 +6488,7 @@ impl Render for MusicApp {
             // `stop_propagation`，所以设置浮层 / 右键菜单打开时不会误退出专享模式。
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if this.show_now_playing && is_escape(event) {
-                    if this.effects_panel_open {
-                        this.effects_panel_open = false;
-                        cx.notify();
-                    } else {
-                        this.close_now_playing(cx);
-                    }
+                    this.close_now_playing(cx);
                     cx.stop_propagation();
                 }
             }))
