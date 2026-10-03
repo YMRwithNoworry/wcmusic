@@ -1667,6 +1667,22 @@ impl LyricsOverlay {
         cx.notify();
     }
 
+    /// 清空歌词与提示。
+    ///
+    /// 没有歌曲在放时桌面歌词应该彻底空着：挂一句「暂无歌词」等于在桌面上
+    /// 常驻一块文字，比不显示更打扰。真正有歌曲但拿不到歌词时仍然走
+    /// [`Self::set_lyrics`] 的「暂无歌词」提示。
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.lines.clear();
+        self.current_index = None;
+        self.animation_progress = 1.0;
+        self.animating = false;
+        self.last_frame_at = None;
+        self.message = None;
+        self.measure_cache.borrow_mut().clear();
+        cx.notify();
+    }
+
     pub fn set_message(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.lines.clear();
         self.current_index = None;

@@ -2289,7 +2289,8 @@ impl MusicApp {
             self.reset_lyric_scroll();
             self.reset_lyric_karaoke();
             if let Some(overlay) = &self.lyrics_overlay {
-                overlay.update(cx, |overlay, cx| overlay.set_lyrics(Vec::new(), cx));
+                // 没有歌曲：桌面歌词整块留空，不要挂「暂无歌词」。
+                overlay.update(cx, |overlay, cx| overlay.clear(cx));
             }
             cx.notify();
             return;
