@@ -1,6 +1,6 @@
 use std::io::{BufReader, Cursor, Read};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::audio_effects::SpatialSource;
@@ -155,11 +155,40 @@ fn clamp_seek_target(target: Duration, total: Option<Duration>) -> Duration {
     }
 }
 
+/// 播放器音量：跟着播放器走，而不是只挂在当前 sink 上。
+///
+/// rodio 的 `Sink` 每次 `play()` 都会重建，默认音量是 1.0。用户完全可能在
+/// 播放前就调好了音量，所以音量必须存在播放器这一层，新 sink 建好后立刻套用；
+/// 否则「先调音量再播放」会被默认音量覆盖，直到用户再动一下滑块才生效。
+#[derive(Clone)]
+struct VolumeMemory(Arc<AtomicU32>);
+
+impl VolumeMemory {
+    fn new() -> Self {
+        // 与 rodio Sink 的默认音量保持一致。
+        Self(Arc::new(AtomicU32::new(1.0f32.to_bits())))
+    }
+
+    fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    fn set(&self, volume: f32) {
+        self.0.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// 把记住的音量套用到（通常是刚建好的）sink 上。
+    fn apply_to(&self, sink: &Sink) {
+        sink.set_volume(self.get());
+    }
+}
+
 pub struct AudioPlayer {
     _stream: OutputStream,
     handle: OutputStreamHandle,
     sink: Option<Sink>,
     spatial_audio_enabled: Arc<AtomicBool>,
+    volume: VolumeMemory,
 }
 
 impl AudioPlayer {
@@ -171,6 +200,7 @@ impl AudioPlayer {
             handle,
             sink: None,
             spatial_audio_enabled: Arc::new(AtomicBool::new(false)),
+            volume: VolumeMemory::new(),
         })
     }
 
@@ -183,6 +213,8 @@ impl AudioPlayer {
             MemorySource::from_bytes(bytes).map_err(|error| format!("无法解码音频: {error}"))?;
         let sink =
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
+        // 新 sink 默认音量是 1.0，先把用户设置的音量套上再出声。
+        self.volume.apply_to(&sink);
         sink.append(SpatialSource::new(
             source,
             Arc::clone(&self.spatial_audio_enabled),
@@ -217,8 +249,10 @@ impl AudioPlayer {
     }
 
     pub fn set_volume(&self, volume: f32) {
+        // 先记住，再应用到当前 sink；没有 sink 时（尚未播放）也不会丢。
+        self.volume.set(volume);
         if let Some(sink) = &self.sink {
-            sink.set_volume(volume.clamp(0.0, 1.0));
+            self.volume.apply_to(sink);
         }
     }
 
@@ -334,6 +368,36 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
+
+/// 复现并锁定 bug：播放前调音量时 sink 还不存在，
+    /// 之后 play() 建的新 sink 必须沿用用户调好的音量，而不是 rodio 默认的 1.0。
+    #[test]
+    fn volume_set_before_playback_survives_the_new_sink() {
+        let volume = super::VolumeMemory::new();
+        assert_eq!(volume.get(), 1.0, "初始音量应与 rodio 默认值一致");
+
+        // 尚未播放：只记住音量。
+        volume.set(0.35);
+        assert_eq!(volume.get(), 0.35);
+
+        // play() 新建 sink 后套用记住的音量。
+        let (sink, _output) = Sink::new_idle();
+        volume.apply_to(&sink);
+        assert!(
+            (sink.volume() - 0.35).abs() < 1e-6,
+            "新 sink 应沿用播放前设置的音量，实际为 {}",
+            sink.volume()
+        );
+    }
+
+    #[test]
+    fn volume_is_clamped_to_the_usable_range() {
+        let volume = super::VolumeMemory::new();
+        volume.set(1.8);
+        assert_eq!(volume.get(), 1.0);
+        volume.set(-0.5);
+        assert_eq!(volume.get(), 0.0);
+    }
 
     #[test]
     fn samples_to_skip_matches_interleaved_frame_math() {
