@@ -44,7 +44,8 @@ use wcmusic_core::{
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
 use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
-    LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore, fetch_lyrics, tint,
+    LyricLine, LyricsAnimation, LyricsOverlay, LyricsStyle, LyricsStyleStore,
+    fetch_lyrics_with_translation, tint,
 };
 use crate::settings::{
     AppSettings, HotKeySettings, PlaybackMode, SavedPlaylist, SavedTrack,
@@ -2301,7 +2302,8 @@ impl MusicApp {
         self.lyric_lines_loading = true;
         self.lyric_lines_error = None;
         cx.notify();
-        let task = cx.background_spawn(async move { fetch_lyrics(&track, use_proxy) });
+        let task = cx
+            .background_spawn(async move { fetch_lyrics_with_translation(&track, use_proxy) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -5783,7 +5785,7 @@ impl MusicApp {
                     setting_toggle_row(
                         "歌词翻译",
                         self.lyrics.show_translation,
-                        "网易云与 QQ 音乐提供逐行翻译时随歌词显示",
+                        "平台提供逐行翻译时直接显示，否则自动调用在线翻译补全",
                         p,
                     )
                     .id("setting-lyrics-translation")

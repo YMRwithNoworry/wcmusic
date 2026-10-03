@@ -7,8 +7,8 @@
 //! * 文本带描边，保证在任何壁纸下都能看清；
 //! * 锁定后窗口对鼠标完全穿透，解锁后可以用工具条调字号、改颜色、锁定与关闭。
 
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use regex::Regex;
@@ -522,7 +522,8 @@ fn finite_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
 pub struct LyricLine {
     pub time_ms: u64,
     pub text: String,
-    /// 翻译（网易云、QQ 音乐提供），由设置决定是否显示。
+    /// 逐行翻译：网易云、QQ 音乐直接提供，酷我/酷狗由在线翻译补全。
+    /// 是否显示由设置决定。
     pub translation: Option<String>,
 }
 
@@ -706,6 +707,323 @@ pub fn fetch_lyrics(track: &Track, use_proxy: bool) -> Result<Vec<LyricLine>, St
     Ok(lines)
 }
 
+/// 抓取歌词，并在平台没有提供翻译时自动补全翻译。
+///
+/// 酷我、酷狗的歌词接口只返回正文，所以「显示翻译」在这两个平台上一直是空的；
+/// 正文解析完之后，这里再用在线翻译接口（微软 → 谷歌 → MyMemory）逐行补齐。
+/// 自动翻译失败只影响翻译，正文照常返回。
+pub fn fetch_lyrics_with_translation(
+    track: &Track,
+    use_proxy: bool,
+) -> Result<Vec<LyricLine>, String> {
+    let mut lines = fetch_lyrics(track, use_proxy)?;
+    if needs_auto_translation(&lines) {
+        let _ = translate_lines(&mut lines, use_proxy);
+    }
+    Ok(lines)
+}
+
+/// 平台是否漏了翻译：有足够多的正文行，但一行翻译都没有。
+fn needs_auto_translation(lines: &[LyricLine]) -> bool {
+    lines
+        .iter()
+        .filter(|line| !line.text.trim().is_empty())
+        .count()
+        >= 2
+        && lines.iter().all(|line| line.translation.is_none())
+}
+
+/// 这一行本来就是中文，不需要翻译（日文含假名、韩文含谚文，都仍会被翻译）。
+fn is_chinese_line(text: &str) -> bool {
+    text.chars().any(is_han) && !text.chars().any(is_kana)
+}
+
+/// 汉字（含扩展 A 与兼容区）。
+fn is_han(value: char) -> bool {
+    matches!(value as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+}
+
+/// 平假名与片假名：用来把日文和中文区分开。
+fn is_kana(value: char) -> bool {
+    matches!(value as u32, 0x3040..=0x30FF)
+}
+
+/// 单次请求最多翻译的行数：接口对单次请求体量有限制，分批更稳。
+const TRANSLATION_BATCH_SIZE: usize = 40;
+/// 自动翻译的目标语言：与界面语言一致。
+const TRANSLATION_TARGET: &str = "zh-Hans";
+/// 谷歌翻译用的是另一套语言代码。
+const TRANSLATION_TARGET_GOOGLE: &str = "zh-CN";
+/// 免费翻译接口对浏览器 UA 更友好。
+const TRANSLATION_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0";
+
+/// 用在线翻译逐行补齐歌词翻译。
+fn translate_lines(lines: &mut [LyricLine], use_proxy: bool) -> Result<(), String> {
+    // 只翻译需要翻译的行：空行（纯前奏/间奏）和本来就是中文的行都跳过。
+    // 整首歌都是中文时这里会直接返回，不会发起任何翻译请求。
+    let targets: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            let text = line.text.trim();
+            !text.is_empty() && !is_chinese_line(text)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let mut translations: Vec<String> = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(TRANSLATION_BATCH_SIZE) {
+        let texts: Vec<String> = chunk
+            .iter()
+            .map(|index| lines[*index].text.trim().to_owned())
+            .collect();
+        translations.extend(translate_batch(&texts, use_proxy)?);
+    }
+
+    let pairs: Vec<(usize, String)> = targets.into_iter().zip(translations).collect();
+    merge_auto_translations(lines, &pairs);
+    Ok(())
+}
+
+/// 把逐行翻译写回歌词：空翻译、纯符号占位、与原文相同的翻译都跳过。
+fn merge_auto_translations(lines: &mut [LyricLine], pairs: &[(usize, String)]) -> usize {
+    let mut written = 0usize;
+    for (index, translated) in pairs {
+        let Some(line) = lines.get_mut(*index) else {
+            continue;
+        };
+        let Some(text) = usable_translation(translated) else {
+            continue;
+        };
+        // 翻译和原文一样（中文歌词、纯英文歌名等）时不显示，避免同一句出现两遍。
+        if text == line.text.trim() {
+            continue;
+        }
+        line.translation = Some(text.to_owned());
+        written += 1;
+    }
+    written
+}
+
+/// 翻译一批文本：依次尝试微软（Bing）、谷歌、MyMemory，前一个失败就用下一个。
+fn translate_batch(texts: &[String], use_proxy: bool) -> Result<Vec<String>, String> {
+    let providers: [(&str, fn(&[String], bool) -> Result<Vec<String>, String>); 3] = [
+        ("微软翻译", translate_batch_bing),
+        ("谷歌翻译", translate_batch_google),
+        ("MyMemory", translate_batch_mymemory),
+    ];
+    let mut errors = Vec::new();
+    for (label, provider) in providers {
+        match provider(texts, use_proxy) {
+            Ok(values) => return Ok(values),
+            Err(error) => errors.push(format!("{label}：{error}")),
+        }
+    }
+    Err(format!("在线翻译全部失败（{}）", errors.join("；")))
+}
+
+/// Bing 翻译的临时凭据：页面里带 1 小时有效期，缓存起来避免每首歌都重新抓页面。
+struct BingCredentials {
+    ig: String,
+    key: String,
+    token: String,
+    fetched_at: Instant,
+}
+
+static BING_CREDENTIALS: OnceLock<Mutex<Option<BingCredentials>>> = OnceLock::new();
+
+/// 凭据有效期保守取 30 分钟（页面给的是 1 小时）。
+const BING_CREDENTIAL_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// 微软翻译（Bing 网页版接口）：整批文本用换行拼成一次请求。
+///
+/// 换行有时会被合并（例如两句日文合成一句），这时逐行重试，保证与原文一一对应。
+fn translate_batch_bing(texts: &[String], use_proxy: bool) -> Result<Vec<String>, String> {
+    let (ig, key, token) = bing_credentials(use_proxy)?;
+    let joined = texts.join("\n");
+    if let Ok(translated) = bing_translate(&ig, &key, &token, &joined, use_proxy) {
+        let lines: Vec<String> = translated
+            .split('\n')
+            .map(|line| line.trim().to_owned())
+            .collect();
+        if lines.len() == texts.len() {
+            return Ok(lines);
+        }
+    }
+    let mut out = Vec::with_capacity(texts.len());
+    for text in texts {
+        out.push(
+            bing_translate(&ig, &key, &token, text, use_proxy)?
+                .trim()
+                .to_owned(),
+        );
+    }
+    Ok(out)
+}
+
+/// 取 Bing 翻译页面的 `IG`、`key` 与 `token`，带缓存。
+fn bing_credentials(use_proxy: bool) -> Result<(String, String, String), String> {
+    let cache = BING_CREDENTIALS.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some(credentials) = guard.as_ref() {
+            if credentials.fetched_at.elapsed() < BING_CREDENTIAL_TTL {
+                return Ok((
+                    credentials.ig.clone(),
+                    credentials.key.clone(),
+                    credentials.token.clone(),
+                ));
+            }
+        }
+    }
+
+    let page = http_agent(use_proxy)
+        .get("https://cn.bing.com/translator")
+        .set("User-Agent", TRANSLATION_USER_AGENT)
+        .call()
+        .map_err(|error| format!("获取翻译页面失败：{error}"))?
+        .into_string()
+        .map_err(|error| format!("读取翻译页面失败：{error}"))?;
+    let ig = regex_capture(r#"IG:"([0-9A-F]+)""#, &page)?;
+    let key = regex_capture(r#"params_AbusePreventionHelper = \[(\d+),"#, &page)?;
+    let token = regex_capture(r#"params_AbusePreventionHelper = \[\d+,"([^"]+)""#, &page)?;
+
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some(BingCredentials {
+            ig: ig.clone(),
+            key: key.clone(),
+            token: token.clone(),
+            fetched_at: Instant::now(),
+        });
+    }
+    Ok((ig, key, token))
+}
+
+fn regex_capture(pattern: &str, haystack: &str) -> Result<String, String> {
+    let regex = Regex::new(pattern).map_err(|error| format!("翻译解析规则无效：{error}"))?;
+    regex
+        .captures(haystack)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().to_owned())
+        .ok_or_else(|| "翻译页面缺少必要参数".to_owned())
+}
+
+/// 调用 Bing 的 `ttranslatev3` 翻译一段文本。
+fn bing_translate(
+    ig: &str,
+    key: &str,
+    token: &str,
+    text: &str,
+    use_proxy: bool,
+) -> Result<String, String> {
+    let endpoint =
+        format!("https://cn.bing.com/ttranslatev3?isVertical=1&&IG={ig}&IID=translator.5023.1");
+    let body = http_agent(use_proxy)
+        .post(&endpoint)
+        .set("User-Agent", TRANSLATION_USER_AGENT)
+        .set("Content-Type", "application/x-www-form-urlencoded")
+        .set("Referer", "https://cn.bing.com/translator")
+        .send_form(&[
+            ("fromLang", "auto-detect"),
+            ("text", text),
+            ("to", TRANSLATION_TARGET),
+            ("token", token),
+            ("key", key),
+        ])
+        .map_err(|error| format!("翻译请求失败：{error}"))?
+        .into_string()
+        .map_err(|error| format!("翻译读取失败：{error}"))?;
+    let value: Value = serde_json::from_str(body.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("翻译数据解析失败：{error}"))?;
+    value
+        .pointer("/0/translations/0/text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "翻译返回格式异常".to_owned())
+}
+
+/// 谷歌翻译兜底：整批文本用换行拼成一次请求，再按换行拆回逐行结果。
+fn translate_batch_google(texts: &[String], use_proxy: bool) -> Result<Vec<String>, String> {
+    let joined = texts.join("\n");
+    let body = http_agent(use_proxy)
+        .get("https://translate.googleapis.com/translate_a/single")
+        .query("client", "gtx")
+        .query("sl", "auto")
+        .query("tl", TRANSLATION_TARGET_GOOGLE)
+        .query("dt", "t")
+        .query("q", &joined)
+        .set("User-Agent", TRANSLATION_USER_AGENT)
+        .call()
+        .map_err(|error| format!("翻译请求失败：{error}"))?
+        .into_string()
+        .map_err(|error| format!("翻译读取失败：{error}"))?;
+    let value: Value = serde_json::from_str(body.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("翻译数据解析失败：{error}"))?;
+    let segments = value
+        .get(0)
+        .and_then(Value::as_array)
+        .ok_or_else(|| "翻译返回格式异常".to_owned())?;
+    let mut translated = String::new();
+    for segment in segments {
+        if let Some(part) = segment.get(0).and_then(Value::as_str) {
+            translated.push_str(part);
+        }
+    }
+    let lines: Vec<String> = translated
+        .split('\n')
+        .map(|line| line.trim().to_owned())
+        .collect();
+    if lines.len() != texts.len() {
+        return Err(format!("翻译行数不匹配（{} / {}）", lines.len(), texts.len()));
+    }
+    Ok(lines)
+}
+
+/// MyMemory 兜底：免费额度小、只支持逐行翻译，且需要指定源语言。
+fn translate_batch_mymemory(texts: &[String], use_proxy: bool) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(texts.len());
+    for text in texts {
+        let source = guess_source_language(text);
+        let body = http_agent(use_proxy)
+            .get("https://api.mymemory.translated.net/get")
+            .query("q", text)
+            .query("langpair", &format!("{source}|{TRANSLATION_TARGET_GOOGLE}"))
+            .set("User-Agent", TRANSLATION_USER_AGENT)
+            .call()
+            .map_err(|error| format!("翻译请求失败：{error}"))?
+            .into_string()
+            .map_err(|error| format!("翻译读取失败：{error}"))?;
+        let value: Value = serde_json::from_str(body.trim_start_matches('\u{feff}'))
+            .map_err(|error| format!("翻译数据解析失败：{error}"))?;
+        out.push(
+            value
+                .pointer("/responseData/translatedText")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        );
+    }
+    Ok(out)
+}
+
+/// MyMemory 不支持自动识别语言，按字符粗略猜一个源语言。
+fn guess_source_language(text: &str) -> &'static str {
+    if text.chars().any(is_kana) {
+        "ja"
+    } else if text.chars().any(is_hangul) {
+        "ko"
+    } else {
+        "en"
+    }
+}
+
+/// 谚文：韩语歌词。
+fn is_hangul(value: char) -> bool {
+    matches!(value as u32, 0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7AF)
+}
+
 fn load_kuwo(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
     let value = get_json(
         "https://www.kuwo.cn/openapi/v1/www/lyric/getlyric",
@@ -873,18 +1191,23 @@ fn load_netease(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, Stri
     Ok(parse_lrc_with_translation(&lyrics, &translation))
 }
 
+/// 歌词与翻译请求共用的 HTTP 客户端（含连接/读写超时与可选代理）。
+fn http_agent(use_proxy: bool) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(15))
+        .timeout_write(Duration::from_secs(15))
+        .try_proxy_from_env(use_proxy)
+        .build()
+}
+
 fn get_json(
     endpoint: &str,
     params: &[(&str, &str)],
     referer: &str,
     use_proxy: bool,
 ) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = http_agent(use_proxy);
     let mut request = agent.get(endpoint);
     for (key, value) in params {
         request = request.query(key, value);
@@ -907,12 +1230,7 @@ fn post_json(
     referer: &str,
     use_proxy: bool,
 ) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = http_agent(use_proxy);
     let payload =
         serde_json::to_string(payload).map_err(|error| format!("歌词请求编码失败：{error}"))?;
     let body = agent
@@ -2811,6 +3129,93 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].translation.as_deref(), Some("First line"));
         assert_eq!(lines[1].translation.as_deref(), Some("Second line"));
+    }
+
+    #[test]
+    fn auto_translation_kicks_in_only_when_the_platform_has_none() {
+        let mut lines = parse_lrc_lines("[00:01.00]Hello\n[00:03.00]World");
+        assert!(needs_auto_translation(&lines));
+
+        // 网易云 / QQ 已经给了翻译，就不要再调在线翻译。
+        lines[0].translation = Some("你好".to_owned());
+        assert!(!needs_auto_translation(&lines));
+
+        // 只有一行歌词时也没必要整段翻译。
+        let single = parse_lrc_lines("[00:01.00]Hello");
+        assert!(!needs_auto_translation(&single));
+    }
+
+    #[test]
+    fn only_lines_that_are_not_chinese_need_auto_translation() {
+        assert!(is_chinese_line("夜色渐浓 灯火照亮了归途"));
+        // 日文含假名，不能当成中文跳过。
+        assert!(!is_chinese_line("夜が更けていく"));
+        // 纯汉字标题的日文歌会被当成中文，属于可接受的误判。
+        assert!(!is_chinese_line("Night falls"));
+        assert!(!is_chinese_line("밤이 내려와"));
+    }
+
+    #[test]
+    fn merge_auto_translations_skips_empty_placeholder_and_identical_lines() {
+        let mut lines = parse_lrc_lines("[00:01.00]Hello\n[00:03.00]你好\n[00:05.00]World");
+        let pairs = vec![
+            (0usize, "你好".to_owned()),
+            (1, "你好".to_owned()),
+            (2, "///".to_owned()),
+        ];
+
+        assert_eq!(merge_auto_translations(&mut lines, &pairs), 1);
+        assert_eq!(lines[0].translation.as_deref(), Some("你好"));
+        // 翻译和原文一模一样时不写回，避免同一句显示两遍。
+        assert_eq!(lines[1].translation, None);
+        // 纯符号占位同样丢弃。
+        assert_eq!(lines[2].translation, None);
+    }
+
+    #[test]
+    fn auto_translation_writes_back_in_line_order() {
+        // 纯前奏/间奏会留下空行：空行不参与翻译，写回时下标要对齐到非空行。
+        let mut lines = vec![
+            LyricLine::new(0, "Hello".to_owned(), None),
+            LyricLine::new(1_000, String::new(), None),
+            LyricLine::new(2_000, "World".to_owned(), None),
+        ];
+        let targets: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !line.text.trim().is_empty())
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(targets, vec![0, 2]);
+        let pairs: Vec<(usize, String)> = targets
+            .into_iter()
+            .zip(["你好".to_owned(), "世界".to_owned()])
+            .collect();
+
+        assert_eq!(merge_auto_translations(&mut lines, &pairs), 2);
+        assert_eq!(lines[0].translation.as_deref(), Some("你好"));
+        assert_eq!(lines[1].translation, None);
+        assert_eq!(lines[2].translation.as_deref(), Some("世界"));
+    }
+
+    #[test]
+    #[ignore = "需要联网调用在线翻译"]
+    fn auto_translation_fills_missing_translations() {
+        let mut lines = vec![
+            LyricLine::new(
+                0,
+                "Night falls, the lights light up the way home".to_owned(),
+                None,
+            ),
+            LyricLine::new(2_000, "I search the crowd for your shadow".to_owned(), None),
+            LyricLine::new(4_000, "夜色渐浓 灯火照亮了归途".to_owned(), None),
+        ];
+
+        translate_lines(&mut lines, false).expect("在线翻译应当成功");
+
+        println!("{lines:#?}");
+        assert!(lines[0].translation.is_some());
+        assert!(lines[1].translation.is_some());
     }
 
     #[test]
