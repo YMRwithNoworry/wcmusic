@@ -32,8 +32,8 @@ use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, Div, Entity, Hsla,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
     SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions, checkerboard, div, hsla, img, linear_color_stop, linear_gradient,
-    point, prelude::*, px, relative, size,
+    WindowBounds, WindowControlArea, WindowOptions, checkerboard, div, hsla, img, linear_color_stop,
+    linear_gradient, point, prelude::*, px, relative, size,
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformPlaylist, PlatformRanking, SourceEnvironment, Track, TrackSource,
@@ -398,12 +398,32 @@ enum SettingsPicker {
     Color(ColorPickerState),
 }
 
+/// 行的选中判定：只比「来源 + 平台 id」，不做整条 Track 的深比较。
+///
+/// 列表每帧都要为每一行判断是否选中，整条比较意味着每行若干次字符串比较；
+/// 歌单上百行时这笔开销会直接压在滚动帧上。
+fn is_row_selected(current: Option<&TrackRow>, row: &TrackRow) -> bool {
+    match current {
+        Some(current) => {
+            current.track.source == row.track.source
+                && current.track.id == row.track.id
+                && current.track.source_id == row.track.source_id
+        }
+        None => false,
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct TrackRow {
     track: Track,
     title: SharedString,
     artist: SharedString,
     album: SharedString,
+    /// 列表里显示的「歌手 · 专辑」。
+    ///
+    /// 预计算而不是每帧现拼：歌单动辄上百行，滚动时每帧都要重建元素树，
+    /// 每行再来一次 format! 就是上百次堆分配，是滚动掉帧的来源之一。
+    subtitle: SharedString,
     duration: SharedString,
     artwork_path: Option<SharedString>,
 }
@@ -469,18 +489,22 @@ impl TrackRow {
             let seconds = track.duration_ms / 1000;
             format!("{:02}:{:02}", seconds / 60, seconds % 60)
         };
+        let artist: SharedString = if track.artist.is_empty() {
+            "本地音乐".into()
+        } else {
+            track.artist.clone().into()
+        };
+        let album: SharedString = if track.album.is_empty() {
+            "最近添加".into()
+        } else {
+            track.album.clone().into()
+        };
+        let subtitle = format!("{artist} · {album}").into();
         Self {
             title: track.title.clone().into(),
-            artist: if track.artist.is_empty() {
-                "本地音乐".into()
-            } else {
-                track.artist.clone().into()
-            },
-            album: if track.album.is_empty() {
-                "最近添加".into()
-            } else {
-                track.album.clone().into()
-            },
+            artist,
+            album,
+            subtitle,
             duration: duration.into(),
             artwork_path: artwork_path.map(Into::into),
             track,
@@ -3440,6 +3464,9 @@ impl MusicApp {
                     .items_center()
                     .gap_3()
                     .cursor_pointer()
+                    // 窗口用自绘界面、没有原生标题栏，这里作为拖动把手：
+                    // 标记成 Drag 后 Windows 会把它当 HTCAPTION，按住就能拖窗口。
+                    .window_control_area(WindowControlArea::Drag)
                     .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Home, cx)))
                     .child(
                         div()
@@ -4318,8 +4345,8 @@ impl MusicApp {
                 p,
             ));
         } else {
-            for (index, row) in self.search_results.iter().cloned().enumerate() {
-                let selected = self.current_online_track.as_ref() == Some(&row);
+            for (index, row) in self.search_results.iter().enumerate() {
+                let selected = is_row_selected(self.current_online_track.as_ref(), row);
                 let playing = selected && self.is_playing;
                 let fetching = self.is_fetching_row(&row);
                 let row_for_menu = row.clone();
@@ -4365,12 +4392,12 @@ impl MusicApp {
                                 .flex()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_sm().text_color(p.foreground).child(row.title))
+                                .child(div().text_sm().text_color(p.foreground).child(row.title.clone()))
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(p.muted)
-                                        .child(format!("{} · {}", row.artist, row.album)),
+                                        .child(row.subtitle.clone()),
                                 ),
                         )
                         .child(
@@ -4391,7 +4418,7 @@ impl MusicApp {
                                     div()
                                         .text_xs()
                                         .text_color(p.muted)
-                                        .child(row.duration)
+                                        .child(row.duration.clone())
                                         .into_any_element()
                                 }),
                         ),
@@ -4684,8 +4711,8 @@ impl MusicApp {
     fn ranking_track_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
         let mut list = div().flex().flex_col().gap_1();
-        for (index, row) in self.ranking_tracks.iter().cloned().enumerate() {
-            let selected = self.current_online_track.as_ref() == Some(&row);
+        for (index, row) in self.ranking_tracks.iter().enumerate() {
+            let selected = is_row_selected(self.current_online_track.as_ref(), row);
             let playing = selected && self.is_playing;
             let fetching = self.is_fetching_row(&row);
             let row_for_menu = row.clone();
@@ -4738,12 +4765,12 @@ impl MusicApp {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(p.foreground).child(row.title))
+                            .child(div().text_sm().text_color(p.foreground).child(row.title.clone()))
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(p.muted)
-                                    .child(format!("{} · {}", row.artist, row.album)),
+                                    .child(row.subtitle.clone()),
                             ),
                     )
                     .child(if fetching {
@@ -4752,7 +4779,7 @@ impl MusicApp {
                         div()
                             .text_xs()
                             .text_color(p.muted)
-                            .child(row.duration)
+                            .child(row.duration.clone())
                             .into_any_element()
                     }),
             );
@@ -4879,10 +4906,10 @@ impl MusicApp {
     ) -> impl IntoElement {
         let p = Palette::new(cx);
         let mut list = div().flex().flex_col().gap_1();
-        for (index, row) in tracks.into_iter().enumerate() {
-            let selected = self.current_online_track.as_ref() == Some(&row);
+        for (index, row) in tracks.iter().enumerate() {
+            let selected = is_row_selected(self.current_online_track.as_ref(), row);
             let playing = selected && self.is_playing;
-            let fetching = self.is_fetching_row(&row);
+            let fetching = self.is_fetching_row(row);
             let row_for_click = row.clone();
             let row_for_menu = row.clone();
             list = list.child(
@@ -4934,12 +4961,12 @@ impl MusicApp {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_sm().text_color(p.foreground).child(row.title))
+                            .child(div().text_sm().text_color(p.foreground).child(row.title.clone()))
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(p.muted)
-                                    .child(format!("{} · {}", row.artist, row.album)),
+                                    .child(row.subtitle.clone()),
                             ),
                     )
                     .child(if fetching {
@@ -4948,7 +4975,7 @@ impl MusicApp {
                         div()
                             .text_xs()
                             .text_color(p.muted)
-                            .child(row.duration)
+                            .child(row.duration.clone())
                             .into_any_element()
                     }),
             );
@@ -6531,6 +6558,16 @@ impl Render for MusicApp {
                     .flex()
                     .flex_col()
                     .min_w_0()
+                    // 顶部拖动条：自绘界面没有原生标题栏，右栏顶部留一条可抓取区域，
+                    // 避免只有左侧品牌区能拖动窗口。
+                    .child(
+                        div()
+                            .id("window-drag-strip")
+                            .h(px(14.0))
+                            .w_full()
+                            .flex_shrink_0()
+                            .window_control_area(WindowControlArea::Drag),
+                    )
                     .child(library_scroll)
                     .child(self.player_bar(cx)),
             );

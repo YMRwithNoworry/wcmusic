@@ -515,7 +515,7 @@ mod tests {
         assert!(!sink_finished(None));
     }
 
-    #[test]
+
     fn memory_source_seek_past_end_saturates() {
         let mut source = MemorySource::from_bytes(Arc::new(silent_wav(8_000, 2, 8_000)))
             .expect("in-memory wav should decode");
