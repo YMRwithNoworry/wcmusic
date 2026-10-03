@@ -8102,6 +8102,7 @@ dependencies = [
  "embed-resource",
  "fundsp",
  "gpui-kit",
+ "image",
  "raw-window-handle",
  "regex",
  "rfd",

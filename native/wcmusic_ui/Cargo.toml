@@ -10,6 +10,8 @@ publish = false
 base64 = "0.22"
 fundsp = { version = "0.23", default-features = false, features = ["std"] }
 gpui-kit = "0.6.1"
+# 封面缩略图：落盘前把平台给的巨图缩到显示尺寸，避免 GPUI 解码后常驻几十 MB/张。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 regex = "1.11"
 rfd = "0.15.4"
 rodio = "0.20.1"

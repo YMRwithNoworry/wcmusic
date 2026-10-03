@@ -4263,7 +4263,7 @@ impl MusicApp {
             ));
         } else {
             tracks_panel =
-                tracks_panel.child(self.playlist_track_list(cx, self.playlist_tracks.clone()));
+                tracks_panel.child(self.playlist_track_list(cx, &self.playlist_tracks));
         }
 
         div()
@@ -4324,7 +4324,6 @@ impl MusicApp {
                 let selected = is_row_selected(self.current_online_track.as_ref(), row);
                 let playing = selected && self.is_playing;
                 let fetching = self.is_fetching_row(&row);
-                let row_for_menu = row.clone();
                 results = results.child(
                     div()
                         .id(("online-track", index))
@@ -4342,7 +4341,11 @@ impl MusicApp {
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                this.open_track_menu(row_for_menu.clone(), event.position, window, cx);
+                                // 按下标在回调里取一次，避免每帧为每一行克隆一份。
+                                let Some(row) = this.search_results.get(index).cloned() else {
+                                    return;
+                                };
+                                this.open_track_menu(row, event.position, window, cx);
                             }),
                         )
                         .child(
@@ -4721,7 +4724,6 @@ impl MusicApp {
             let selected = is_row_selected(self.current_online_track.as_ref(), row);
             let playing = selected && self.is_playing;
             let fetching = self.is_fetching_row(&row);
-            let row_for_menu = row.clone();
             list = list.child(
                 div()
                     .id(("ranking-track", index))
@@ -4739,7 +4741,11 @@ impl MusicApp {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            this.open_track_menu(row_for_menu.clone(), event.position, window, cx);
+                            // 按下标在回调里取一次，避免每帧为每一行克隆一份。
+                            let Some(row) = this.ranking_tracks.get(index).cloned() else {
+                                return;
+                            };
+                            this.open_track_menu(row, event.position, window, cx);
                         }),
                     )
                     .child(
@@ -4886,7 +4892,7 @@ impl MusicApp {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .child(self.playlist_track_list(cx, playlist_tracks)),
+                    .child(self.playlist_track_list(cx, &playlist_tracks)),
             ));
         }
 
@@ -4905,10 +4911,12 @@ impl MusicApp {
             .child(songs_panel)
     }
 
+    /// 歌单歌曲列表。`tracks` 只借用：每帧克隆一整份 `Vec<TrackRow>`
+    /// 是歌单页滑动时最大的一笔无谓分配。
     fn playlist_track_list(
         &self,
         cx: &mut Context<Self>,
-        tracks: Vec<TrackRow>,
+        tracks: &[TrackRow],
     ) -> impl IntoElement {
         let p = Palette::new(cx);
         let mut list = div().flex().flex_col().gap_1();

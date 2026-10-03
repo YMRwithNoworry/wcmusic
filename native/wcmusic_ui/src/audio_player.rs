@@ -10,6 +10,22 @@ use rodio::{Decoder, OutputStream, OutputStreamHandle, Sample, Sink, Source};
 
 const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 
+/// 封面落盘前的最长边。
+///
+/// GPUI 把解码后的位图按资源永久缓存（`ImageAssetLoader` 走 asset store，不淘汰），
+/// 而平台给的封面尺寸完全不可控：实测缓存里 400×400 是常态，网易云还有
+/// 3072×3072（解码后 36 MB/张）的巨图，列表里却只显示 40px、歌曲详情页最多 280px。
+/// 原图直接交给 `img()` 会让内存随浏览过的封面数量线性膨胀，所以统一缩到这个尺寸：
+/// 每张固定 320×320×4 ≈ 0.4 MB。
+const ARTWORK_MAX_EDGE: u32 = 320;
+
+/// 允许解码的原图像素数上限（12 MP）：解码一张巨图本身就是几十上百 MB 的瞬时占用，
+/// 超过上限的图直接放弃，让界面回退到占位图。
+const ARTWORK_MAX_SOURCE_PIXELS: u64 = 12_000_000;
+
+/// 封面重新编码为 JPEG 的质量：85 在肉眼无差别的范围内体积最小。
+const ARTWORK_JPEG_QUALITY: u8 = 85;
+
 /// Shared, immutable audio payload.
 ///
 /// Wrapping the `Vec<u8>` in an `Arc` lets every decoder rebuilt while seeking
@@ -344,6 +360,7 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
     if bytes.is_empty() {
         return Err("封面为空".into());
     }
+    let bytes = normalize_artwork(&bytes)?;
     let dir = std::env::temp_dir().join("wcmusic-artwork");
     std::fs::create_dir_all(&dir).map_err(|error| format!("创建封面缓存失败: {error}"))?;
     let safe_id: String = id
@@ -356,16 +373,72 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
             }
         })
         .collect();
-    let path = dir.join(format!("{safe_id}.jpg"));
+    // 文件名带上目标边长：旧版本存的是原图，换名后不会再被复用。
+    let path = dir.join(format!("{safe_id}-{ARTWORK_MAX_EDGE}.jpg"));
     std::fs::write(&path, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// 把平台封面统一成「最长边不超过 [`ARTWORK_MAX_EDGE`] 的 JPEG」。
+///
+/// 先只读文件头拿尺寸（不分配像素缓冲），超过 [`ARTWORK_MAX_SOURCE_PIXELS`] 直接放弃；
+/// 再解码、按需缩小、重新编码。小图保持原尺寸（放大既费内存又更糊），
+/// 顺带把 PNG/WebP 之类的源统一成 JPEG，`img()` 那边就不必再关心格式。
+fn normalize_artwork(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let (width, height) = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| format!("封面格式识别失败: {error}"))?
+        .into_dimensions()
+        .map_err(|error| format!("封面尺寸读取失败: {error}"))?;
+    if !artwork_pixels_allowed(width, height) {
+        return Err(format!("封面尺寸过大（{width}×{height}）"));
+    }
+
+    let decoded = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| format!("封面格式识别失败: {error}"))?
+        .decode()
+        .map_err(|error| format!("封面解码失败: {error}"))?;
+    let decoded = match artwork_target_size(width, height) {
+        Some((width, height)) => {
+            decoded.resize_exact(width, height, image::imageops::FilterType::Triangle)
+        }
+        None => decoded,
+    };
+
+    let mut encoded = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, ARTWORK_JPEG_QUALITY)
+        .encode_image(&decoded.to_rgb8())
+        .map_err(|error| format!("封面编码失败: {error}"))?;
+    Ok(encoded)
+}
+
+/// 原图像素数是否在允许解码的范围内。
+fn artwork_pixels_allowed(width: u32, height: u32) -> bool {
+    u64::from(width) * u64::from(height) <= ARTWORK_MAX_SOURCE_PIXELS
+}
+
+/// 缩放后的目标尺寸；原图本来就不超过上限时返回 `None`（保持原样）。
+fn artwork_target_size(width: u32, height: u32) -> Option<(u32, u32)> {
+    let edge = width.max(height);
+    if edge <= ARTWORK_MAX_EDGE || edge == 0 {
+        return None;
+    }
+    let scale = ARTWORK_MAX_EDGE as f32 / edge as f32;
+    Some((
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    ))
+}
 #[cfg(test)]
 mod tests {
-    use super::{MemorySource, clamp_seek_target, samples_to_skip, sink_finished};
+    use super::{
+        ARTWORK_MAX_EDGE, MemorySource, artwork_pixels_allowed, artwork_target_size,
+        clamp_seek_target, normalize_artwork, samples_to_skip, sink_finished,
+    };
     use crate::audio_effects::SpatialSource;
     use rodio::{Sink, Source};
+    use std::io::Cursor;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
@@ -521,5 +594,62 @@ mod tests {
             .expect("in-memory wav should decode");
         assert!(source.try_seek(Duration::from_secs(5)).is_ok());
         assert_eq!(source.next(), None);
+    }
+
+    /// 生成一张纯色 PNG，用来验证封面缩放链路。
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 64])
+        });
+        let mut bytes = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .expect("png 编码");
+        bytes
+    }
+
+    /// 平台封面常是 3000×3000 这种巨图，GPUI 解码后 36 MB/张且永不淘汰，
+    /// 所以落盘前必须缩到显示尺寸。
+    #[test]
+    fn artwork_is_downscaled_to_the_display_size() {
+        let normalized = normalize_artwork(&png_bytes(1000, 500)).expect("封面应当被缩放");
+        let decoded = image::load_from_memory(&normalized).expect("结果应当可解码");
+
+        assert_eq!(decoded.width(), ARTWORK_MAX_EDGE);
+        assert_eq!(decoded.height(), ARTWORK_MAX_EDGE / 2);
+    }
+
+    #[test]
+    fn small_artwork_keeps_its_own_size() {
+        let normalized = normalize_artwork(&png_bytes(120, 120)).expect("小封面应当被接受");
+        let decoded = image::load_from_memory(&normalized).expect("结果应当可解码");
+
+        assert_eq!((decoded.width(), decoded.height()), (120, 120));
+    }
+
+    /// 封面统一重编码成 JPEG：GPUI 靠内容嗅探格式，但统一格式后不必再关心源格式。
+    #[test]
+    fn artwork_is_reencoded_as_jpeg() {
+        let normalized = normalize_artwork(&png_bytes(64, 64)).expect("封面应当被接受");
+
+        assert_eq!(image::guess_format(&normalized).ok(), Some(image::ImageFormat::Jpeg));
+    }
+
+    #[test]
+    fn oversized_artwork_is_rejected_before_decoding() {
+        assert!(!artwork_pixels_allowed(4000, 4000));
+        assert!(artwork_pixels_allowed(1500, 1500));
+    }
+
+    #[test]
+    fn artwork_target_size_only_shrinks() {
+        assert_eq!(artwork_target_size(ARTWORK_MAX_EDGE, ARTWORK_MAX_EDGE), None);
+        assert_eq!(artwork_target_size(0, 0), None);
+        // 平台最常见的 400×400 也会缩到上限：640 KB -> 400 KB。
+        assert_eq!(
+            artwork_target_size(400, 400),
+            Some((ARTWORK_MAX_EDGE, ARTWORK_MAX_EDGE))
+        );
+        assert_eq!(artwork_target_size(1000, 500), Some((ARTWORK_MAX_EDGE, 160)));
     }
 }
