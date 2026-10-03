@@ -135,12 +135,11 @@ const FAVORITE_FOLDER: &str = "我的收藏";
 const PLAYLIST_CARD_WIDTH: f32 = 184.0;
 const PLAYLIST_COVER_WIDTH: f32 = 176.0;
 const PLAYLIST_COVER_HEIGHT: f32 = 176.0;
-/// 列表载入时最多预热的封面条目数。
+/// 歌单封面一次最多预热多少个。
 ///
-/// 之前给整张列表都下封面：载入 100 首的榜单实测常驻内存多出约 23 MB
-/// （每张封面都要落到本地缓存并被图片系统解码驻留）。只预热一屏多一点，
-/// 其余条目保持 `artwork_path = None`，由 `preferred_artwork_source` /
-/// `track_artwork` 决定显示远程兜底或占位，内存不再随列表长度线性增长。
+/// 歌曲封面已经不在列表里显示（只在播放栏与歌曲详情页出现，播放时才下载一份），
+/// 所以这里只剩「此刻」页的平台歌单封面需要预热：整页都下过一次实测常驻内存
+/// 多出约 23 MB（每张封面都要落到本地缓存并被图片系统解码驻留）。
 const ARTWORK_PREHEAT_LIMIT: usize = 24;
 /// 专享模式里当前歌词行的颜色，与桌面歌词默认高亮色一致。
 const NOW_PLAYING_ACCENT: u32 = 0x00C65B;
@@ -869,29 +868,8 @@ impl MusicApp {
         let task = cx.background_spawn(async move {
             let tracks = load_ranking_tracks_with_proxy(&ranking, use_proxy)
                 .map_err(|error| error.to_string())?;
-            let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
-            if !rows.is_empty() {
-                // 只预热前几屏封面，其余条目保持占位，避免整表下载驻留。
-                let preheat = rows.len().min(ARTWORK_PREHEAT_LIMIT);
-                let worker_count = preheat.min(8).max(1);
-                let chunk_size = preheat.div_ceil(worker_count);
-                std::thread::scope(|scope| {
-                    for chunk in rows[..preheat].chunks_mut(chunk_size) {
-                        scope.spawn(move || {
-                            for row in chunk {
-                                let Some(uri) = row.track.artwork_uri.clone() else {
-                                    continue;
-                                };
-                                let id = row.track.id.clone();
-                                if let Ok(path) = download_artwork(&uri, &id, use_proxy) {
-                                    row.artwork_path = Some(path.into());
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-            Ok::<Vec<TrackRow>, String>(rows)
+            // 列表不显示歌曲封面，这里不再预下载；封面在真正播放时单独取一份。
+            Ok::<Vec<TrackRow>, String>(tracks.into_iter().map(TrackRow::from_core).collect())
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -996,29 +974,8 @@ impl MusicApp {
         let task = cx.background_spawn(async move {
             let tracks = load_playlist_tracks_with_proxy(&playlist, use_proxy)
                 .map_err(|error| error.to_string())?;
-            let mut rows: Vec<TrackRow> = tracks.into_iter().map(TrackRow::from_core).collect();
-            if !rows.is_empty() {
-                // 同榜单：只预热前几屏封面。
-                let preheat = rows.len().min(ARTWORK_PREHEAT_LIMIT);
-                let worker_count = preheat.min(8).max(1);
-                let chunk_size = preheat.div_ceil(worker_count);
-                std::thread::scope(|scope| {
-                    for chunk in rows[..preheat].chunks_mut(chunk_size) {
-                        scope.spawn(move || {
-                            for row in chunk {
-                                let Some(uri) = row.track.artwork_uri.clone() else {
-                                    continue;
-                                };
-                                let id = row.track.id.clone();
-                                if let Ok(path) = download_artwork(&uri, &id, use_proxy) {
-                                    row.artwork_path = Some(path.into());
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-            Ok::<Vec<TrackRow>, String>(rows)
+            // 列表不显示歌曲封面，这里不再预下载；封面在真正播放时单独取一份。
+            Ok::<Vec<TrackRow>, String>(tracks.into_iter().map(TrackRow::from_core).collect())
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1390,7 +1347,7 @@ impl MusicApp {
     }
 
     fn toggle_playlist_track(&mut self, row: TrackRow, cx: &mut Context<Self>) {
-        if self.current_online_track.as_ref() == Some(&row) {
+        if is_row_selected(self.current_online_track.as_ref(), &row) {
             self.toggle_playback(cx);
             return;
         }
@@ -1559,18 +1516,8 @@ impl MusicApp {
         let task = cx.background_spawn(async move {
             let tracks = search_online_with_proxy(&query, channel, 30, use_proxy)
                 .map_err(|error| error.to_string())?;
-            Ok::<Vec<TrackRow>, String>(
-                tracks
-                    .into_iter()
-                    .map(|track| {
-                        let artwork_path = track
-                            .artwork_uri
-                            .as_deref()
-                            .and_then(|uri| download_artwork(uri, &track.id, use_proxy).ok());
-                        TrackRow::from_core_with_artwork(track, artwork_path)
-                    })
-                    .collect(),
-            )
+            // 列表不再显示歌曲封面，封面只在真正播放时下载一份给播放栏与详情页。
+            Ok::<Vec<TrackRow>, String>(tracks.into_iter().map(TrackRow::from_core).collect())
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -2477,7 +2424,7 @@ impl MusicApp {
 
     fn toggle_online_track(&mut self, index: usize, cx: &mut Context<Self>) {
         let row = self.search_results[index].clone();
-        if self.current_online_track.as_ref() == Some(&row) {
+        if is_row_selected(self.current_online_track.as_ref(), &row) {
             self.toggle_playback(cx);
             return;
         } else {
@@ -2491,7 +2438,7 @@ impl MusicApp {
         let Some(row) = self.ranking_tracks.get(index).cloned() else {
             return;
         };
-        if self.current_online_track.as_ref() == Some(&row) {
+        if is_row_selected(self.current_online_track.as_ref(), &row) {
             self.toggle_playback(cx);
             return;
         }
@@ -2546,6 +2493,9 @@ impl MusicApp {
             cx.notify();
             return;
         };
+        // 封面只为「正在播放」这一首下载：列表里已经不显示歌曲封面，
+        // 播放栏与歌曲详情页用的就是这一份。
+        self.load_current_artwork(track.artwork_uri.clone(), track.id.clone(), cx);
         let source_key = match track.source {
             TrackSource::Kw => "kw",
             TrackSource::Kg => "kg",
@@ -2622,6 +2572,48 @@ impl MusicApp {
                     Err(error) => {
                         this.is_playing = false;
                         this.notice = format!("整曲解析失败：{error}").into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 下载「正在播放」这一首的封面，挂到播放栏与歌曲详情页使用的那一行上。
+    ///
+    /// 列表已经不显示歌曲封面，所以这是唯一还会取歌曲封面的地方（歌单封面另算）。
+    /// 下载是后台任务，回来时用 `play_generation` 对一下代次：切歌之后才回来的旧封面
+    /// 直接丢弃，避免把上一首的封面贴到新歌上。
+    fn load_current_artwork(
+        &mut self,
+        artwork_uri: Option<String>,
+        track_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uri) = artwork_uri.filter(|uri| !uri.trim().is_empty()) else {
+            return;
+        };
+        let use_proxy = self.use_network_proxy;
+        let generation = self.play_generation;
+        let task = cx.background_spawn(async move { download_artwork(&uri, &track_id, use_proxy).ok() });
+        cx.spawn(async move |this, cx| {
+            let path = task.await;
+            let Some(path) = path else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if generation != this.play_generation {
+                    return;
+                }
+                let path: SharedString = path.into();
+                if let Some(row) = this.current_online_track.as_mut() {
+                    row.artwork_path = Some(path.clone());
+                }
+                if let Some(index) = this.current_track {
+                    if let Some(row) = this.rows.get_mut(index) {
+                        row.artwork_path = Some(path);
                     }
                 }
                 cx.notify();
@@ -4364,7 +4356,6 @@ impl MusicApp {
                                 })
                                 .child(row_action_icon(playing, fetching, p)),
                         )
-                        .child(track_artwork(&row, p))
                         .child(
                             div()
                                 .flex_1()
@@ -4771,7 +4762,6 @@ impl MusicApp {
                             })
                             .child(row_action_icon(playing, fetching, p)),
                     )
-                    .child(track_artwork(&row, p))
                     .child(
                         div()
                             .flex_1()
@@ -4969,7 +4959,6 @@ impl MusicApp {
                             })
                             .child(row_action_icon(playing, fetching, p)),
                     )
-                    .child(track_artwork(&row, p))
                     .child(
                         div()
                             .flex_1()
@@ -6633,9 +6622,6 @@ impl Render for MusicApp {
     }
 }
 
-fn track_artwork(row: &TrackRow, p: Palette) -> gpui::AnyElement {
-    track_artwork_sized(row, 40.0, p)
-}
 
 enum ArtworkSource {
     Local(std::path::PathBuf),
