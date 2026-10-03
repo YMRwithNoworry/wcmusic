@@ -37,8 +37,9 @@ use gpui_kit::{
 };
 use wcmusic_core::{
     OnlineSearchChannel, PlatformPlaylist, PlatformRanking, SourceEnvironment, Track, TrackSource,
-    load_playlist_tracks_with_proxy, load_playlists_with_proxy, load_ranking_tracks_with_proxy,
-    load_rankings_with_proxy, resolve_source_url_with_proxy, search_online_with_proxy,
+    fetch_kuwo_track_cover_with_proxy, load_playlist_tracks_with_proxy, load_playlists_with_proxy,
+    load_ranking_tracks_with_proxy, load_rankings_with_proxy, resolve_source_url_with_proxy,
+    search_online_with_proxy,
 };
 
 use crate::audio_player::{AudioPlayer, download_artwork, download_audio_with_proxy};
@@ -2495,7 +2496,7 @@ impl MusicApp {
         };
         // 封面只为「正在播放」这一首下载：列表里已经不显示歌曲封面，
         // 播放栏与歌曲详情页用的就是这一份。
-        self.load_current_artwork(track.artwork_uri.clone(), track.id.clone(), cx);
+        self.load_current_artwork(track.clone(), cx);
         let source_key = match track.source {
             TrackSource::Kw => "kw",
             TrackSource::Kg => "kg",
@@ -2586,18 +2587,23 @@ impl MusicApp {
     /// 列表已经不显示歌曲封面，所以这是唯一还会取歌曲封面的地方（歌单封面另算）。
     /// 下载是后台任务，回来时用 `play_generation` 对一下代次：切歌之后才回来的旧封面
     /// 直接丢弃，避免把上一首的封面贴到新歌上。
-    fn load_current_artwork(
-        &mut self,
-        artwork_uri: Option<String>,
-        track_id: String,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(uri) = artwork_uri.filter(|uri| !uri.trim().is_empty()) else {
-            return;
-        };
+    fn load_current_artwork(&mut self, track: Track, cx: &mut Context<Self>) {
         let use_proxy = self.use_network_proxy;
         let generation = self.play_generation;
-        let task = cx.background_spawn(async move { download_artwork(&uri, &track_id, use_proxy).ok() });
+        let task = cx.background_spawn(async move {
+            // 酷我的榜单接口不返回封面地址，需要按歌曲单独查一次。列表已经不显示
+            // 封面，所以这次查询只在真正播放时发生，不会拖慢榜单本身的加载。
+            let uri = match track.artwork_uri.clone().filter(|uri| !uri.trim().is_empty()) {
+                Some(uri) => Some(uri),
+                None if track.source == TrackSource::Kw => track
+                    .source_id
+                    .as_deref()
+                    .and_then(|id| fetch_kuwo_track_cover_with_proxy(id, use_proxy).ok().flatten()),
+                None => None,
+            };
+            let uri = uri?;
+            download_artwork(&uri, &track.id, use_proxy).ok()
+        });
         cx.spawn(async move |this, cx| {
             let path = task.await;
             let Some(path) = path else {

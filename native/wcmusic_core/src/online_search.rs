@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use regex::Regex;
@@ -133,12 +134,7 @@ pub fn search_online_with_proxy(
         ],
     };
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let mut request = agent.get(channel.endpoint());
     for (key, value) in &params {
         request = request.query(key, value);
@@ -170,10 +166,26 @@ pub fn search_online_with_proxy(
 pub fn load_rankings_with_proxy(
     use_proxy: bool,
 ) -> Result<Vec<PlatformRanking>, OnlineSearchError> {
+    // 三个平台的榜单目录互不依赖，串行拉等于把三段网络延迟相加；并行之后总耗时
+    // 约等于最慢的那一个。酷我的目录是本地常量，不占网络。
+    let results: Vec<(OnlineSearchChannel, Result<Vec<PlatformRanking>, OnlineSearchError>)> =
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = OnlineSearchChannel::ALL
+                .into_iter()
+                .map(|channel| {
+                    scope.spawn(move || (channel, load_channel_rankings(channel, use_proxy)))
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| handle.join().ok())
+                .collect()
+        });
+
     let mut rankings = Vec::new();
     let mut failures = Vec::new();
-    for channel in OnlineSearchChannel::ALL {
-        match load_channel_rankings(channel, use_proxy) {
+    for (channel, result) in results {
+        match result {
             Ok(mut values) => rankings.append(&mut values),
             Err(error) => failures.push(format!("{}: {error}", channel.label())),
         }
@@ -243,11 +255,10 @@ pub fn load_ranking_tracks_with_proxy(
         ),
     };
     let value = request_json(endpoint, &params, referer, use_proxy, json5_response)?;
-    let mut tracks = parse_ranking_tracks(ranking.channel, &value)?;
-    if ranking.channel == OnlineSearchChannel::Kuwo {
-        enrich_kuwo_ranking_artwork(&mut tracks, use_proxy);
-    }
-    Ok(tracks)
+    // 酷我的榜单接口不返回封面地址（其余平台都在响应里带），以前这里会为整张
+    // 榜单逐首再查一次封面：100 首就是 100 个请求，是酷我榜单加载慢的主因。
+    // 列表已经不显示歌曲封面，所以改成播放时按需查一次（见 `fetch_kuwo_track_cover_with_proxy`）。
+    Ok(parse_ranking_tracks(ranking.channel, &value)?)
 }
 
 /// 拉取某平台的推荐歌单列表。
@@ -473,28 +484,6 @@ pub fn fetch_kuwo_track_cover_with_proxy(
     Ok(kuwo_artwork(text(value.pointer("/data/songinfo/pic"))))
 }
 
-fn enrich_kuwo_ranking_artwork(tracks: &mut [Track], use_proxy: bool) {
-    if tracks.is_empty() {
-        return;
-    }
-    let worker_count = tracks.len().min(8).max(1);
-    let chunk_size = tracks.len().div_ceil(worker_count);
-    std::thread::scope(|scope| {
-        for chunk in tracks.chunks_mut(chunk_size) {
-            scope.spawn(move || {
-                for track in chunk {
-                    let Some(source_id) = track.source_id.as_deref() else {
-                        continue;
-                    };
-                    if let Ok(Some(cover)) = fetch_kuwo_track_cover_with_proxy(source_id, use_proxy)
-                    {
-                        track.artwork_uri = Some(cover);
-                    }
-                }
-            });
-        }
-    });
-}
 
 fn load_channel_rankings(
     channel: OnlineSearchChannel,
@@ -572,6 +561,28 @@ fn load_channel_rankings(
     parse_rankings(channel, &value)
 }
 
+/// 复用的 HTTP 客户端。
+///
+/// ureq 的 `Agent` 内部带连接池，复用同一个实例时同一主机的后续请求能走
+/// keep-alive，省掉每次重新做 TCP + TLS 握手（单次请求通常省 200–500ms；
+/// 网易云歌单要连着打两个接口、榜单目录要打三个主机，这个差别会被放大）。
+/// 代理开关只影响建连方式，所以按开关各缓存一份。
+fn shared_agent(use_proxy: bool) -> ureq::Agent {
+    static DIRECT: OnceLock<ureq::Agent> = OnceLock::new();
+    static PROXIED: OnceLock<ureq::Agent> = OnceLock::new();
+    let cached = if use_proxy { &PROXIED } else { &DIRECT };
+    cached
+        .get_or_init(|| {
+            ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(10))
+                .timeout_read(Duration::from_secs(15))
+                .timeout_write(Duration::from_secs(15))
+                .try_proxy_from_env(use_proxy)
+                .build()
+        })
+        .clone()
+}
+
 fn request_json(
     endpoint: &str,
     params: &[(impl AsRef<str>, String)],
@@ -579,12 +590,7 @@ fn request_json(
     use_proxy: bool,
     json5_response: bool,
 ) -> Result<Value, OnlineSearchError> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let mut request = agent.get(endpoint);
     for (key, value) in params {
         request = request.query(key.as_ref(), value);
@@ -620,12 +626,7 @@ fn request_text(
     referer: &str,
     use_proxy: bool,
 ) -> Result<String, OnlineSearchError> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let mut request = agent.get(endpoint);
     for (key, value) in params {
         request = request.query(key.as_ref(), value);
@@ -684,12 +685,7 @@ struct KuwoSession {
 /// 再用该 cookie 的名称和值算出 `Secret` 请求头，否则会返回 “The request is
 /// illegal!”。
 fn kuwo_session(use_proxy: bool, referer: &str) -> Result<KuwoSession, OnlineSearchError> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let response = agent
         .get("https://www.kuwo.cn/")
         .set("Accept", "text/html,application/xhtml+xml")
@@ -727,12 +723,7 @@ fn kuwo_api_json(
     referer: &str,
     use_proxy: bool,
 ) -> Result<Value, OnlineSearchError> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
-        .try_proxy_from_env(use_proxy)
-        .build();
+    let agent = shared_agent(use_proxy);
     let req_id = kuwo_req_id();
     let cookie_header = format!("{}={}", session.cookie_name, session.cookie_value);
     let mut request = agent.get(endpoint);
