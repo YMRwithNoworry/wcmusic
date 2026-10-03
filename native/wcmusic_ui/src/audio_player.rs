@@ -174,7 +174,8 @@ impl VolumeMemory {
     }
 
     fn set(&self, volume: f32) {
-        self.0.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        self.0
+            .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
     /// 把记住的音量套用到（通常是刚建好的）sink 上。
@@ -369,7 +370,7 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
-/// 复现并锁定 bug：播放前调音量时 sink 还不存在，
+    /// 复现并锁定 bug：播放前调音量时 sink 还不存在，
     /// 之后 play() 建的新 sink 必须沿用用户调好的音量，而不是 rodio 默认的 1.0。
     #[test]
     fn volume_set_before_playback_survives_the_new_sink() {

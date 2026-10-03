@@ -286,12 +286,7 @@ mod windows {
                 lyrics_reset_label.as_ptr(),
             );
             // 子菜单由父菜单持有，DestroyMenu(menu) 会一并销毁。
-            AppendMenuW(
-                menu,
-                MF_POPUP,
-                lyrics_menu as usize,
-                lyrics_label.as_ptr(),
-            );
+            AppendMenuW(menu, MF_POPUP, lyrics_menu as usize, lyrics_label.as_ptr());
         }
         AppendMenuW(menu, MF_STRING, EXIT_COMMAND, exit_label.as_ptr());
 

@@ -119,18 +119,6 @@ pub fn install(cx: &mut App) {
     c.tab_bar_segmented = color(palette.sidebar);
 }
 
-// 只使用现有播放进度更新节奏指示，不增加空闲重绘或伪装成音频频谱。
-pub fn playback_levels(playing: bool, elapsed_ms: u64) -> [f32; 4] {
-    if !playing {
-        return [3.0; 4];
-    }
-    let phase = (elapsed_ms % 60_000) as f32 / 1_000.0;
-    std::array::from_fn(|index| {
-        let wave = (phase * (2.3 + index as f32 * 0.31) + index as f32 * 1.7).sin();
-        4.0 + (wave + 1.0) * 5.5
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,22 +153,5 @@ mod tests {
                 assert!(contrast(p.on_primary, primary) >= 4.5);
             }
         }
-    }
-
-    #[test]
-    fn paused_indicator_is_still_and_playing_indicator_stays_inside_its_bounds() {
-        assert_eq!(playback_levels(false, 0), [3.0; 4]);
-        assert_eq!(playback_levels(false, 10_000), [3.0; 4]);
-        assert_ne!(playback_levels(true, 0), playback_levels(true, 500));
-        for elapsed in (0..60_000).step_by(250) {
-            for height in playback_levels(true, elapsed) {
-                assert!((4.0..=15.0).contains(&height));
-            }
-        }
-        assert!(
-            playback_levels(true, u64::MAX)
-                .iter()
-                .all(|height| height.is_finite())
-        );
     }
 }

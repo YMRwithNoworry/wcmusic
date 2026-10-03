@@ -3497,7 +3497,6 @@ impl MusicApp {
                         h_flex()
                             .items_center()
                             .gap_2()
-                            .child(playback_indicator(self.is_playing, self.elapsed_ms, p))
                             .child(
                                 div()
                                     .text_xs()
@@ -6111,8 +6110,7 @@ impl MusicApp {
                                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                                     .text_color(p.foreground)
                                                     .child(title),
-                                            )
-                                            .child(playback_indicator(playing, self.elapsed_ms, p)),
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -6443,30 +6441,6 @@ impl Render for MusicApp {
             .children(overlay)
             .children(track_menu)
     }
-}
-
-fn playback_indicator(playing: bool, elapsed_ms: u64, p: Palette) -> gpui::Div {
-    h_flex()
-        .w(px(18.0))
-        .h(px(16.0))
-        .flex_shrink_0()
-        .items_end()
-        .gap(px(2.0))
-        .children(
-            ui_theme::playback_levels(playing, elapsed_ms)
-                .into_iter()
-                .map(|height| {
-                    div()
-                        .w(px(3.0))
-                        .h(px(height))
-                        .rounded(px(1.0))
-                        .bg(if playing {
-                            p.primary
-                        } else {
-                            p.muted.opacity(0.55)
-                        })
-                }),
-        )
 }
 
 fn track_artwork(row: &TrackRow, p: Palette) -> gpui::AnyElement {
