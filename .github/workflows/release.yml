@@ -140,14 +140,27 @@ jobs:
           path: dist
       - name: 检查资产
         id: assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           ls -la dist
+          repo="${{ github.repository }}"
+          tag="${{ needs.version.outputs.tag }}"
           if [ -f dist/wcmusic-android-arm64.apk ]; then
             echo "android=true" >> "$GITHUB_OUTPUT"
+            echo "android_url=https://github.com/$repo/releases/download/$tag/wcmusic-android-arm64.apk" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Android 构建没有产出 APK，本次 Release 只包含 Windows 包"
+            # 官网的 Android 按钮不能指向空文件：退回最近一个真有 APK 的 Release。
+            url=""
+            for candidate in "$repo" YMRwithNoworry/wcmusic-releases; do
+              url=$(gh api "repos/$candidate/releases?per_page=20" --jq '[.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "wcmusic-android-arm64.apk")][0].browser_download_url' 2>/dev/null || true)
+              if [ -n "$url" ] && [ "$url" != "null" ]; then break; fi
+              url=""
+              done
+            echo "android_url=$url" >> "$GITHUB_OUTPUT"
           fi
       - name: 生成 Release 说明与官网改动
         run: |
@@ -156,6 +169,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --previous "v${{ needs.version.outputs.previous }}" \
             --android "${{ steps.assets.outputs.android }}" \
+            --android-url "${{ steps.assets.outputs.android_url }}" \
             --notes release-notes.md
           git --no-pager diff --stat
       - name: 发布 Release
