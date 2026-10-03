@@ -5933,7 +5933,7 @@ impl MusicApp {
                     setting_toggle_row(
                         "全局快捷键",
                         self.hotkeys.enabled,
-                        "开启后即使在其它程序里也能用快捷键控制播放",
+                        "开启后即使在其它程序里也能用快捷键控制播放；不带修饰键的组合会把那个按键从其它程序手里抢走，因此只允许 F1–F24",
                         p,
                     )
                     .id("setting-hotkeys")

@@ -182,11 +182,18 @@ pub fn binding_to_vk(binding: &str) -> Result<(u32, u32), String> {
         return Err("快捷键缺少按键".to_owned());
     };
     let vk = virtual_key(key).ok_or_else(|| format!("暂不支持这个按键：{key}"))?;
-    // 单个字母或数字会被全局抢走，必须搭配修饰键。
-    if modifiers == 0 && matches!(vk, 0x30..=0x39 | 0x41..=0x5A) {
-        return Err("请至少配合 Ctrl / Alt / Shift 一起使用".to_owned());
+    // 不带修饰键的全局快捷键会把那个键从**所有**程序手里抢走：字母数字自不必说，
+    // 空格、Tab、方向键、回车更是每个软件都在用的键——注册 `space` 之后别的程序
+    // 连空格都打不出来。只放行功能键（F1–F24），那是全局快捷键的传统用法。
+    if modifiers == 0 && !is_function_key(vk) {
+        return Err("请至少配合 Ctrl / Alt / Shift / Win 一起使用".to_owned());
     }
     Ok((modifiers, vk))
+}
+
+/// F1–F24：不带修饰键也可以注册为全局快捷键。
+fn is_function_key(vk: u32) -> bool {
+    (0x70..=0x87).contains(&vk)
 }
 
 fn virtual_key(name: &str) -> Option<u32> {
@@ -503,6 +510,13 @@ mod tests {
     fn rejects_unsafe_or_unknown_bindings() {
         assert!(binding_to_vk("p").is_err());
         assert!(binding_to_vk("1").is_err());
+        // 这些键不带修饰键注册会直接抢走所有程序里的同名键：
+        // 实测过 `space` 会让别的软件连空格都打不出来。
+        assert!(binding_to_vk("space").is_err());
+        assert!(binding_to_vk("tab").is_err());
+        assert!(binding_to_vk("enter").is_err());
+        assert!(binding_to_vk("left").is_err());
+        assert!(binding_to_vk("escape").is_err());
         assert!(binding_to_vk("ctrl-alt-unknown").is_err());
         assert!(binding_to_vk("ctrl-alt-a-b").is_err());
         assert!(binding_to_vk("").is_err());

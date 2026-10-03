@@ -126,6 +126,23 @@ impl HotKeySettings {
             self.set_binding(action, action.default_binding().to_owned());
         }
     }
+
+    /// 把「会抢占别的程序按键」的绑定换回默认值。
+    ///
+    /// 老版本的校验只拦住了「字母数字不带修饰键」，`space` 这类绑定能存下来，
+    /// 一旦开启全局快捷键就会把空格键从所有程序手里抢走（别的软件连空格都打不出来）。
+    /// 载入时自动修回来，用户不必手动重置。空字符串表示「不设置」，保持不动。
+    pub fn repair_bindings(&mut self) {
+        for action in HotKeyAction::ALL {
+            let binding = self.binding(action).to_owned();
+            if binding.trim().is_empty() {
+                continue;
+            }
+            if crate::hotkey::binding_to_vk(&binding).is_err() {
+                self.set_binding(action, action.default_binding().to_owned());
+            }
+        }
+    }
 }
 
 /// 收藏的平台歌单：保存歌单摘要（平台 + id + 名称等），
@@ -249,6 +266,8 @@ impl AppSettings {
         if (settings.lyrics.stroke_width - LEGACY_DEFAULT_LYRICS_STROKE_WIDTH).abs() < 0.01 {
             settings.lyrics.stroke_width = crate::lyrics::LyricsStyle::default().stroke_width;
         }
+        // 会抢占别的程序按键的旧绑定（例如 `space`）在载入时修回默认值。
+        settings.hotkeys.repair_bindings();
         Some(settings)
     }
 
@@ -598,6 +617,28 @@ mod tests {
         assert!(loaded.lyrics.karaoke);
         assert!(loaded.lyrics.locked);
         let _ = fs::remove_file(path);
+    }
+
+    /// 老版本能把 `space` 这种「不带修饰键」的绑定存下来，一旦开启全局快捷键
+    /// 就会把空格键从所有程序手里抢走；载入时必须自动修回默认值。
+    #[test]
+    fn repairs_hotkey_bindings_that_would_steal_keys() {
+        let path = temp_path("hotkeys-repair");
+        fs::write(
+            &path,
+            r#"{"hotkeys":{"enabled":true,"toggle_play":"space","mute":""}}"#,
+        )
+        .expect("写设置");
+
+        let settings = AppSettings::load_from(Some(&path)).expect("读设置");
+
+        assert_eq!(
+            settings.hotkeys.binding(HotKeyAction::TogglePlay),
+            HotKeyAction::TogglePlay.default_binding()
+        );
+        // 空字符串表示「不设置快捷键」，保持原样。
+        assert_eq!(settings.hotkeys.binding(HotKeyAction::Mute), "");
+        assert!(settings.hotkeys.enabled);
     }
 
     #[test]
