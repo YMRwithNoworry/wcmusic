@@ -53,7 +53,7 @@
             </a>
             <a class="text-link" href="#experience">看看它如何工作 <i data-lucide="arrow-down" aria-hidden="true"></i></a>
           </div>
-          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.3 · Android 1.2.2</p>
+          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.4 · Android 1.2.2</p>
         </div>
         <div class="hero-caption" aria-hidden="true">
           <span>本地曲库</span><span>聚合搜索</span><span>自由音源</span>
@@ -121,11 +121,11 @@
               <h3>Windows x64</h3>
               <p class="meta">Windows 10 / 11 · ZIP 便携版</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic-releases/releases/download/v1.2.3/wcmusic-windows-x64.zip">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.4/wcmusic-windows-x64.zip">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Windows 版
             </a>
-            <p class="file-meta">版本 1.2.3 · x64</p>
+            <p class="file-meta">版本 1.2.4 · x64</p>
           </article>
           <article class="download-card reveal" data-platform="android">
             <div class="platform-icon clay"><i data-lucide="smartphone" aria-hidden="true"></i></div>
@@ -134,7 +134,7 @@
               <h3>Android arm64</h3>
               <p class="meta">Android 8.0+ · APK 安装包</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic-releases/releases/download/v1.2.3/wcmusic-android-arm64.apk">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.4/wcmusic-android-arm64.apk">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Android 版
             </a>
@@ -148,17 +148,24 @@
         <div class="section-kicker reveal"><span>03</span> 最新发布</div>
         <div class="release-layout">
           <div class="release-sticky reveal">
-            <p class="version">v1.2.3</p>
+            <p class="version">v1.2.4</p>
             <h2 id="release-title">榜单、翻译与更轻的桌面端</h2>
             <p>2026 年 10 月 3 日</p>
             <span class="stable"><span></span> 稳定版</span>
           </div>
           <div class="changelog reveal">
-            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>排行榜按平台分类</h3><p>排行榜页先选音乐平台（酷我 / 酷狗 / QQ 音乐 / 网易云），再列出该平台的热门榜单；四个平台的榜单一次加载，切换平台只是本地过滤，点开就能看实时歌曲。</p></div></div>
-            <div class="change-group"><span class="change-icon"><i data-lucide="languages" aria-hidden="true"></i></span><div><h3>没有翻译的歌词也能翻译了</h3><p>酷我、酷狗的歌词接口只返回正文，此前开着「显示翻译」也是空的。现在平台不给翻译时会自动调用在线翻译补全（微软 → 谷歌 → MyMemory 逐级兜底），中文歌词与空行自动跳过，翻译失败也不影响歌词正文。</p></div></div>
-            <div class="change-group"><span class="change-icon"><i data-lucide="gauge" aria-hidden="true"></i></span><div><h3>内存占用大幅下降</h3><p>根因是 GPUI 会把解码后的封面永久缓存，而平台给的封面尺寸完全不可控（实测有 3072×3072，单张解码后 36 MB）。现在封面落盘前统一缩到 320px，单张降到 0.39 MB，24 张预热封面最坏从 864 MB 降到 9.4 MB；顺带去掉了歌单页每帧克隆整份歌曲列表的开销。</p></div></div>
-            <div class="change-group"><span class="change-icon"><i data-lucide="monitor" aria-hidden="true"></i></span><div><h3>窗口有了最小化与关闭</h3><p>自绘标题栏右上角补上最小化与关闭按钮：关闭和 Alt+F4 走同一条路，有托盘时收进托盘继续后台播放，不会直接退出进程。</p></div></div>
-            <div class="change-group"><span class="change-icon"><i data-lucide="type" aria-hidden="true"></i></span><div><h3>细节修正</h3><p>没有歌曲时打开桌面歌词不再挂一块「暂无歌词」；歌曲详情页补上显式的退出按钮；空间音效按钮改为点击直接开关；更新检测改查发布仓库（此前指向源码仓库，永远查不到新版本）。</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>添加 GitHub Actions 发布流水线：推送即构建、发版、同步官网</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>没有歌曲时桌面歌词不再显示暂无歌词</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>窗口右上角添加最小化与关闭按钮</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>大幅降低内存占用：封面缩略图 + 去掉每帧整份歌单克隆</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>歌词翻译：平台不提供时自动调用在线翻译补全</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>排行榜支持按平台分类：先选平台再显示该平台的榜单</h3></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Add an explicit exit button to the now-playing page</h3><p>Leaving the song-detail page used to require pressing Esc or clicking the cover</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Toggle spatial audio straight from the play-bar button</h3><p>The button next to the playback controls opened a card whose only content was</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Align the desktop lyrics inset with the toolbar and panel</h3><p>The lyric text reserved a 26px left/right padding while the toolbar sat 12px</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Let the window be dragged with the mouse</h3><p>The main window draws its own UI with the native titlebar hidden and never</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Check for updates through GitHub Releases</h3><p>Add an update module that asks the GitHub releases API for the newest published</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>Show the project repository in the About pane</h3><p>Add a clickable &quot;项目仓库&quot; info row next to the version and UI framework</p></div></div>
           </div>
         </div>
       </section>
