@@ -595,6 +595,9 @@ struct MusicApp {
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
     ranking_tracks: Vec<TrackRow>,
+    /// 排行榜页当前选中的音乐平台：先选平台，再显示该平台的榜单。
+    rankings_channel: OnlineSearchChannel,
+    /// 选中榜单的下标，指向**过滤后**的列表。
     selected_ranking: Option<usize>,
     rankings_loading: bool,
     ranking_tracks_loading: bool,
@@ -708,6 +711,7 @@ impl MusicApp {
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
+            rankings_channel: OnlineSearchChannel::Kuwo,
             ranking_tracks: Vec::new(),
             selected_ranking: None,
             rankings_loading: false,
@@ -814,8 +818,41 @@ impl MusicApp {
         .detach();
     }
 
+    /// 当前平台下的榜单（排行榜页先选平台、再列该平台的榜单）。
+    ///
+    /// 返回值是原始下标 + 引用：`selected_ranking` 存的是过滤后列表的下标，
+    /// 点选/渲染都基于这个列表，避免两套下标换算。
+    fn visible_rankings(&self) -> Vec<(usize, &PlatformRanking)> {
+        self.rankings
+            .iter()
+            .enumerate()
+            .filter(|(_, ranking)| ranking.channel == self.rankings_channel)
+            .collect()
+    }
+
+    /// 切换排行榜页的平台：清掉当前选中与列表，避免残留上一个平台的歌曲。
+    fn select_rankings_channel(&mut self, channel: OnlineSearchChannel, cx: &mut Context<Self>) {
+        if channel == self.rankings_channel {
+            return;
+        }
+        self.rankings_channel = channel;
+        self.selected_ranking = None;
+        self.ranking_tracks.clear();
+        self.ranking_tracks_loading = false;
+        self.ranking_tracks_error = None;
+        // 切平台时让列表重新从「未选择」开始，标签页也不会残留旧歌曲。
+        self.ranking_tracks_generation += 1;
+        self.notice = format!("{}榜单", channel.label()).into();
+        cx.notify();
+    }
+
+    /// `index` 是**当前平台过滤后**列表里的下标。
     fn select_ranking(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(ranking) = self.rankings.get(index).cloned() else {
+        let Some(ranking) = self
+            .visible_rankings()
+            .get(index)
+            .map(|(_, ranking)| (*ranking).clone())
+        else {
             return;
         };
         self.selected_ranking = Some(index);
@@ -4464,12 +4501,31 @@ impl MusicApp {
 
     fn rankings_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::new(cx);
-        let content = div()
+        let mut content = div()
             .h_full()
             .flex()
             .flex_col()
             .gap_4()
             .child(self.section_title("热门榜单", "刷新榜单", cx));
+
+        // 排行榜先选平台、再列该平台的榜单：四个平台的榜单一次性加载，切换平台只是本地过滤。
+        let mut platform_chips = h_flex().items_center().gap_1();
+        for (index, channel) in OnlineSearchChannel::ALL.into_iter().enumerate() {
+            let selected = channel == self.rankings_channel;
+            let button = Button::new(("ranking-platform", index))
+                .label(channel.label())
+                .small();
+            let button = if selected {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            platform_chips =
+                platform_chips.child(button.on_click(cx.listener(move |this, _, _, cx| {
+                    this.select_rankings_channel(channel, cx)
+                })));
+        }
+        content = content.child(platform_chips);
 
         if self.rankings_loading {
             return content.child(search_status(
@@ -4485,6 +4541,18 @@ impl MusicApp {
             return content.child(search_status(
                 "还没有榜单",
                 "点击右上角刷新，从各大音乐平台获取实时榜单。",
+                p,
+            ));
+        }
+
+        let platform_rankings = self.visible_rankings();
+        if platform_rankings.is_empty() {
+            return content.child(search_status(
+                "该平台暂无榜单",
+                format!(
+                    "{} 的榜单暂时没有加载成功，可以切换其他平台，或点击右上角刷新重试。",
+                    self.rankings_channel.label()
+                ),
                 p,
             ));
         }
@@ -4510,7 +4578,7 @@ impl MusicApp {
                     .text_color(p.muted)
                     .child("平台榜单"),
             );
-        for (index, ranking) in self.rankings.iter().enumerate() {
+        for (index, (_, ranking)) in platform_rankings.into_iter().enumerate() {
             let selected = self.selected_ranking == Some(index);
             let count = if selected && !self.ranking_tracks.is_empty() {
                 format!("{} 首歌曲", self.ranking_tracks.len())
@@ -4572,7 +4640,7 @@ impl MusicApp {
             .flex_col()
             .gap_2();
         if let Some(selected) = self.selected_ranking {
-            if let Some(ranking) = self.rankings.get(selected) {
+            if let Some((_, ranking)) = self.visible_rankings().get(selected).copied() {
                 tracks_panel = tracks_panel.child(
                     div()
                         .flex()
