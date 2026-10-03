@@ -12,6 +12,7 @@ Global rules — follow these in every task in this project:
 每次任务结束将项目上传至github远程仓库，若无远程仓库则自己创建。
 jdk在这里D:\MC\jdk
 一般不要过度debug。构建无报错即可。
+中文回答问题
 
 <!-- END dsh-global-system-prompt -->
 
