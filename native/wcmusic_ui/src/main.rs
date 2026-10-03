@@ -5849,7 +5849,22 @@ impl MusicApp {
                         env!("CARGO_PKG_VERSION"),
                         p,
                     ))
-                    .child(setting_info_row("界面框架", "GPUI KIT · DESKTOP", p));
+                    .child(setting_info_row("界面框架", "GPUI KIT · DESKTOP", p))
+                    // 项目仓库：点击用默认浏览器打开，右侧显示地址。
+                    .child(
+                        setting_info_row("项目仓库", PROJECT_REPOSITORY, p)
+                            .id("setting-repository")
+                            .cursor_pointer()
+                            .hover(|style| style.bg(p.surface_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.notice = if open_external_url(PROJECT_REPOSITORY) {
+                                    "已在浏览器中打开项目仓库".into()
+                                } else {
+                                    format!("打开仓库失败，请手动访问 {PROJECT_REPOSITORY}").into()
+                                };
+                                cx.notify();
+                            })),
+                    );
             }
         }
 
@@ -6809,7 +6824,45 @@ fn setting_toggle_row(
         )
 }
 
-/// 只读信息行：左边灰色标签，右边值，不提供点击反馈（用于「关于」这类内容）。
+/// 项目仓库地址：关于页展示，也用于「打开仓库」。
+const PROJECT_REPOSITORY: &str = "https://github.com/YMRwithNoworry/wcmusic";
+
+/// 用系统默认浏览器打开链接。
+///
+/// 走 Win32 的 `ShellExecuteW`：不引入额外依赖，也不会像起进程那样弹出控制台窗口。
+#[cfg(windows)]
+fn open_external_url(url: &str) -> bool {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation = wide_string("open");
+    let target = wide_string(url);
+    // ShellExecuteW 的返回值 <= 32 表示失败。
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    result as isize > 32
+}
+
+#[cfg(not(windows))]
+fn open_external_url(_url: &str) -> bool {
+    false
+}
+
+/// UTF-16 字符串（供 Win32 宽字符 API 使用）。
+#[cfg(windows)]
+fn wide_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// 只读信息行：左边灰色标签，右边值（「关于」这类内容）。
 fn setting_info_row(label: &'static str, value: impl Into<SharedString>, p: Palette) -> gpui::Div {
     div()
         .flex()
