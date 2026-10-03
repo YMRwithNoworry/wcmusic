@@ -6475,6 +6475,45 @@ impl MusicApp {
                     ),
             )
     }
+
+    /// 自绘标题栏右上角的最小化 / 关闭按钮。
+    ///
+    /// 窗口用 `appears_transparent` 隐藏了原生标题栏，这两个按钮就是仅有的窗口控制：
+    /// 最小化直接调平台 API；关闭发 `WM_CLOSE`，与 Alt+F4 走同一条路，
+    /// 托盘存在时由 `on_window_should_close` 收进托盘，而不是退出进程。
+    fn window_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // 刻意不覆盖拖动条：Windows 的命中测试会把同一位置的所有 hitbox 都算上，
+        // 叠在 `WindowControlArea::Drag` 上按钮会变成 HTCAPTION 而点不动。
+        div()
+            .id("window-controls")
+            .flex()
+            .items_center()
+            .gap_1()
+            .pr(px(6.0))
+            .child(
+                Button::new("window-minimize")
+                    .small()
+                    .ghost()
+                    .icon(IconName::Minus)
+                    .tooltip("最小化")
+                    .accessibility_label("最小化窗口")
+                    .on_click(cx.listener(|_, _, window, _| window.minimize_window())),
+            )
+            .child(
+                Button::new("window-close")
+                    .small()
+                    .ghost()
+                    .icon(IconName::Close)
+                    .tooltip("关闭窗口")
+                    .accessibility_label("关闭窗口")
+                    .on_click(cx.listener(|_, _, window, _| {
+                        match tray::native_window_handle(window) {
+                            Some(hwnd) => tray::request_close(hwnd),
+                            None => window.remove_window(),
+                        }
+                    })),
+            )
+    }
 }
 
 impl Render for MusicApp {
@@ -6552,11 +6591,21 @@ impl Render for MusicApp {
                     // 避免只有左侧品牌区能拖动窗口。
                     .child(
                         div()
-                            .id("window-drag-strip")
-                            .h(px(14.0))
+                            // 自绘标题栏：左边是可拖动的空白区，右边是最小化 / 关闭按钮。
+                            // 两者是并列的兄弟节点，按钮不会被拖动区盖住。
+                            .h(px(30.0))
                             .w_full()
                             .flex_shrink_0()
-                            .window_control_area(WindowControlArea::Drag),
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("window-drag-strip")
+                                    .flex_1()
+                                    .h_full()
+                                    .window_control_area(WindowControlArea::Drag),
+                            )
+                            .child(self.window_controls(cx)),
                     )
                     .child(library_scroll)
                     .child(self.player_bar(cx)),

@@ -336,6 +336,17 @@ mod windows {
             SetForegroundWindow(hwnd as HWND);
         }
     }
+
+    /// 请求关闭窗口：发 `WM_CLOSE` 让平台走正常的关闭流程。
+    ///
+    /// 不能直接用 `Window::remove_window()`：那条路绕开 `on_window_should_close`，
+    /// 托盘存在时会被当成「退出进程」，而用户点关闭只期望收进托盘。
+    pub fn request_close(hwnd: isize) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+        unsafe {
+            PostMessageW(hwnd as HWND, WM_CLOSE, 0, 0);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -439,3 +450,11 @@ pub fn show_window(hwnd: isize) {
 
 #[cfg(not(windows))]
 pub fn show_window(_hwnd: isize) {}
+
+#[cfg(windows)]
+pub fn request_close(hwnd: isize) {
+    windows::request_close(hwnd);
+}
+
+#[cfg(not(windows))]
+pub fn request_close(_hwnd: isize) {}
