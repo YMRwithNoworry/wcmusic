@@ -3622,12 +3622,7 @@ impl MusicApp {
         div()
             .size_full()
             .relative()
-            .flex()
-            .gap_10()
-            .px(px(32.0))
-            .pt(px(28.0))
-            .pb(px(20.0))
-            // 铺满整页的毛玻璃背景：绝对定位，不参与 flex 布局，也不吃 gap。
+            // 铺满整页的毛玻璃背景：绝对定位，直接铺满根节点，不受内容内边距影响。
             .child(glass::artwork_backdrop(
                 blurred.clone(),
                 p.background,
@@ -3635,130 +3630,139 @@ impl MusicApp {
             ))
             .child(
                 div()
-                    .w(px(280.0))
-                    .flex_shrink_0()
+                    .size_full()
                     .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(p.muted)
-                                    .child(if self.is_playing {
-                                        "正在播放"
-                                    } else {
-                                        "已暂停"
-                                    }),
-                            ),
-                    )
-                    .child(
-                        // 再点一次封面即可退出专享模式。
-                        div()
-                            .id("now-playing-cover")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
-                            .child(artwork),
-                    )
-                    .child(
-                        // 歌曲信息放进一块玻璃卡片：玻璃作为背景层，文字叠在上面。
-                        div()
-                            .relative()
-                            .child(
-                                glass::glass_panel(glass_style, blurred.clone())
-                                    .absolute()
-                                    .inset_0(),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .p(px(16.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(23.0))
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(p.foreground)
-                                            .child(title),
-                                    )
-                                    .child(div().text_sm().text_color(p.muted).child(artist))
-                                    .child(div().text_xs().text_color(p.muted).child(album)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .relative()
-                    // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
-                    // 原有的滚动、逐字填充与点击跳转都不受影响。
-                    .child(
-                        glass::glass_panel(glass_style, blurred)
-                            .absolute()
-                            .inset_0(),
-                    )
-                    .child(
-                        div()
-                            .size_full()
-                            .px(px(18.0))
-                            .py(px(14.0))
-                            .child(self.now_playing_lyrics(cx)),
-                    ),
-            )
-            .child({
-                // 「翻译」快捷开关：和设置页、桌面歌词工具条共用同一份设置，
-                // 任何一处切换都会立刻同步到另一处并落盘。
-                let translation_button = Button::new("now-playing-translation")
-                    .small()
-                    .label("翻译")
-                    .tooltip(if self.lyrics.show_translation {
-                        "隐藏歌词翻译"
-                    } else {
-                        "显示歌词翻译"
-                    })
-                    .accessibility_label("歌词翻译");
-                let translation_button = if self.lyrics.show_translation {
-                    translation_button.primary()
-                } else {
-                    translation_button.ghost()
-                };
-                // 退出按钮：回到普通页面。
-                //
-                // 之前只能靠 Esc 或再点一次封面退出，入口太隐蔽；这里给一个显式按钮。
-                let exit_button = Button::new("now-playing-exit-button")
-                    .small()
-                    .ghost()
-                    .icon(IconName::Close)
-                    .tooltip("退出歌曲详情页")
-                    .accessibility_label("退出歌曲详情页")
-                    .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)));
-                div()
-                    // 「翻译 / 退出」两个按钮的遮挡区。
-                    //
-                    // 下面的歌词每一行都是整行可点（点了跳转到该行）；按钮周围
-                    // 的留白如果完全不挡，点偏几像素就会落到歌词行上执行 seek。
-                    // 遮挡区只包住这两个按钮，不再铺满右上角，避免挡住歌词行点击。
-                    .id("now-playing-exit")
-                    .occlude()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .p(px(6.0))
-                    .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
-                    .child(translation_button.on_click(cx.listener(|this, _, _, cx| {
-                        this.update_lyrics_style(cx, |style| {
-                            style.show_translation = !style.show_translation
+                    .gap_10()
+                    .px(px(32.0))
+                    .pt(px(28.0))
+                    .pb(px(20.0))
+                .child(
+                    div()
+                        .w(px(280.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(p.muted)
+                                        .child(if self.is_playing {
+                                            "正在播放"
+                                        } else {
+                                            "已暂停"
+                                        }),
+                                ),
+                        )
+                        .child(
+                            // 再点一次封面即可退出专享模式。
+                            div()
+                                .id("now-playing-cover")
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)))
+                                .child(artwork),
+                        )
+                        .child(
+                            // 歌曲信息放进一块玻璃卡片：玻璃作为背景层，文字叠在上面。
+                            div()
+                                .relative()
+                                .child(
+                                    glass::glass_panel(glass_style, blurred.clone())
+                                        .absolute()
+                                        .inset_0(),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_2()
+                                        .p(px(16.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(23.0))
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(p.foreground)
+                                                .child(title),
+                                        )
+                                        .child(div().text_sm().text_color(p.muted).child(artist))
+                                        .child(div().text_xs().text_color(p.muted).child(album)),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .relative()
+                        // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
+                        // 原有的滚动、逐字填充与点击跳转都不受影响。
+                        .child(
+                            glass::glass_panel(glass_style, blurred)
+                                .absolute()
+                                .inset_0(),
+                        )
+                        .child(
+                            div()
+                                .size_full()
+                                .px(px(18.0))
+                                .py(px(14.0))
+                                .child(self.now_playing_lyrics(cx)),
+                        ),
+                )
+                .child({
+                    // 「翻译」快捷开关：和设置页、桌面歌词工具条共用同一份设置，
+                    // 任何一处切换都会立刻同步到另一处并落盘。
+                    let translation_button = Button::new("now-playing-translation")
+                        .small()
+                        .label("翻译")
+                        .tooltip(if self.lyrics.show_translation {
+                            "隐藏歌词翻译"
+                        } else {
+                            "显示歌词翻译"
                         })
-                    })))
-                    .child(exit_button)
-            })
+                        .accessibility_label("歌词翻译");
+                    let translation_button = if self.lyrics.show_translation {
+                        translation_button.primary()
+                    } else {
+                        translation_button.ghost()
+                    };
+                    // 退出按钮：回到普通页面。
+                    //
+                    // 之前只能靠 Esc 或再点一次封面退出，入口太隐蔽；这里给一个显式按钮。
+                    let exit_button = Button::new("now-playing-exit-button")
+                        .small()
+                        .ghost()
+                        .icon(IconName::Close)
+                        .tooltip("退出歌曲详情页")
+                        .accessibility_label("退出歌曲详情页")
+                        .on_click(cx.listener(|this, _, _, cx| this.close_now_playing(cx)));
+                    div()
+                        // 「翻译 / 退出」两个按钮的遮挡区。
+                        //
+                        // 下面的歌词每一行都是整行可点（点了跳转到该行）；按钮周围
+                        // 的留白如果完全不挡，点偏几像素就会落到歌词行上执行 seek。
+                        // 遮挡区只包住这两个按钮，不再铺满右上角，避免挡住歌词行点击。
+                        .id("now-playing-exit")
+                        .occlude()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .p(px(6.0))
+                        .on_click(cx.listener(|_this, _, _, cx| cx.stop_propagation()))
+                        .child(translation_button.on_click(cx.listener(|this, _, _, cx| {
+                            this.update_lyrics_style(cx, |style| {
+                                style.show_translation = !style.show_translation
+                            })
+                        })))
+                        .child(exit_button)
+                })
+            )
             .into_any_element()
     }
 
