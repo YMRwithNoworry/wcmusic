@@ -3,6 +3,7 @@
 mod app_icon;
 mod audio_effects;
 mod audio_player;
+mod glass;
 mod hotkey;
 mod lyrics;
 mod lyrics_window;
@@ -43,7 +44,8 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{
-    AudioPlayer, download_artwork, download_audio_with_proxy, open_streaming_source,
+    AudioPlayer, blurred_artwork_path, download_artwork, download_audio_with_proxy,
+    open_streaming_source,
 };
 use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
@@ -3613,12 +3615,24 @@ impl MusicApp {
         let artist = row.artist.clone();
         let album = row.album.clone();
         let artwork = track_artwork_sized(row, 280.0, p);
+        // 背景与玻璃里的「折射内容」都用那张 48px 的模糊底图：放大后就是一层色雾。
+        let blurred = row.artwork_path.as_deref().and_then(blurred_artwork_path);
+        let glass_style = glass::GlassPanel::new(p.surface, p.foreground, 20.0);
 
         div()
             .size_full()
             .relative()
             .flex()
             .gap_10()
+            .px(px(32.0))
+            .pt(px(28.0))
+            .pb(px(20.0))
+            // 铺满整页的毛玻璃背景：绝对定位，不参与 flex 布局，也不吃 gap。
+            .child(glass::artwork_backdrop(
+                blurred.clone(),
+                p.background,
+                hsla(0.0, 0.0, 0.0, 1.0),
+            ))
             .child(
                 div()
                     .w(px(280.0))
@@ -3650,17 +3664,28 @@ impl MusicApp {
                             .child(artwork),
                     )
                     .child(
-                        v_flex()
-                            .gap_2()
+                        // 歌曲信息放进一块玻璃卡片：玻璃作为背景层，文字叠在上面。
+                        div()
+                            .relative()
                             .child(
-                                div()
-                                    .text_size(px(23.0))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(p.foreground)
-                                    .child(title),
+                                glass::glass_panel(glass_style, blurred.clone())
+                                    .absolute()
+                                    .inset_0(),
                             )
-                            .child(div().text_sm().text_color(p.muted).child(artist))
-                            .child(div().text_xs().text_color(p.muted).child(album)),
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .p(px(16.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(23.0))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(p.foreground)
+                                            .child(title),
+                                    )
+                                    .child(div().text_sm().text_color(p.muted).child(artist))
+                                    .child(div().text_xs().text_color(p.muted).child(album)),
+                            ),
                     ),
             )
             .child(
@@ -3668,7 +3693,21 @@ impl MusicApp {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.now_playing_lyrics(cx)),
+                    .relative()
+                    // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
+                    // 原有的滚动、逐字填充与点击跳转都不受影响。
+                    .child(
+                        glass::glass_panel(glass_style, blurred)
+                            .absolute()
+                            .inset_0(),
+                    )
+                    .child(
+                        div()
+                            .size_full()
+                            .px(px(18.0))
+                            .py(px(14.0))
+                            .child(self.now_playing_lyrics(cx)),
+                    ),
             )
             .child({
                 // 「翻译」快捷开关：和设置页、桌面歌词工具条共用同一份设置，
@@ -6582,6 +6621,10 @@ impl Render for MusicApp {
                 .px(px(32.0))
                 .pt(px(28.0))
                 .pb(px(20.0))
+                // 详情页的背景要铺满整页，内边距改由页面自己加。
+                .when(self.show_now_playing, |this| {
+                    this.px(px(0.0)).pt(px(0.0)).pb(px(0.0))
+                })
                 .overflow_y_scroll()
                 .child(page_content),
         )
