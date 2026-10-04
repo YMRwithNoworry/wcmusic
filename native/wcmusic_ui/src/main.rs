@@ -3614,10 +3614,16 @@ impl MusicApp {
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        let artwork = track_artwork_sized(row, 280.0, p);
-        // 背景与玻璃里的「折射内容」都用那张 48px 的模糊底图：放大后就是一层色雾。
+        // 整页背景 = 封面模糊缩略图放大铺满：既给页面铺上专辑的颜色，
+        // 也是玻璃面板「透出并模糊后方内容」里那个后方内容。
         let blurred = row.artwork_path.as_deref().and_then(blurred_artwork_path);
-        let glass_style = glass::GlassPanel::new(p.surface, p.foreground, 20.0);
+        let glass_style = glass::GlassPanel::new(p.surface, p.foreground, glass::PANEL_RADIUS);
+        // 封面与两块玻璃面板共用同一个圆角半径，四角一致、不再出现直角。
+        let artwork = div()
+            .size(px(280.0))
+            .rounded(px(glass::PANEL_RADIUS))
+            .overflow_hidden()
+            .child(track_artwork_sized(row, 280.0, p));
 
         div()
             .size_full()
@@ -3671,9 +3677,7 @@ impl MusicApp {
                             div()
                                 .relative()
                                 .child(
-                                    glass::glass_panel(glass_style, blurred.clone())
-                                        .absolute()
-                                        .inset_0(),
+                                    glass::glass_panel(glass_style).absolute().inset_0(),
                                 )
                                 .child(
                                     v_flex()
@@ -3700,9 +3704,7 @@ impl MusicApp {
                         // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
                         // 原有的滚动、逐字填充与点击跳转都不受影响。
                         .child(
-                            glass::glass_panel(glass_style, blurred)
-                                .absolute()
-                                .inset_0(),
+                            glass::glass_panel(glass_style).absolute().inset_0(),
                         )
                         .child(
                             div()

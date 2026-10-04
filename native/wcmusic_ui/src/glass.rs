@@ -34,6 +34,12 @@ use gpui::{
     px,
 };
 
+/// 歌曲详情页统一的圆角半径。
+///
+/// 页面上所有面（封面、歌曲信息卡、歌词面板）都用这一个值：
+/// 之前封面用 `rounded_md`（6px）、面板用 20px，看起来就是「圆角不一致」。
+pub const PANEL_RADIUS: f32 = 18.0;
+
 /// 玻璃面板的配色与圆角。
 #[derive(Clone, Copy)]
 pub struct GlassPanel {
@@ -55,8 +61,8 @@ impl GlassPanel {
     pub fn new(surface: Hsla, foreground: Hsla, radius: f32) -> Self {
         Self {
             radius,
-            tint_top: surface.opacity(0.60),
-            tint_bottom: surface.opacity(0.34),
+            tint_top: surface.opacity(0.18),
+            tint_bottom: surface.opacity(0.06),
             light: foreground,
             shade: hsla(0.0, 0.0, 0.0, 1.0),
         }
@@ -68,33 +74,25 @@ impl GlassPanel {
 /// 返回的 `Div` 可以继续 `.child(...)` 放内容——玻璃的各个光学图层是绝对定位的，
 /// 既不参与布局，也不会裁剪调用方放进去的内容（歌词要能滚动）。
 ///
-/// `refraction` 是「玻璃里看到的背景」：传封面图就会叠一份放大、低透明度的副本，
-/// 对应参考实现里按折射后的 UV 采样背景那一步。
-pub fn glass_panel(panel: GlassPanel, refraction: Option<std::path::PathBuf>) -> Div {
+/// 玻璃的「透出并模糊后方内容」是这样成立的：背景本身就是那张 24px 缩略图放大
+/// （见 [`artwork_backdrop`]），而面板只是一层**很淡**的半透明色——透过面板看到的
+/// 就是背景的模糊版本，颜色还会随背景变化。
+///
+/// 之前面板里还叠了一份自己的模糊副本，结果和背景对不齐，看上去像贴了一张糊图；
+/// 而且碰到浅色封面时面板会被照得很亮，白字直接看不清。现在没有这一层。
+pub fn glass_panel(panel: GlassPanel) -> Div {
     let radius = px(panel.radius);
-    let mut body = div()
+    let body = div()
         .absolute()
         .inset_0()
         .rounded(radius)
         .overflow_hidden()
-        // 玻璃体：上浅下深的半透明底。
+        // 玻璃体：上浅下深的半透明色。透明度必须够高，否则就是一块实心色块。
         .bg(linear_gradient(
             155.0,
             linear_color_stop(panel.tint_top, 0.0),
             linear_color_stop(panel.tint_bottom, 1.0),
-        ));
-    if let Some(path) = refraction {
-        // 折射：同一张封面在面板里被放大（负 inset 让图片比面板大一圈），
-        // 于是玻璃里的内容相对外部是放大的——这就是透镜最直观的感知特征。
-        body = body.child(
-            img(path)
-                .absolute()
-                .inset(px(-panel.radius * 0.5))
-                .object_fit(ObjectFit::Cover)
-                .opacity(0.22),
-        );
-    }
-    body = body
+        ))
         // 冷色调：参考实现最后乘的 vec3(0.92, 0.95, 1.05)，这里用一层极淡的蓝。
         .child(div().absolute().inset_0().bg(hsla(0.58, 0.50, 0.70, 0.05)))
         // 高光条：多光源 specular 的近似，斜向铺在左上角。
@@ -106,8 +104,8 @@ pub fn glass_panel(panel: GlassPanel, refraction: Option<std::path::PathBuf>) ->
         // 折射边缘：右下角压暗、左上角略亮，模拟透镜边缘的光线压缩。
         .child(div().absolute().inset_0().bg(linear_gradient(
             135.0,
-            linear_color_stop(panel.light.opacity(0.06), 0.0),
-            linear_color_stop(panel.shade.opacity(0.20), 1.0),
+            linear_color_stop(panel.light.opacity(0.05), 0.0),
+            linear_color_stop(panel.shade.opacity(0.14), 1.0),
         )));
 
     div()
@@ -121,30 +119,36 @@ pub fn glass_panel(panel: GlassPanel, refraction: Option<std::path::PathBuf>) ->
             // 贴地的接触阴影（contactShadow）。
             BoxShadow::new(px(0.0), px(3.0), panel.shade.opacity(0.32)).blur_radius(px(9.0)),
             // 内描边：顶部亮、底部暗（着色器里带 topBias 的 innerStroke）。
-            BoxShadow::new(px(0.0), px(1.5), panel.light.opacity(0.50))
+            // 玻璃感主要就靠这道亮边——它必须够亮才不像一块实心色块。
+            BoxShadow::new(px(0.0), px(1.5), panel.light.opacity(0.80))
                 .blur_radius(px(2.0))
                 .inset(),
-            BoxShadow::new(px(0.0), px(-1.5), panel.shade.opacity(0.40))
+            BoxShadow::new(px(0.0), px(-1.5), panel.shade.opacity(0.45))
                 .blur_radius(px(3.0))
                 .inset(),
             // 内发光：光线在玻璃体里散射（Fresnel 边缘提亮的近似）。
-            BoxShadow::new(px(0.0), px(0.0), panel.light.opacity(0.09))
-                .blur_radius(px(30.0))
-                .spread_radius(px(-12.0))
+            BoxShadow::new(px(0.0), px(0.0), panel.light.opacity(0.16))
+                .blur_radius(px(26.0))
+                .spread_radius(px(-10.0))
+                .inset(),
+            // 四边一圈很淡的亮边，让面板的轮廓从背景里浮出来。
+            BoxShadow::new(px(0.0), px(0.0), panel.light.opacity(0.12))
+                .blur_radius(px(6.0))
+                .spread_radius(px(-1.0))
                 .inset(),
         ])
         .child(body)
 }
 
-/// 详情页背景：底色 + 放大压暗的封面 + 渐变压暗。
+/// 详情页背景：底色 + 放大铺满的封面模糊图 + 渐变压暗。
+///
+/// 传进来的应当是那张 24px 缩略图：放大到整屏后就是一层平滑色雾，
+/// 相当于对封面做了一次很大的高斯模糊。它同时承担两件事——
+/// 给页面铺上专辑的颜色，以及当玻璃面板的「后方内容」。
 ///
 /// 没有封面时只画底色与渐变——这就是降级路径，不会出现空白区域；
 /// 渐变压暗无论有没有封面都铺，保证上层的玻璃面板与文字始终可读。
-pub fn artwork_backdrop(
-    artwork: Option<std::path::PathBuf>,
-    base: Hsla,
-    shade: Hsla,
-) -> Div {
+pub fn artwork_backdrop(artwork: Option<std::path::PathBuf>, base: Hsla, shade: Hsla) -> Div {
     let mut backdrop = div().absolute().inset_0().bg(base);
     if let Some(path) = artwork {
         backdrop = backdrop.child(
@@ -153,14 +157,14 @@ pub fn artwork_backdrop(
                 .inset_0()
                 .size_full()
                 .object_fit(ObjectFit::Cover)
-                .opacity(0.55),
+                .opacity(0.85),
         );
     }
     backdrop.child(
         div().absolute().inset_0().bg(linear_gradient(
             180.0,
-            linear_color_stop(shade.opacity(0.40), 0.0),
-            linear_color_stop(shade.opacity(0.78), 1.0),
+            linear_color_stop(shade.opacity(0.28), 0.0),
+            linear_color_stop(shade.opacity(0.60), 1.0),
         )),
     )
 }
@@ -176,19 +180,27 @@ mod tests {
         hsla(0.0, 0.0, 0.95, 1.0)
     }
 
-    /// 玻璃体必须真的半透明：不透明就看不到背后的封面，也就没有玻璃感。
+    /// 玻璃体必须真的半透明：不透明就退回成一块实心色块，也就是之前那个「石块」。
     #[test]
     fn the_glass_body_stays_translucent() {
-        let panel = GlassPanel::new(surface(), foreground(), 20.0);
-        assert!(panel.tint_top.a < 1.0, "玻璃体必须是半透明的");
+        let panel = GlassPanel::new(surface(), foreground(), PANEL_RADIUS);
+        assert!(panel.tint_top.a < 0.5, "玻璃体太不透明：{}", panel.tint_top.a);
         assert!(
             panel.tint_bottom.a < panel.tint_top.a,
             "上浅下深才有厚度感"
         );
-        assert_eq!(panel.radius, 20.0);
     }
 
-    /// 降级路径：没有封面（或封面模糊图还没生成）时背景仍然要有底色，
+    /// 面板要同时有内描边（玻璃亮边）与外投影，缺一个都不像玻璃。
+    #[test]
+    fn the_glass_panel_carries_a_rim_and_a_shadow() {
+        let mut panel = glass_panel(GlassPanel::new(surface(), foreground(), PANEL_RADIUS));
+        let shadows = panel.style().box_shadow.clone().unwrap_or_default();
+        assert!(shadows.iter().any(|shadow| shadow.inset), "缺少内描边的亮边");
+        assert!(shadows.iter().any(|shadow| !shadow.inset), "缺少外投影");
+    }
+
+    /// 降级路径：没有封面（或模糊图还没生成）时背景仍然要有底色，
     /// 不能留下空白区域。
     #[test]
     fn backdrop_without_artwork_still_paints_a_base_colour() {
@@ -197,15 +209,5 @@ mod tests {
             backdrop.style().background.is_some(),
             "没有封面时也必须铺底色"
         );
-    }
-
-    /// 面板在「有折射内容」和「没有折射内容」两种情况下都要能建出来。
-    #[test]
-    fn glass_panel_builds_with_and_without_refraction() {
-        let style = GlassPanel::new(surface(), foreground(), 18.0);
-        let mut plain = glass_panel(style, None);
-        assert!(plain.style().box_shadow.is_some());
-        let mut with_image = glass_panel(style, Some(std::path::PathBuf::from("cover.jpg")));
-        assert!(with_image.style().box_shadow.is_some());
     }
 }
