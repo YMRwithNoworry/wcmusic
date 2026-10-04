@@ -256,11 +256,6 @@ impl AudioStream {
         Self { state, pos: 0 }
     }
 
-    /// 让后台下载立刻收工：切歌或停止播放时调用，避免旧歌曲继续占带宽与内存。
-    fn abandon(&self) {
-        self.state.abandon();
-    }
-
     /// 复制一个从 0 开始读的句柄：重建解码器时用，共享同一份下载缓冲。
     fn rewind(&self) -> Self {
         Self {
@@ -952,7 +947,7 @@ mod tests {
         let bytes = silent_wav(8_000, 2, 100_000);
         let total = bytes.len() as u64;
         let stream = AudioStream::spawn(Box::new(TrickleReader { bytes, pos: 0 }), Some(total));
-        stream.abandon();
+        stream.state.abandon();
         std::thread::sleep(Duration::from_millis(80));
 
         let downloaded = lock(&stream.state).buffer.len();
