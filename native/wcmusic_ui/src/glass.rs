@@ -168,6 +168,8 @@ const BORDER_WIDTH: f32 = 1.5;
 const NORMAL_STEP: f32 = 2.0;
 /// 面板四周为投影预留的留白（参照目标 `SHADOW_PAD`）。
 pub const SHADOW_PAD: f32 = 20.0;
+/// `floating` 拖拽的边界约束：不允许拖出 root 内缩这么多像素（参照目标 `margin = 10`）。
+const DRAG_MARGIN: f32 = 10.0;
 /// 模糊趟数（参照目标 `BLUR_ITERATIONS`）：横 6 趟 + 纵 6 趟。
 const BLUR_ITERATIONS: usize = 6;
 /// 每趟步长系数：`spread = blurAmount * 2.5` 像素。
@@ -1050,10 +1052,15 @@ struct RuntimeInner {
     rendered: Mutex<Vec<(PanelRect, Arc<RenderImage>)>>,
     /// 每块面板的交互状态。
     interaction: Mutex<std::collections::HashMap<String, PanelInteraction>>,
+    /// 每块面板最近一次的布局矩形（页面坐标），拖拽的边界约束要用。
+    panel_bounds: Mutex<std::collections::HashMap<String, (f32, f32, f32, f32)>>,
     /// 正在后台渲染的面板，避免同一块重复排队。
     inflight: Mutex<std::collections::HashSet<PanelKey>>,
     /// 后台渲染完成后置位，render 里据此再要一帧。
     needs_redraw: std::sync::atomic::AtomicBool,
+    /// 场景里是否有动态内容（参照目标的 `data-dynamic` / `<video>`）：
+    /// 置位后每帧重算面板，等价于参照目标的「每帧重跑着色器」。
+    scene_dynamic: std::sync::atomic::AtomicBool,
 }
 
 /// 玻璃渲染的共享状态：整个应用持有一份，克隆给各个画布。
@@ -1178,6 +1185,18 @@ impl GlassRuntime {
             reduced,
             solid: cover.is_none(),
         };
+        if self
+            .inner
+            .scene_dynamic
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // 场景里有动态内容：每帧重算，等价于参照目标对 `data-dynamic` 的每帧重捕获。
+            self.inner
+                .panels
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
         {
             let panels = self.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(image) = panels.get(&key) {
@@ -1235,6 +1254,38 @@ impl GlassRuntime {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         });
         None
+    }
+
+    /// 标记场景里是否存在动态内容（对应参照目标的 `data-dynamic` / `<video>`）。
+    ///
+    /// 置位后每帧都会重算面板，与参照目标「动态内容每帧重捕获、玻璃每帧重跑着色器」
+    /// 的行为一致；取消置位后恢复缓存。详情页玻璃背后是静态的封面与渐变，所以默认不置位。
+    pub fn mark_scene_dynamic(&self, dynamic: bool) {
+        self.inner
+            .scene_dynamic
+            .store(dynamic, std::sync::atomic::Ordering::Relaxed);
+        if dynamic {
+            self.invalidate();
+        }
+    }
+
+    /// 让所有缓存失效（对应参照目标的 `_globalDirty`：resize、结构变化、上下文恢复）。
+    pub fn invalidate(&self) {
+        self.inner
+            .scene
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.inner
+            .panels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.inner
+            .rendered
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// 后台渲染完成，需要再画一帧。
@@ -1364,13 +1415,31 @@ impl GlassRuntime {
             })
             // `floating`：拖拽时按累计位移平移（参照目标用 `transform: translate`）。
             .on_mouse_move(move |event, _window, _cx| {
+                let page = move_runtime.page_bounds();
+                let layout = move_runtime
+                    .inner
+                    .panel_bounds
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&move_id)
+                    .copied();
                 move_runtime.with_interaction(&move_id, |state| {
                     let Some(origin) = state.drag_origin else {
                         return;
                     };
                     let dx = f32::from(event.position.x) - origin.0;
                     let dy = f32::from(event.position.y) - origin.1;
-                    state.drag = (state.drag_base.0 + dx, state.drag_base.1 + dy);
+                    let mut next = (state.drag_base.0 + dx, state.drag_base.1 + dy);
+                    // 参照目标的边界约束：不允许拖出 root 内缩 10px 的范围。
+                    if let (Some(page), Some((x, y, width, height))) = (page, layout) {
+                        let min_x = DRAG_MARGIN - x;
+                        let max_x = (page.width - DRAG_MARGIN - (x + width)).max(min_x);
+                        let min_y = DRAG_MARGIN - y;
+                        let max_y = (page.height - DRAG_MARGIN - (y + height)).max(min_y);
+                        next.0 = next.0.clamp(min_x, max_x);
+                        next.1 = next.1.clamp(min_y, max_y);
+                    }
+                    state.drag = next;
                 });
             })
             .on_mouse_up(gpui::MouseButton::Left, move |_event, window, _cx| {
@@ -1402,7 +1471,23 @@ impl GlassRuntime {
                             .or_default()
                             .step(width, height);
                         let effective = button_config(config, interaction);
-                        let image = prepaint_runtime.panel_image(
+                        if let Some(page) = prepaint_runtime.page_bounds() {
+                        prepaint_runtime
+                            .inner
+                            .panel_bounds
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(
+                                id.clone(),
+                                (
+                                    f32::from(bounds.origin.x) - page.x + SHADOW_PAD + interaction.drag.0,
+                                    f32::from(bounds.origin.y) - page.y + SHADOW_PAD + interaction.drag.1,
+                                    width - SHADOW_PAD * 2.0,
+                                    height - SHADOW_PAD * 2.0,
+                                ),
+                            );
+                    }
+                    let image = prepaint_runtime.panel_image(
                             bounds,
                             cover.as_deref(),
                             base,
@@ -1630,6 +1715,35 @@ mod tests {
 
     fn panel_of(config: &LensConfig) -> PanelImage {
         render_panel(&test_scene(), test_panel(), config, &[])
+    }
+
+    /// 纯横向渐变：没有任何高频，适合测「位移类」效果。
+    fn smooth_cover(width: u32, height: u32) -> RgbaImage {
+        let mut image = RgbaImage::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let ramp = (x as f32 / width as f32 * 200.0) as u8;
+                let vertical = (y as f32 / height as f32 * 100.0) as u8;
+                image.put_pixel(x, y, Rgba([ramp, vertical, 120, 255]));
+            }
+        }
+        image
+    }
+
+    fn smooth_scene() -> Scene {
+        Scene::new(
+            Some(Arc::new(smooth_cover(320, 320))),
+            [0.10, 0.10, 0.12],
+            0.85,
+            0.34,
+            0.66,
+            1280.0,
+            720.0,
+        )
+    }
+
+    fn smooth_panel(config: &LensConfig) -> PanelImage {
+        render_panel(&smooth_scene(), test_panel(), config, &[])
     }
 
     /// 输出必须覆盖「面板 + 四周 20px 投影留白」。
@@ -1928,6 +2042,152 @@ mod tests {
     fn light_and_dark_themes_differ() {
         assert!(LensConfig::for_theme(true, false).brightness < 0.0);
         assert!(LensConfig::for_theme(false, false).brightness > 0.0);
+    }
+
+    /// 穹顶模式（`bevelMode = 1`）走另一条折射分支：位移是向心收缩（放大镜）。
+    #[test]
+    fn the_dome_bevel_mode_uses_the_other_refraction_branch() {
+        let base = LensConfig {
+            refraction: 1.2,
+            chrom_aberration: 0.0,
+            blur_amount: 0.0,
+            bevel_mode: 0,
+            ..Default::default()
+        };
+        let pill = smooth_panel(&base);
+        let dome = smooth_panel(&LensConfig {
+            bevel_mode: 1,
+            ..base
+        });
+        let pad = SHADOW_PAD as u32;
+        let y = pill.height / 2;
+        let mut differing = 0;
+        for x in pad..(pill.width - pad) {
+            if pill.rgb(x, y) != dome.rgb(x, y) {
+                differing += 1;
+            }
+        }
+        assert!(differing > 20, "穹顶模式应当改变画面：只有 {differing} 个像素不同");
+        // 穹顶是向心收缩：右半边取到更靠左的采样点，横向渐变的取值应当更小。
+        let probe = pad + (pill.width - pad * 2) * 3 / 4;
+        assert!(
+            dome.rgb(probe, y)[0] < pill.rgb(probe, y)[0],
+            "穹顶应当把画面向心收缩：双凸 {} vs 穹顶 {}",
+            pill.rgb(probe, y)[0],
+            dome.rgb(probe, y)[0]
+        );
+    }
+
+    /// 微噪声：`distortion > 0` 时采样点带上亚像素抖动。
+    #[test]
+    fn distortion_adds_subpixel_noise() {
+        let base = LensConfig {
+            distortion: 0.0,
+            blur_amount: 0.0,
+            refraction: 0.0,
+            chrom_aberration: 0.0,
+            ..Default::default()
+        };
+        let plain = panel_of(&base);
+        let noisy = panel_of(&LensConfig {
+            distortion: 0.2,
+            ..base
+        });
+        let pad = SHADOW_PAD as u32;
+        let mut differing = 0;
+        for y in (pad..(plain.height - pad)).step_by(7) {
+            for x in pad..(plain.width - pad) {
+                if plain.rgb(x, y) != noisy.rgb(x, y) {
+                    differing += 1;
+                }
+            }
+        }
+        assert!(differing > 100, "噪声应当改变画面：只有 {differing} 个像素不同");
+    }
+
+    /// alpha 是直通（非预乘）的：面板内不透明、投影区纯黑半透明、AA 带单调过渡。
+    #[test]
+    fn the_output_alpha_is_straight_not_premultiplied() {
+        let panel = panel_of(&LensConfig {
+            shadow_opacity: 0.5,
+            shadow_spread: 20.0,
+            shadow_offset_y: 10.0,
+            ..Default::default()
+        });
+        let pad = SHADOW_PAD as u32;
+        // 面板内部：完全不透明。
+        assert_eq!(panel.alpha(panel.width / 2, panel.height / 2), 255);
+        // 投影区：纯黑 + 半透明（预乘的话 RGB 会跟着 alpha 变，这里必须恒为 0）。
+        let shadow_alpha = panel.alpha(panel.width / 2, panel.height - 4);
+        assert!(
+            shadow_alpha > 0 && shadow_alpha < 255,
+            "投影应当是半透明：{shadow_alpha}"
+        );
+        assert_eq!(panel.rgb(panel.width / 2, panel.height - 4), [0, 0, 0]);
+        // AA 带：沿面板左上角对角线，alpha 单调不减，最后到达 255。
+        let mut previous = 0u8;
+        for step in 0..24u32 {
+            let alpha = panel.alpha(pad + step, pad + step);
+            assert!(alpha >= previous, "AA 带的 alpha 应当单调不减");
+            previous = alpha;
+        }
+        assert_eq!(previous, 255, "对角线走到底应当进入不透明区");
+    }
+
+    /// 动态场景（对应参照目标的 `data-dynamic`）：置位会清缓存，取消后恢复缓存。
+    #[test]
+    fn a_dynamic_scene_invalidates_the_panel_cache() {
+        let runtime = GlassRuntime::new();
+        let key = PanelKey {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            config_hash: 5,
+            reduced: false,
+            solid: false,
+        };
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
+        let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1)));
+
+        runtime
+            .inner
+            .panels
+            .lock()
+            .unwrap()
+            .insert(key, image.clone());
+        assert_eq!(runtime.inner.panels.lock().unwrap().len(), 1);
+
+        runtime.mark_scene_dynamic(true);
+        assert!(runtime
+            .inner
+            .scene_dynamic
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            runtime.inner.panels.lock().unwrap().is_empty(),
+            "置位动态场景应当清空面板缓存"
+        );
+
+        runtime
+            .inner
+            .panels
+            .lock()
+            .unwrap()
+            .insert(key, image);
+        runtime.mark_scene_dynamic(false);
+        assert!(!runtime
+            .inner
+            .scene_dynamic
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            runtime.inner.panels.lock().unwrap().len(),
+            1,
+            "取消动态场景不应当清缓存"
+        );
+
+        runtime.invalidate();
+        assert!(runtime.inner.panels.lock().unwrap().is_empty());
     }
 
     /// 把一块面板渲染成 PNG，方便肉眼比对
