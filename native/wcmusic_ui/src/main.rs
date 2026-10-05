@@ -3636,7 +3636,9 @@ impl MusicApp {
             .size(px(280.0))
             .rounded(px(glass::PANEL_RADIUS))
             .overflow_hidden()
-            .child(track_artwork_sized(row, 280.0, p));
+            .child(track_artwork_sized(row, 280.0, p))
+            // 把封面登记进玻璃背后的场景：拖拽玻璃到它上面时要能折射到。
+            .child(self.glass.artwork_probe(glass::PANEL_RADIUS));
 
         div()
             .size_full()

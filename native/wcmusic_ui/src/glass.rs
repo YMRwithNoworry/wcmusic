@@ -278,12 +278,23 @@ fn worker_count() -> usize {
 
 // ---------------------------------------------------------------- 场景
 
+/// 玻璃背后的一张「封面元素」：页面上独立绘制的那张封面（同一个文件，另一个矩形 + 圆角）。
+#[derive(Clone, Copy)]
+pub struct SceneArtwork {
+    /// 页面坐标里的矩形。
+    pub rect: PanelRect,
+    /// 圆角半径（页面上是 `rounded(..) + overflow_hidden`）。
+    pub radius: f32,
+}
+
 /// 玻璃面板背后的场景。
 ///
 /// 参照目标用 Canvas2D 把「z 序在玻璃之前的兄弟元素」重绘进场景画布：`<img>/<video>/<canvas>`
-/// 走 `drawImage` 快路径，其余元素走 html-to-image 快照。本页玻璃背后的内容是确定的——
-/// 一张封面按 `object-fit: cover` 铺满整页，再叠一层从上到下的压暗渐变——所以这里直接按
-/// 同样的公式算，结果与那套光栅化逐像素一致，还省掉了一整条 DOM 捕获链。
+/// 走 `drawImage` 快路径，其余元素走 html-to-image 快照。本页玻璃背后的可重建内容是确定的——
+/// 一张封面按 `object-fit: cover` 铺满整页，再叠一层从上到下的压暗渐变，以及页面上那张独立
+/// 绘制的封面元素——所以这里直接按同样的公式算。
+///
+/// 文字与歌词**无法**进场景：GPUI 运行期不提供把元素光栅化成纹理的能力（见差异清单第四节）。
 #[derive(Clone)]
 pub struct Scene {
     cover: Option<Arc<RgbaImage>>,
@@ -293,6 +304,8 @@ pub struct Scene {
     shade_bottom: f32,
     page_width: f32,
     page_height: f32,
+    /// 页面上那张封面元素的矩形（同一个文件）。
+    artwork: Option<SceneArtwork>,
 }
 
 impl Scene {
@@ -314,7 +327,14 @@ impl Scene {
             shade_bottom,
             page_width: page_width.max(1.0),
             page_height: page_height.max(1.0),
+            artwork: None,
         }
+    }
+
+    /// 把页面上那张封面元素也纳入场景（它用同一个文件，铺在自己的矩形里）。
+    pub fn with_artwork(mut self, artwork: Option<SceneArtwork>) -> Self {
+        self.artwork = artwork;
+        self
     }
 
     /// 场景画布上某个页面坐标处的颜色。
@@ -328,6 +348,28 @@ impl Scene {
                 color[channel] = mix(color[channel], fitted[channel], self.cover_opacity);
             }
         }
+        // 封面元素：同一个文件按 `object-fit: cover` 铺进它自己的矩形，带圆角遮罩。
+        if let (Some(artwork), Some(cover)) = (&self.artwork, &self.cover) {
+            let local_x = page_x - artwork.rect.x;
+            let local_y = page_y - artwork.rect.y;
+            if local_x >= 0.0
+                && local_y >= 0.0
+                && local_x < artwork.rect.width
+                && local_y < artwork.rect.height
+            {
+                let half = Vec2::new(artwork.rect.width * 0.5, artwork.rect.height * 0.5);
+                let centre = Vec2::new(local_x - half.x, local_y - half.y);
+                if rounded_rect_sdf(centre, half, artwork.radius) <= 0.0 {
+                    color = cover_fit(
+                        cover,
+                        local_x,
+                        local_y,
+                        artwork.rect.width,
+                        artwork.rect.height,
+                    );
+                }
+            }
+        }
         let t = (page_y / self.page_height).clamp(0.0, 1.0);
         let shade = mix(self.shade_top, self.shade_bottom, t);
         for channel in 0..3 {
@@ -338,19 +380,31 @@ impl Scene {
 
     /// 封面按 `object-fit: cover` 铺满页面后，归一化坐标 `(u, v)` 处取到的颜色。
     fn cover_color(&self, cover: &RgbaImage, u: f32, v: f32) -> [f32; 3] {
-        let cover_width = cover.width().max(1) as f32;
-        let cover_height = cover.height().max(1) as f32;
-        let scale = (self.page_width / cover_width).max(self.page_height / cover_height);
-        let scaled_width = cover_width * scale;
-        let scaled_height = cover_height * scale;
-        let page_x = u * self.page_width + (scaled_width - self.page_width) * 0.5;
-        let page_y = (1.0 - v) * self.page_height + (scaled_height - self.page_height) * 0.5;
-        let x = (page_x / scale).clamp(0.0, cover_width - 1.0);
-        let y = (page_y / scale).clamp(0.0, cover_height - 1.0);
-        bilinear_image(cover, x, y)
+        cover_fit(
+            cover,
+            u * self.page_width,
+            (1.0 - v) * self.page_height,
+            self.page_width,
+            self.page_height,
+        )
     }
 }
 
+/// 图片按 `object-fit: cover` 铺满 `width × height` 的矩形后，矩形内局部坐标 `(x, y)` 处的颜色。
+fn cover_fit(image: &RgbaImage, x: f32, y: f32, width: f32, height: f32) -> [f32; 3] {
+    let image_width = image.width().max(1) as f32;
+    let image_height = image.height().max(1) as f32;
+    let scale = (width / image_width).max(height / image_height);
+    let scaled_width = image_width * scale;
+    let scaled_height = image_height * scale;
+    let source_x = (x + (scaled_width - width) * 0.5) / scale;
+    let source_y = (y + (scaled_height - height) * 0.5) / scale;
+    bilinear_image(
+        image,
+        source_x.clamp(0.0, image_width - 1.0),
+        source_y.clamp(0.0, image_height - 1.0),
+    )
+}
 /// 图片的双线性采样。
 fn bilinear_image(image: &RgbaImage, x: f32, y: f32) -> [f32; 3] {
     let width = image.width() as usize;
@@ -466,8 +520,21 @@ fn blur_exact(pixels: &mut [f32], width: usize, height: usize, spread: f32) {
 /// 一趟横向 9-tap 高斯。每个输出像素只读源纹理，所以能按行并行。
 ///
 /// 采样只用横向的线性插值（纵向取整），比双线性少一半读取；核对称，正负两侧共用权重。
+///
+/// `spread` 对整趟是固定的，所以每个 tap 的整数偏移与小数部分是常量：内部像素走
+/// 「两次读 + 一次插值」的快速路径，只有每行两端约 `4*spread` 列需要按 `CLAMP_TO_EDGE`
+/// 走慢路径。两条路径的算式完全一致（同样的 `i0` / `i1` / `f`），结果逐位相同。
 fn blur_rows(source: &[f32], target: &mut [f32], width: usize, height: usize, spread: f32) {
     let row_bytes = width * 3;
+    // 每个 tap 的整数偏移与两个方向的小数部分（对整行都一样）。
+    let mut taps = [(0usize, 0.0f32, 0.0f32); BLUR_TAPS.len() - 1];
+    for (index, tap) in taps.iter_mut().enumerate() {
+        let offset = spread * (index + 1) as f32;
+        let lower = offset.floor();
+        *tap = (lower as usize, offset - lower, 1.0 - (offset - lower));
+    }
+    // 这些列上所有 tap 的索引都不会越界。
+    let margin = (spread * (BLUR_TAPS.len() - 1) as f32).ceil() as usize + 1;
     let rows_per_chunk = height.div_ceil(worker_count()).max(1);
     std::thread::scope(|scope| {
         let mut first_row = 0usize;
@@ -480,18 +547,38 @@ fn blur_rows(source: &[f32], target: &mut [f32], width: usize, height: usize, sp
                     let row = y * width;
                     for x in 0..width {
                         let mut sum = [0.0f32; 3];
+                        let centre = (row + x) * 3;
                         for channel in 0..3 {
-                            sum[channel] = source[(row + x) * 3 + channel] * BLUR_TAPS[0];
+                            sum[channel] = source[centre + channel] * BLUR_TAPS[0];
                         }
-                        for tap in 1..BLUR_TAPS.len() {
-                            let offset = spread * tap as f32;
-                            let positive =
-                                sample_row(source, row, width, x as f32 + offset);
-                            let negative =
-                                sample_row(source, row, width, x as f32 - offset);
-                            let weight = BLUR_TAPS[tap];
-                            for channel in 0..3 {
-                                sum[channel] += (positive[channel] + negative[channel]) * weight;
+                        if x >= margin && x + margin < width {
+                            for (tap_index, (lower, forward, backward)) in taps.iter().enumerate() {
+                                let weight = BLUR_TAPS[tap_index + 1];
+                                let ahead = (row + x + lower) * 3;
+                                let behind = (row + x - lower - 1) * 3;
+                                for channel in 0..3 {
+                                    let positive = mix(
+                                        source[ahead + channel],
+                                        source[ahead + channel + 3],
+                                        *forward,
+                                    );
+                                    let negative = mix(
+                                        source[behind + channel],
+                                        source[behind + channel + 3],
+                                        *backward,
+                                    );
+                                    sum[channel] += (positive + negative) * weight;
+                                }
+                            }
+                        } else {
+                            for tap in 1..BLUR_TAPS.len() {
+                                let offset = spread * tap as f32;
+                                let positive = sample_row(source, row, width, x as f32 + offset);
+                                let negative = sample_row(source, row, width, x as f32 - offset);
+                                let weight = BLUR_TAPS[tap];
+                                for channel in 0..3 {
+                                    sum[channel] += (positive[channel] + negative[channel]) * weight;
+                                }
                             }
                         }
                         let base = x * 3;
@@ -504,7 +591,6 @@ fn blur_rows(source: &[f32], target: &mut [f32], width: usize, height: usize, sp
         }
     });
 }
-
 /// 在一行内做线性插值采样 + `CLAMP_TO_EDGE`。
 #[inline]
 fn sample_row(source: &[f32], row: usize, width: usize, x: f32) -> [f32; 3] {
@@ -1067,6 +1153,8 @@ struct RuntimeInner {
     inflight: Mutex<std::collections::HashSet<PanelKey>>,
     /// 后台渲染完成后置位，render 里据此再要一帧。
     needs_redraw: std::sync::atomic::AtomicBool,
+    /// 页面上那张封面元素的矩形（同一个文件），由页面在 prepaint 时登记。
+    artwork: Mutex<Option<SceneArtwork>>,
     /// 场景里是否有动态内容（参照目标的 `data-dynamic` / `<video>`）：
     /// 置位后每帧重算面板，等价于参照目标的「每帧重跑着色器」。
     scene_dynamic: std::sync::atomic::AtomicBool,
@@ -1133,11 +1221,24 @@ impl GlassRuntime {
 
     /// 建立（或复用）场景：详情页玻璃背后的内容。
     fn scene(&self, cover: Option<&std::path::Path>, base: Hsla, page: PageBounds) -> Scene {
+        // 封面元素的矩形由页面登记；它变了场景也要重算，所以进缓存键。
+        let artwork = *self.inner.artwork.lock().unwrap_or_else(|e| e.into_inner());
         let key = format!(
-            "{}|{}x{}",
+            "{}|{}x{}|{}",
             cover.map(|path| path.display().to_string()).unwrap_or_default(),
             page.width.round() as i32,
-            page.height.round() as i32
+            page.height.round() as i32,
+            match artwork {
+                Some(artwork) => format!(
+                    "{:.0},{:.0},{:.0},{:.0},{:.0}",
+                    artwork.rect.x,
+                    artwork.rect.y,
+                    artwork.rect.width,
+                    artwork.rect.height,
+                    artwork.radius
+                ),
+                None => String::new(),
+            }
         );
         {
             let cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
@@ -1158,7 +1259,8 @@ impl GlassRuntime {
             0.66,
             page.width,
             page.height,
-        );
+        )
+        .with_artwork(artwork);
         let mut cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
         *cache = Some((key, scene.clone()));
         scene
@@ -1311,6 +1413,59 @@ impl GlassRuntime {
         });
     }
 
+    /// 登记页面上那张封面元素的矩形，让它进入玻璃背后的场景。
+    ///
+    /// 参照目标的 `_composeSceneForGlass` 会把面板之前的兄弟元素一并画进场景，封面就是其中一个；
+    /// 这里由页面在 prepaint 时把它的页面坐标矩形登记进来。
+    pub fn set_artwork(&self, artwork: Option<SceneArtwork>) {
+        let mut current = self.inner.artwork.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = match (&*current, &artwork) {
+            (Some(old), Some(new)) => {
+                old.rect.x != new.rect.x
+                    || old.rect.y != new.rect.y
+                    || old.rect.width != new.rect.width
+                    || old.rect.height != new.rect.height
+            }
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            *current = artwork;
+            // 场景变了，面板位图也要重算。
+            self.inner
+                .panels
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
+    }
+
+    /// 覆盖在页面上某个元素上，把它的页面坐标矩形登记给场景（见 [`SceneArtwork`]）。
+    ///
+    /// 用法：作为那个元素的 `child` 加进去，它会绝对定位铺满父元素。参照目标的
+    /// `_composeSceneForGlass` 会自动把兄弟元素画进场景，这里需要页面显式登记。
+    pub fn artwork_probe(&self, radius: f32) -> impl IntoElement {
+        let runtime = self.clone();
+        canvas(
+            move |bounds, _window, _cx| {
+                let Some(page) = runtime.page_bounds() else {
+                    return;
+                };
+                runtime.set_artwork(Some(SceneArtwork {
+                    rect: PanelRect {
+                        x: f32::from(bounds.origin.x) - page.x,
+                        y: f32::from(bounds.origin.y) - page.y,
+                        width: f32::from(bounds.size.width),
+                        height: f32::from(bounds.size.height),
+                    },
+                    radius,
+                }));
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    }
     /// 让所有缓存失效（对应参照目标的 `_globalDirty`：resize、结构变化、上下文恢复）。
     pub fn invalidate(&self) {
         self.inner
@@ -2258,6 +2413,42 @@ mod tests {
         assert_eq!(
             double.alpha((SHADOW_PAD * 2.0) as u32, (SHADOW_PAD * 2.0) as u32),
             0
+        );
+    }
+
+    /// 页面上那张封面元素也要进场景：它自己的矩形内取到的是封面，矩形外还是原背景。
+    #[test]
+    fn the_artwork_is_part_of_the_scene() {
+        let rect = PanelRect {
+            x: 100.0,
+            y: 200.0,
+            width: 280.0,
+            height: 280.0,
+        };
+        let plain = test_scene();
+        let with_artwork = test_scene().with_artwork(Some(SceneArtwork {
+            rect,
+            radius: PANEL_RADIUS,
+        }));
+
+        // 矩形中心：封面元素铺的是另一段裁切，取值应当不同。
+        let centre = (rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        assert_ne!(
+            plain.sample(centre.0, centre.1),
+            with_artwork.sample(centre.0, centre.1),
+            "封面元素应当改变它自己矩形内的采样"
+        );
+        // 矩形外的像素不受影响。
+        assert_eq!(
+            plain.sample(10.0, 10.0),
+            with_artwork.sample(10.0, 10.0),
+            "封面元素矩形外不应当有变化"
+        );
+        // 圆角外（矩形左上角顶点附近）也应当是原背景。
+        assert_eq!(
+            plain.sample(rect.x + 1.0, rect.y + 1.0),
+            with_artwork.sample(rect.x + 1.0, rect.y + 1.0),
+            "圆角外应当是原背景"
         );
     }
 
