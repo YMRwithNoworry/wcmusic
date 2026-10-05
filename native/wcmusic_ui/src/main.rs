@@ -44,8 +44,7 @@ use wcmusic_core::{
 };
 
 use crate::audio_player::{
-    AudioPlayer, blurred_artwork_path, download_artwork, download_audio_with_proxy,
-    open_streaming_source,
+    AudioPlayer, download_artwork, download_audio_with_proxy, open_streaming_source,
 };
 use crate::hotkey::{HotKeyAction, HotKeyEventReceiver, HotKeyManager};
 use crate::lyrics::{
@@ -605,6 +604,8 @@ struct MusicApp {
     capturing_hotkey: Option<HotKeyAction>,
     /// 捕获快捷键用的全局按键观察者。
     hotkey_observer: Option<Subscription>,
+    /// 详情页液态玻璃的渲染缓存（背景纹理 + 每块面板的位图）。
+    glass: glass::GlassRuntime,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
@@ -722,6 +723,7 @@ impl MusicApp {
             hotkey_event_slot: Arc::new(Mutex::new(None)),
             capturing_hotkey: None,
             hotkey_observer: None,
+            glass: glass::GlassRuntime::new(),
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
@@ -3614,10 +3616,19 @@ impl MusicApp {
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        // 整页背景 = 封面模糊缩略图放大铺满：既给页面铺上专辑的颜色，
-        // 也是玻璃面板「透出并模糊后方内容」里那个后方内容。
-        let blurred = row.artwork_path.as_deref().and_then(blurred_artwork_path);
-        let glass_style = glass::GlassPanel::new(p.surface, p.foreground, glass::PANEL_RADIUS);
+        // 液态玻璃：整页背景是封面本身，两块面板按参考实现的 FS_GLASS 逐像素折射它。
+        // 没有本地封面时回退到纯色背景，玻璃面板仍然正常渲染。
+        let cover = row
+            .artwork_path
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_file());
+        // 换歌时让玻璃「化」一下：形状弹簧被踢一脚，面板先缩后弹。
+        self.glass.pulse_on_track_change(&row.track.id);
+        // 无障碍：系统关掉「透明效果」时切成更不透明、更少模糊的形态。
+        let reduced = glass::GlassRuntime::reduced_transparency();
+        let lens = glass::LensConfig::for_theme(cx.theme().is_dark(), reduced);
+        let shade = hsla(0.0, 0.0, 0.0, 1.0);
         // 封面与两块玻璃面板共用同一个圆角半径，四角一致、不再出现直角。
         let artwork = div()
             .size(px(280.0))
@@ -3629,11 +3640,7 @@ impl MusicApp {
             .size_full()
             .relative()
             // 铺满整页的毛玻璃背景：绝对定位，直接铺满根节点，不受内容内边距影响。
-            .child(glass::artwork_backdrop(
-                blurred.clone(),
-                p.background,
-                hsla(0.0, 0.0, 0.0, 1.0),
-            ))
+            .child(self.glass.backdrop(cover.clone(), lens, p.background, shade))
             .child(
                 div()
                     .size_full()
@@ -3677,7 +3684,10 @@ impl MusicApp {
                             div()
                                 .relative()
                                 .child(
-                                    glass::glass_panel(glass_style).absolute().inset_0(),
+                                    self.glass
+                                    .panel(cover.clone(), lens, reduced, p.background, shade)
+                                    .absolute()
+                                    .inset_0(),
                                 )
                                 .child(
                                     v_flex()
@@ -3704,7 +3714,10 @@ impl MusicApp {
                         // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
                         // 原有的滚动、逐字填充与点击跳转都不受影响。
                         .child(
-                            glass::glass_panel(glass_style).absolute().inset_0(),
+                            self.glass
+                                .panel(cover, lens, reduced, p.background, shade)
+                                .absolute()
+                                .inset_0(),
                         )
                         .child(
                             div()
@@ -6587,6 +6600,10 @@ impl Render for MusicApp {
         self.sync_player_sliders(window, cx);
         // 歌单封面要先下载到本地才能渲染（GPUI 没有 http client）。
         self.ensure_playlist_covers(cx);
+        // 详情页玻璃的形状弹簧还在动就要下一帧（帧请求必须在 render 里发）。
+        if self.show_now_playing && self.glass.is_animating() {
+            window.request_animation_frame();
+        }
         // 专享模式下检测当前歌词行是否变化，必要时启动缓动滚动动画。
         if self.show_now_playing {
             self.update_lyric_scroll();

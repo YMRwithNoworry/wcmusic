@@ -11,9 +11,7 @@ Global rules — follow these in every task in this project:
 默认使用 Niubash（Bash on Windows，`niu -c`）执行任务。
 每次任务结束将项目上传至github远程仓库，若无远程仓库则自己创建。
 jdk在这里D:\MC\jdk
-一般不要过度debug。构建无报错即可。
 中文回答问题
-可用subagent移速
 
 <!-- END dsh-global-system-prompt -->
 

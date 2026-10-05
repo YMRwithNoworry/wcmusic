@@ -19,12 +19,6 @@ const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 /// 每张固定 320×320×4 ≈ 0.4 MB。
 const ARTWORK_MAX_EDGE: u32 = 320;
 
-/// 歌曲详情页毛玻璃背景用的极小缩略图边长。
-///
-/// GPUI 放大图片时做双线性插值，24px 拉到整屏就是一层平滑色雾——
-/// 效果等同于对封面做一次很大的高斯模糊，而且不必再引入图像处理依赖。
-const ARTWORK_BLUR_EDGE: u32 = 24;
-
 /// 允许解码的原图像素数上限（12 MP）：解码一张巨图本身就是几十上百 MB 的瞬时占用，
 /// 超过上限的图直接放弃，让界面回退到占位图。
 const ARTWORK_MAX_SOURCE_PIXELS: u64 = 12_000_000;
@@ -696,36 +690,8 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
         .collect();
     // 文件名带上目标边长：旧版本存的是原图，换名后不会再被复用。
     let path = dir.join(format!("{safe_id}-{ARTWORK_MAX_EDGE}.jpg"));
-    // 顺带存一张极小的模糊底图给详情页的毛玻璃背景用；失败不影响封面本身。
-    if let Ok(blurred) = blur_artwork(&bytes) {
-        let _ = std::fs::write(dir.join(format!("{safe_id}-{ARTWORK_BLUR_EDGE}.jpg")), blurred);
-    }
     std::fs::write(&path, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
-}
-
-/// 详情页毛玻璃背景用的模糊底图路径；没有就返回 `None`（调用方回退到纯色背景）。
-pub fn blurred_artwork_path(cover_path: &str) -> Option<std::path::PathBuf> {
-    let cover = std::path::Path::new(cover_path);
-    let stem = cover.file_stem()?.to_str()?;
-    let stem = stem.strip_suffix(&format!("-{ARTWORK_MAX_EDGE}"))?;
-    let candidate = cover.with_file_name(format!("{stem}-{ARTWORK_BLUR_EDGE}.jpg"));
-    candidate.is_file().then_some(candidate)
-}
-
-/// 由已经归一化好的封面生成一张极小缩略图，供详情页当毛玻璃背景放大使用。
-fn blur_artwork(cover: &[u8]) -> Result<Vec<u8>, String> {
-    let decoded = image::load_from_memory(cover).map_err(|error| format!("封面解码失败: {error}"))?;
-    let thumbnail = decoded.resize(
-        ARTWORK_BLUR_EDGE,
-        ARTWORK_BLUR_EDGE,
-        image::imageops::FilterType::Triangle,
-    );
-    let mut encoded = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, ARTWORK_JPEG_QUALITY)
-        .encode_image(&thumbnail.to_rgb8())
-        .map_err(|error| format!("封面模糊图编码失败: {error}"))?;
-    Ok(encoded)
 }
 
 /// 把平台封面统一成「最长边不超过 [`ARTWORK_MAX_EDGE`] 的 JPEG」。
@@ -782,9 +748,9 @@ fn artwork_target_size(width: u32, height: u32) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ARTWORK_BLUR_EDGE, ARTWORK_MAX_EDGE, AudioStream, MemorySource, StreamingSource,
-        artwork_pixels_allowed, artwork_target_size, blur_artwork, blurred_artwork_path,
-        clamp_seek_target, lock, normalize_artwork, samples_to_skip, sink_finished,
+        ARTWORK_MAX_EDGE, AudioStream, MemorySource, StreamingSource, artwork_pixels_allowed,
+        artwork_target_size, clamp_seek_target, lock, normalize_artwork, samples_to_skip,
+        sink_finished,
     };
     use crate::audio_effects::SpatialSource;
     use rodio::{Sink, Source};
@@ -1076,36 +1042,6 @@ mod tests {
     fn oversized_artwork_is_rejected_before_decoding() {
         assert!(!artwork_pixels_allowed(4000, 4000));
         assert!(artwork_pixels_allowed(1500, 1500));
-    }
-
-
-    /// 详情页毛玻璃背景靠的就是这张极小缩略图：放大后是平滑色雾。
-    #[test]
-    fn blur_artwork_produces_a_tiny_thumbnail() {
-        let cover = normalize_artwork(&png_bytes(400, 400)).expect("封面应当被接受");
-        let blurred = blur_artwork(&cover).expect("模糊图应当生成");
-        let decoded = image::load_from_memory(&blurred).expect("模糊图应当可解码");
-
-        assert!(decoded.width() <= ARTWORK_BLUR_EDGE && decoded.height() <= ARTWORK_BLUR_EDGE);
-        assert!(blurred.len() < cover.len(), "模糊图应当明显小于封面");
-    }
-
-    /// 模糊图缺失时必须返回 `None`，让详情页回退到纯色背景而不是空图。
-    #[test]
-    fn blurred_artwork_path_only_resolves_when_the_file_exists() {
-        let dir = std::env::temp_dir().join("wcmusic-artwork-blur-test");
-        std::fs::create_dir_all(&dir).expect("建目录");
-        let cover = dir.join(format!("case-{ARTWORK_MAX_EDGE}.jpg"));
-        let blurred = dir.join(format!("case-{ARTWORK_BLUR_EDGE}.jpg"));
-        std::fs::write(&cover, b"cover").expect("写封面");
-        let _ = std::fs::remove_file(&blurred);
-
-        assert_eq!(blurred_artwork_path(cover.to_str().unwrap()), None);
-
-        std::fs::write(&blurred, b"blur").expect("写模糊图");
-        assert_eq!(blurred_artwork_path(cover.to_str().unwrap()), Some(blurred));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

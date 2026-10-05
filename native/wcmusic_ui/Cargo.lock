@@ -8109,6 +8109,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "smallvec",
  "ureq",
  "wcmusic_core",
  "windows-sys 0.59.0",

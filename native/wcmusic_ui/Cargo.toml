@@ -16,6 +16,8 @@ regex = "1.11"
 rfd = "0.15.4"
 rodio = "0.20.1"
 serde = { version = "1.0", features = ["derive"] }
+# GPUI 的 RenderImage::new 收 SmallVec<[image::Frame; 1]>；这里直接构造，避免多余的编解码。
+smallvec = "1.15"
 serde_json = "1.0"
 ureq = "2.12.1"
 wcmusic_core = { path = "../wcmusic_core" }
@@ -27,6 +29,7 @@ windows-sys = { version = "0.59.0", features = [
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",

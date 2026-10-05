@@ -53,7 +53,7 @@ GPUI 客户端使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等
 - 内置“屿溪-终章”音源，无需额外导入即可解析支持平台的整曲地址
 - 深浅主题、有机封面、共享元素转场与 reduced-motion 设置入口
 - 歌曲封面只在播放栏与歌曲详情页出现：列表不再渲染封面，也只在真正开始播放时下载一份（歌单封面不受影响）
-- 歌曲详情页的液态玻璃：整页铺一张封面模糊底图，封面、歌曲信息卡与歌词面板共用同一个圆角半径（无直角），面板是低透明度的玻璃体并带顶部亮边、斜向高光、Fresnel 内发光与分层投影，背景的颜色会透过面板；没有封面时自动回退成纯色背景。实现与降级策略见 `native/wcmusic_ui/src/glass.rs`
+- 歌曲详情页的液态玻璃：把参考实现 [ybouane/liquidglass](https://github.com/ybouane/liquidglass) 的 WebGL 片元着色器整段移植成 CPU 逐像素实现——圆角矩形 SDF、双凸倒角高度场、双面折射（IOR 1.5）、边缘色散、Fresnel、4 光源高光、带 `topBias` 的内描边，以及锐/糊纹理的边缘加权混合。背景就是封面本身，面板按折射后的 UV 重新采样它，再经 `canvas` + `Window::paint_image` 画出来，因此折射与色散是真的逐像素成立，不是拿渐变去凑。在原实现之上还补了三项它没有的能力：明暗模式适配、Windows 关闭「透明效果」时的降级、换歌时玻璃形状的弹簧形变。规格见 `liquidglass-复刻规格书.md`，实现见 `native/wcmusic_ui/src/glass.rs`
 - Windows Rust DLL 与 Android arm64 Rust `.so` 自动构建接线
 
 音源脚本是第三方代码。WCMusic 的 Rust 运行时限制为 32 MB 内存，并提供 `globalThis.lx` 宿主接口；脚本初始化与整曲解析阶段的宿主请求由内置网络客户端转发，单次请求 15 秒超时。无法通过 QuickJS 完整执行的脚本仍会导入并补齐平台能力，播放解析失败时会明确回退。当前版本不会自动下载或更新脚本。导入结果保存在系统应用数据目录的 `sources.json` 中。
