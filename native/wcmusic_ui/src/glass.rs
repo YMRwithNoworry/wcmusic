@@ -1419,18 +1419,19 @@ impl GlassRuntime {
     /// 这里由页面在 prepaint 时把它的页面坐标矩形登记进来。
     pub fn set_artwork(&self, artwork: Option<SceneArtwork>) {
         let mut current = self.inner.artwork.lock().unwrap_or_else(|e| e.into_inner());
+        // 亚像素的布局抖动不算变化：否则每帧都会清缓存、面板每帧重算。
         let changed = match (&*current, &artwork) {
             (Some(old), Some(new)) => {
-                old.rect.x != new.rect.x
-                    || old.rect.y != new.rect.y
-                    || old.rect.width != new.rect.width
-                    || old.rect.height != new.rect.height
+                (old.rect.x - new.rect.x).abs() > 0.5
+                    || (old.rect.y - new.rect.y).abs() > 0.5
+                    || (old.rect.width - new.rect.width).abs() > 0.5
+                    || (old.rect.height - new.rect.height).abs() > 0.5
             }
             (None, None) => false,
             _ => true,
         };
+        *current = artwork;
         if changed {
-            *current = artwork;
             // 场景变了，面板位图也要重算。
             self.inner
                 .panels
