@@ -1260,6 +1260,7 @@ impl GlassRuntime {
     ///
     /// 置位后每帧都会重算面板，与参照目标「动态内容每帧重捕获、玻璃每帧重跑着色器」
     /// 的行为一致；取消置位后恢复缓存。详情页玻璃背后是静态的封面与渐变，所以默认不置位。
+    #[allow(dead_code)] // 详情页玻璃背后是静态内容，这个能力由测试覆盖
     pub fn mark_scene_dynamic(&self, dynamic: bool) {
         self.inner
             .scene_dynamic
@@ -1267,6 +1268,37 @@ impl GlassRuntime {
         if dynamic {
             self.invalidate();
         }
+    }
+
+    /// 按窗口坐标更新某块面板的拖拽位移（带参照目标的 10px 边界约束）。
+    ///
+    /// 元素级的 `on_mouse_move` 与拖拽期间的窗口级监听共用这一个入口。
+    fn update_drag(&self, id: &str, pointer_x: f32, pointer_y: f32) {
+        let page = self.page_bounds();
+        let layout = self
+            .inner
+            .panel_bounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .copied();
+        self.with_interaction(id, |state| {
+            let Some(origin) = state.drag_origin else {
+                return;
+            };
+            let dx = pointer_x - origin.0;
+            let dy = pointer_y - origin.1;
+            let mut next = (state.drag_base.0 + dx, state.drag_base.1 + dy);
+            if let (Some(page), Some((x, y, width, height))) = (page, layout) {
+                let min_x = DRAG_MARGIN - x;
+                let max_x = (page.width - DRAG_MARGIN - (x + width)).max(min_x);
+                let min_y = DRAG_MARGIN - y;
+                let max_y = (page.height - DRAG_MARGIN - (y + height)).max(min_y);
+                next.0 = next.0.clamp(min_x, max_x);
+                next.1 = next.1.clamp(min_y, max_y);
+            }
+            state.drag = next;
+        });
     }
 
     /// 让所有缓存失效（对应参照目标的 `_globalDirty`：resize、结构变化、上下文恢复）。
@@ -1378,6 +1410,7 @@ impl GlassRuntime {
         let id = id.to_owned();
         let prepaint_runtime = self.clone();
         let paint_runtime = self.clone();
+        let paint_id = id.clone();
         let drag = interaction.drag;
         let hover_id = id.clone();
         let press_id = id.clone();
@@ -1415,32 +1448,11 @@ impl GlassRuntime {
             })
             // `floating`：拖拽时按累计位移平移（参照目标用 `transform: translate`）。
             .on_mouse_move(move |event, _window, _cx| {
-                let page = move_runtime.page_bounds();
-                let layout = move_runtime
-                    .inner
-                    .panel_bounds
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get(&move_id)
-                    .copied();
-                move_runtime.with_interaction(&move_id, |state| {
-                    let Some(origin) = state.drag_origin else {
-                        return;
-                    };
-                    let dx = f32::from(event.position.x) - origin.0;
-                    let dy = f32::from(event.position.y) - origin.1;
-                    let mut next = (state.drag_base.0 + dx, state.drag_base.1 + dy);
-                    // 参照目标的边界约束：不允许拖出 root 内缩 10px 的范围。
-                    if let (Some(page), Some((x, y, width, height))) = (page, layout) {
-                        let min_x = DRAG_MARGIN - x;
-                        let max_x = (page.width - DRAG_MARGIN - (x + width)).max(min_x);
-                        let min_y = DRAG_MARGIN - y;
-                        let max_y = (page.height - DRAG_MARGIN - (y + height)).max(min_y);
-                        next.0 = next.0.clamp(min_x, max_x);
-                        next.1 = next.1.clamp(min_y, max_y);
-                    }
-                    state.drag = next;
-                });
+                move_runtime.update_drag(
+                    &move_id,
+                    f32::from(event.position.x),
+                    f32::from(event.position.y),
+                );
             })
             .on_mouse_up(gpui::MouseButton::Left, move |_event, window, _cx| {
                 let changed = release_runtime.with_interaction(&release_id, |state| {
@@ -1498,7 +1510,28 @@ impl GlassRuntime {
                         (image, morph)
                     },
                     move |bounds, (image, morph), window, _cx| {
-                        let _ = &paint_runtime;
+                        // 拖拽中注册窗口级鼠标监听：指针移出面板也收得到位移，
+                        // 对应参照目标的 `setPointerCapture`（GPUI 没有这个 API）。
+                        if paint_runtime
+                            .interaction(&paint_id)
+                            .drag_origin
+                            .is_some()
+                        {
+                            let runtime = paint_runtime.clone();
+                            let id = paint_id.clone();
+                            window.on_mouse_event(
+                                move |event: &gpui::MouseMoveEvent, phase, _window, _cx| {
+                                    if phase != gpui::DispatchPhase::Bubble {
+                                        return;
+                                    }
+                                    runtime.update_drag(
+                                        &id,
+                                        f32::from(event.position.x),
+                                        f32::from(event.position.y),
+                                    );
+                                },
+                            );
+                        }
                         let Some(image) = image else {
                             return;
                         };

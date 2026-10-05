@@ -2728,6 +2728,8 @@ impl MusicApp {
 
     fn close_now_playing(&mut self, cx: &mut Context<Self>) {
         self.show_now_playing = false;
+        // 离开详情页时释放玻璃的纹理缓存（对应参照目标的 `_globalDirty`）。
+        self.glass.invalidate();
         cx.notify();
     }
 
