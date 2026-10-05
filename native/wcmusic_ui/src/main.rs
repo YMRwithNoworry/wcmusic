@@ -3640,7 +3640,7 @@ impl MusicApp {
             .size_full()
             .relative()
             // 铺满整页的毛玻璃背景：绝对定位，直接铺满根节点，不受内容内边距影响。
-            .child(self.glass.backdrop(cover.clone(), lens, p.background, shade))
+            .child(self.glass.backdrop(cover.clone(), p.background, shade))
             .child(
                 div()
                     .size_full()
@@ -3684,10 +3684,14 @@ impl MusicApp {
                             div()
                                 .relative()
                                 .child(
-                                    self.glass
-                                    .panel(cover.clone(), lens, reduced, p.background, shade)
-                                    .absolute()
-                                    .inset_0(),
+                                    self.glass.panel(
+                                        "now-playing-info",
+                                        cover.clone(),
+                                        lens,
+                                        reduced,
+                                        p.background,
+                                        self.glass.interaction("now-playing-info"),
+                                    ),
                                 )
                                 .child(
                                     v_flex()
@@ -3714,10 +3718,14 @@ impl MusicApp {
                         // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
                         // 原有的滚动、逐字填充与点击跳转都不受影响。
                         .child(
-                            self.glass
-                                .panel(cover, lens, reduced, p.background, shade)
-                                .absolute()
-                                .inset_0(),
+                            self.glass.panel(
+                                "now-playing-lyrics",
+                                cover,
+                                lens,
+                                reduced,
+                                p.background,
+                                self.glass.interaction("now-playing-lyrics"),
+                            ),
                         )
                         .child(
                             div()
@@ -6600,6 +6608,10 @@ impl Render for MusicApp {
         self.sync_player_sliders(window, cx);
         // 歌单封面要先下载到本地才能渲染（GPUI 没有 http client）。
         self.ensure_playlist_covers(cx);
+        // 后台渲染完成的玻璃面板需要再画一帧。
+        if self.glass.take_needs_redraw() {
+            window.refresh();
+        }
         // 详情页玻璃的形状弹簧还在动就要下一帧（帧请求必须在 render 里发）。
         if self.show_now_playing && self.glass.is_animating() {
             window.request_animation_frame();

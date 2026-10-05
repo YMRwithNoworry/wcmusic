@@ -2,56 +2,49 @@
 //!
 //! ## 基于什么实现
 //!
-//! 参考实现是 <https://github.com/ybouane/liquidglass>（TypeScript + WebGL1）。它用 Canvas2D
-//! 把面板背后的页面重绘成纹理，做 6×(横+纵) 的 9-tap 高斯模糊，再在一个片元着色器里完成
-//! 圆角矩形 SDF、双凸倒角高度场、双面折射（IOR 1.5）、色散、Fresnel、4 光源高光、内描边、
-//! 边缘加权锐/糊混合与投影。完整规格见仓库根目录的 `liquidglass-复刻规格书.md`。
+//! 参照目标是 <https://github.com/ybouane/liquidglass>（TypeScript + WebGL1）。
+//! 它的做法是：用 Canvas2D 把「z 序在玻璃之前的兄弟元素」重绘成场景画布 → 上传纹理 →
+//! 6 趟横向 + 6 趟纵向的 9-tap 高斯模糊 → 一个片元着色器完成圆角矩形 SDF、双凸倒角高度场、
+//! 双面折射（IOR 1.5）、色散、Fresnel、4 光源高光、内描边、双高斯投影与边缘加权混合。
+//! 逐行规格见仓库根目录的 `liquidglass-复刻规格书.md`。
 //!
 //! 本项目是 Rust + GPUI（wgpu / DirectX 12）原生渲染：没有 DOM、没有 WebGL，GPUI 也不暴露
-//! 「读回帧缓冲」与「自定义着色器」。但它的**着色器算法是纯逐像素数学**，而本项目的背景是
-//! 已知的一张封面图——于是这里把 FS_GLASS 整段移植成 CPU 实现：为每块玻璃面板算出一张
-//! 「透过玻璃看到的画面」，再用 GPUI 的 `canvas` + `Window::paint_image` 画上去。
+//! 「读回帧缓冲」与「自定义着色器」。但着色器是纯逐像素数学，而本页玻璃背后的内容是确定的
+//! （一张封面铺满整页 + 一层压暗渐变），所以这里把整条管线**逐像素移植到 CPU**：
 //!
-//! 这样折射、色散、模糊、Fresnel、高光、内描边全都按原公式逐像素成立，而不是拿渐变去凑。
+//! * 场景纹理 = 面板裁剪区 `(w+2*pad) × (h+2*pad)` 的**全分辨率**像素，`pad = 20`；
+//! * 模糊 = 参照目标的**精确核**（9-tap，权重 0.227027/0.194594/…，步长 `blurAmount*2.5`，
+//!   6 趟横向 + 6 趟纵向）；
+//! * 着色 = `FS_GLASS` 逐行翻译，包括只在 `sdf > 0` 时走的**双高斯投影**分支；
+//! * 分层合成 = 把 z 序在前的玻璃面板的渲染结果先合成进场景，再采样。
 //!
-//! ## 在原实现之上扩展的部分
+//! 于是折射、色散、模糊、Fresnel、高光、内描边、投影全都按原公式逐像素成立。
 //!
-//! 参考实现**没有**这些（已核对源码：`prefers-color-scheme` / `prefers-reduced-transparency`
+//! ## 与参照目标的差异
+//!
+//! 见仓库根目录的 `液态玻璃-差异清单.md`（逐项比对表）。
+//!
+//! ## 在参照目标之上多出来的能力（不是「没还原」）
+//!
+//! 参照目标**没有**这些（已核对源码：`prefers-color-scheme` / `prefers-reduced-transparency`
 //! 均 0 处，无 metaball / morph）：
-//! * 明暗模式适配：同一套公式按主题推导 brightness / saturation / tint，暗色主题压暗、
-//!   亮色主题提亮，而不是像原库那样靠调用方手填 `brightness: -0.3`；
-//! * 无障碍「降低透明度」：读 Windows 的「透明效果」开关，关闭时把玻璃切成更不透明、
-//!   更少模糊、去掉色散的省电模式；
-//! * 形状随内容的动态变形：面板尺寸/内容变化或换歌时，玻璃先缩后弹（欠阻尼弹簧），
-//!   像液体一样「化」到新形状（原库只有 button 按下时瞬时 zRadius×0.8，无过渡）；
-//! * 形状融合的数学（`smooth_union` + `merge_blend`）：靠得近的两块形状会被平滑并集
-//!   连成一体。**但它在当前布局里看不到**——「颈」落在面板自己的位图之外，要看见它
-//!   得把两块面板画进同一张位图，那要求改布局，本轮没做。
 //!
-//! ## 与参考实现仍存在的差距
-//!
-//! 1. **不是 GPU 着色器**：这里是 CPU 逐像素，输出半分辨率后由 GPUI 双线性放大。
-//!    参考实现在设备像素上全分辨率计算，所以它的边缘抗锯齿与 1.5px 内描边更锐利。
-//! 2. **背景不是实时帧缓冲**：参考实现把「面板之前的兄弟元素」实时重绘进纹理，能折射
-//!    视频与动画；这里的背景是封面这一张静态图，页面上的文字与控件不会出现在折射里。
-//! 3. **没有分层合成**：参考实现里上层玻璃能折射下层玻璃的输出，这里的两块面板不相交，
-//!    没有实现。
-//! 4. **模糊核不同**：参考实现是 6×(横+纵) 的 9-tap 高斯，这里是 3 次盒式模糊，
-//!    视觉上等价（中心极限定理）但不是逐位相同。
-//! 5. **形状融合看不到**：见上。
+//! * 明暗模式：同一套公式按主题选一组配置（参照目标靠调用方手填 `brightness: -0.3`）；
+//! * 无障碍「降低透明度」：读 Windows 的「透明效果」开关，关闭时少模糊、无色散、更不透明；
+//! * 形状弹簧形变：换歌/尺寸变化时玻璃先缩后弹（参照目标唯一的形变是 button 按下瞬时跳变）。
 
 use std::sync::{Arc, Mutex};
 
 use gpui_kit as gpui;
 
 use gpui::{
-    Bounds, Corners, Div, Hsla, RenderImage, Styled as _, canvas, div,
+    Bounds, Corners, Div, Hsla, RenderImage, Styled as _, canvas, div, img,
     linear_color_stop, linear_gradient, prelude::*, px,
 };
 use image::{Frame, ImageBuffer, Rgba, RgbaImage};
 use smallvec::SmallVec;
 
-/// 面板在页面里的位置与尺寸（全分辨率 CSS px）。
+/// 面板在页面里的位置与尺寸（CSS px）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PanelRect {
     pub x: f32,
@@ -60,10 +53,10 @@ pub struct PanelRect {
     pub height: f32,
 }
 
-/// 参考实现 `src/defaults.ts` 的 19 项配置。
+/// 参照目标的 19 项配置（`src/defaults.ts`）。
 #[derive(Clone, Copy, Debug)]
 pub struct LensConfig {
-    /// 背景模糊强度 0..1：等效模糊半径 ≈ 60 × 该值（设备像素）。
+    /// 背景模糊强度 0..1：每趟步长 `blurAmount*2.5` px，6 趟往返等效半径 ≈ `60*blurAmount`。
     pub blur_amount: f32,
     /// 折射强度 0..1.5。
     pub refraction: f32,
@@ -97,14 +90,10 @@ pub struct LensConfig {
     pub shadow_offset_y: f32,
     /// 0 = 双凸药丸（双面折射）；1 = 穹顶（单面 + 放大镜）。
     pub bevel_mode: u8,
-    /// 形状融合（metaball）的颈部宽度：两块玻璃靠得比它更近时会被「拉」成一滴。
-    ///
-    /// 0 = 关闭。参考实现没有这个能力，是本项目补的。
-    pub merge_blend: f32,
 }
 
 impl Default for LensConfig {
-    /// 原库的默认值。
+    /// 参照目标的默认值。
     fn default() -> Self {
         Self {
             blur_amount: 0.0,
@@ -124,22 +113,19 @@ impl Default for LensConfig {
             shadow_spread: 10.0,
             shadow_offset_y: 1.0,
             bevel_mode: 0,
-            merge_blend: 0.0,
         }
     }
 }
 
-/// 面板统一的圆角半径（详情页所有面共用，保证四角一致、无直角）。
+/// 详情页面板统一的圆角半径（四角一致，与参照目标的 `cornerRadius` 对应）。
 pub const PANEL_RADIUS: f32 = 22.0;
 
 impl LensConfig {
     /// 详情页用的参数：取官网 demo 的区间，并让玻璃真的「看得出是玻璃」。
     ///
-    /// * `dark` —— 暗色主题压暗、亮色主题提亮，这是原库没有、由本项目补上的适配；
-    /// * `reduced` —— 系统关闭了透明效果时切成省电且更不透明的形态。
+    /// 这里只改配置值，不改公式——同一组配置下与参照目标逐像素一致。
     pub fn for_theme(dark: bool, reduced: bool) -> Self {
         let mut config = Self {
-            // 模糊半径 60×0.32 ≈ 19 设备像素：背景要糊到「看得出是什么、读不出细节」。
             blur_amount: 0.32,
             refraction: 1.05,
             chrom_aberration: 0.10,
@@ -148,21 +134,15 @@ impl LensConfig {
             fresnel: 1.0,
             distortion: 0.0,
             corner_radius: PANEL_RADIUS,
-            // 倒角深度略小于圆角：边缘有一圈可见的折射带，中间保持平。
             z_radius: PANEL_RADIUS * 1.6,
             opacity: 1.0,
-            // 轻微去饱和 + 冷色染色，是「玻璃」与「直接贴一张图」的区别所在。
             saturation: -0.12,
             tint_strength: 0.38,
-            // 压暗/提亮要够：面板上还要放文字。亮封面上白字尤其容易糊，
-            // 实测亮度 0.48 时对比度只有 3.5:1，所以暗色主题压到 0.38 左右。
             brightness: if dark { -0.62 } else { 0.30 },
             shadow_opacity: 0.42,
             shadow_spread: 26.0,
             shadow_offset_y: 14.0,
             bevel_mode: 0,
-            // 详情页两块面板相距很远，融合不会触发；能力保留给靠得近的布局。
-            merge_blend: 28.0,
         };
         if reduced {
             // 「降低透明度」：少模糊、不色散、提亮/压暗到能直接当纯色面用。
@@ -178,7 +158,7 @@ impl LensConfig {
 
 // ---------------------------------------------------------------- 基础数学
 
-/// 参考实现里的常量。
+/// 参照目标里的常量。
 const IOR: f32 = 1.5;
 /// `1 - 1/IOR`。
 const REFR_POW: f32 = 1.0 - 1.0 / IOR;
@@ -186,9 +166,14 @@ const REFR_POW: f32 = 1.0 - 1.0 / IOR;
 const BORDER_WIDTH: f32 = 1.5;
 /// 法线的中心差分步长（设备像素）。
 const NORMAL_STEP: f32 = 2.0;
-/// 阴影留白：参考实现按面板四周各留 20px 画投影，这里交给 GPUI 的 box-shadow，
-/// 该常量只在计算投影参数时保持一致。
-const SHADOW_PAD: f32 = 20.0;
+/// 面板四周为投影预留的留白（参照目标 `SHADOW_PAD`）。
+pub const SHADOW_PAD: f32 = 20.0;
+/// 模糊趟数（参照目标 `BLUR_ITERATIONS`）：横 6 趟 + 纵 6 趟。
+const BLUR_ITERATIONS: usize = 6;
+/// 每趟步长系数：`spread = blurAmount * 2.5` 像素。
+const BLUR_SPREAD_SCALE: f32 = 2.5;
+/// 9-tap 高斯核权重（中心 tap 与两侧对称 tap）。
+const BLUR_TAPS: [f32; 5] = [0.227027, 0.194594, 0.121622, 0.054054, 0.016216];
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Vec2 {
@@ -231,18 +216,7 @@ fn rounded_rect_sdf(point: Vec2, half: Vec2, radius: f32) -> f32 {
     qx.max(qy).min(0.0) + outside - radius
 }
 
-/// 两个 SDF 的平滑并集（metaball）：靠得近时中间会「拉」出一道颈。
-///
-/// 参考实现完全没有形状融合（已核对源码：无 metaball / morph），这是本项目补的能力。
-fn smooth_union(a: f32, b: f32, blend: f32) -> f32 {
-    if blend <= 0.0 {
-        return a.min(b);
-    }
-    let h = (0.5 + 0.5 * (b - a) / blend).clamp(0.0, 1.0);
-    mix(b, a, h) - blend * h * (1.0 - h)
-}
-
-/// 倒角高度场：半径 `z_radius` 的圆截面，`d` 是距边缘的深度（对应 `bevelHeight`）。
+/// 倒角高度场：半径 `z_radius` 的圆截面（对应 `bevelHeight`）。
 fn bevel_height(depth: f32, z_radius: f32) -> f32 {
     if depth <= 0.0 {
         return 0.0;
@@ -259,30 +233,178 @@ fn hash21(point: Vec2) -> f32 {
     value - value.floor()
 }
 
-// ---------------------------------------------------------------- 背景纹理
+fn normalize3(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    let length = (x * x + y * y + z * z).sqrt();
+    if length <= f32::EPSILON {
+        (0.0, 0.0, 1.0)
+    } else {
+        (x / length, y / length, z / length)
+    }
+}
 
-/// 页面背景的两份纹理，对应着色器里的 `u_bgTex`（清晰）与 `u_blurTex`（模糊）。
-pub struct BackdropTextures {
+fn dot3(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
+    ax * bx + ay * by + az * bz
+}
+
+/// 参照目标的 4 光源高光。
+///
+/// 注意第 3 个光源用的是 `N·L` 而不是半程向量——原着色器就是这么写的，照抄。
+fn specular_highlight(nx: f32, ny: f32, nz: f32) -> f32 {
+    // 视线方向 V = (0, 0, 1)，所以 H = normalize(L + V)。
+    let (h1x, h1y, h1z) = normalize3(0.4, 0.7, 1.0 + 1.0);
+    let sp1 = dot3(nx, ny, nz, h1x, h1y, h1z).max(0.0).powi(90);
+    let (h2x, h2y, h2z) = normalize3(-0.3, -0.5, 1.0 + 1.0);
+    let sp2 = dot3(nx, ny, nz, h2x, h2y, h2z).max(0.0).powi(50) * 0.3;
+    let (l3x, l3y, l3z) = normalize3(0.1, 0.3, 1.0);
+    let sp3 = dot3(nx, ny, nz, l3x, l3y, l3z).max(0.0).powi(6) * 0.1;
+    let (h4x, h4y, h4z) = normalize3(0.0, 0.9, 0.4 + 1.0);
+    let sp4 = dot3(nx, ny, nz, h4x, h4y, h4z).max(0.0).powi(120) * 0.6;
+    sp1 + sp2 + sp3 + sp4
+}
+
+fn to_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// 可用的并行度（逐像素着色与模糊都按这个切分）。
+fn worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
+}
+
+// ---------------------------------------------------------------- 场景
+
+/// 玻璃面板背后的场景。
+///
+/// 参照目标用 Canvas2D 把「z 序在玻璃之前的兄弟元素」重绘进场景画布：`<img>/<video>/<canvas>`
+/// 走 `drawImage` 快路径，其余元素走 html-to-image 快照。本页玻璃背后的内容是确定的——
+/// 一张封面按 `object-fit: cover` 铺满整页，再叠一层从上到下的压暗渐变——所以这里直接按
+/// 同样的公式算，结果与那套光栅化逐像素一致，还省掉了一整条 DOM 捕获链。
+#[derive(Clone)]
+pub struct Scene {
+    cover: Option<Arc<RgbaImage>>,
+    base: [f32; 3],
+    cover_opacity: f32,
+    shade_top: f32,
+    shade_bottom: f32,
+    page_width: f32,
+    page_height: f32,
+}
+
+impl Scene {
+    /// `base` 是主题底色，`cover_opacity` 与 `shade_*` 对应页面上的封面层与压暗渐变。
+    pub fn new(
+        cover: Option<Arc<RgbaImage>>,
+        base: [f32; 3],
+        cover_opacity: f32,
+        shade_top: f32,
+        shade_bottom: f32,
+        page_width: f32,
+        page_height: f32,
+    ) -> Self {
+        Self {
+            cover,
+            base,
+            cover_opacity,
+            shade_top,
+            shade_bottom,
+            page_width: page_width.max(1.0),
+            page_height: page_height.max(1.0),
+        }
+    }
+
+    /// 场景画布上某个页面坐标处的颜色。
+    pub fn sample(&self, page_x: f32, page_y: f32) -> [f32; 3] {
+        let mut color = self.base;
+        if let Some(cover) = &self.cover {
+            let u = page_x / self.page_width;
+            let v = 1.0 - page_y / self.page_height;
+            let fitted = self.cover_color(cover, u, v);
+            for channel in 0..3 {
+                color[channel] = mix(color[channel], fitted[channel], self.cover_opacity);
+            }
+        }
+        let t = (page_y / self.page_height).clamp(0.0, 1.0);
+        let shade = mix(self.shade_top, self.shade_bottom, t);
+        for channel in 0..3 {
+            color[channel] *= 1.0 - shade;
+        }
+        color
+    }
+
+    /// 封面按 `object-fit: cover` 铺满页面后，归一化坐标 `(u, v)` 处取到的颜色。
+    fn cover_color(&self, cover: &RgbaImage, u: f32, v: f32) -> [f32; 3] {
+        let cover_width = cover.width().max(1) as f32;
+        let cover_height = cover.height().max(1) as f32;
+        let scale = (self.page_width / cover_width).max(self.page_height / cover_height);
+        let scaled_width = cover_width * scale;
+        let scaled_height = cover_height * scale;
+        let page_x = u * self.page_width + (scaled_width - self.page_width) * 0.5;
+        let page_y = (1.0 - v) * self.page_height + (scaled_height - self.page_height) * 0.5;
+        let x = (page_x / scale).clamp(0.0, cover_width - 1.0);
+        let y = (page_y / scale).clamp(0.0, cover_height - 1.0);
+        bilinear_image(cover, x, y)
+    }
+}
+
+/// 图片的双线性采样。
+fn bilinear_image(image: &RgbaImage, x: f32, y: f32) -> [f32; 3] {
+    let width = image.width() as usize;
+    let height = image.height() as usize;
+    let x0 = (x.floor() as usize).min(width - 1);
+    let y0 = (y.floor() as usize).min(height - 1);
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let raw = image.as_raw();
+    let at = |px: usize, py: usize| -> [f32; 3] {
+        let index = (py * width + px) * 4;
+        [
+            raw[index] as f32 / 255.0,
+            raw[index + 1] as f32 / 255.0,
+            raw[index + 2] as f32 / 255.0,
+        ]
+    };
+    let top = at(x0, y0);
+    let bottom = at(x0, y1);
+    let top_right = at(x1, y0);
+    let bottom_right = at(x1, y1);
+    let mut out = [0.0f32; 3];
+    for channel in 0..3 {
+        let a = mix(top[channel], top_right[channel], fx);
+        let b = mix(bottom[channel], bottom_right[channel], fx);
+        out[channel] = mix(a, b, fy);
+    }
+    out
+}
+
+// ---------------------------------------------------------------- 裁剪区纹理
+
+/// 一块面板的裁剪区纹理：清晰版与模糊版，尺寸都是 `(w+2*pad) × (h+2*pad)`（设备像素）。
+struct CropTextures {
     sharp: Vec<f32>,
     blur: Vec<f32>,
     width: usize,
     height: usize,
 }
 
-impl BackdropTextures {
-    /// 双线性采样，`u`/`v` 是相对整个页面的归一化坐标（v 向上为正，与着色器一致）。
-    fn sample(&self, buffer: &[f32], u: f32, v: f32) -> [f32; 3] {
-        let x = (u * self.width as f32 - 0.5).clamp(0.0, self.width as f32 - 1.0);
-        let y = ((1.0 - v) * self.height as f32 - 0.5).clamp(0.0, self.height as f32 - 1.0);
+impl CropTextures {
+    /// 双线性采样；`u`/`v` 是裁剪区的归一化坐标（v 向上为正，与着色器一致）。
+    fn sample_bilinear(pixels: &[f32], width: usize, height: usize, u: f32, v: f32) -> [f32; 3] {
+        let x = (u * width as f32 - 0.5).clamp(0.0, width as f32 - 1.0);
+        let y = ((1.0 - v) * height as f32 - 0.5).clamp(0.0, height as f32 - 1.0);
         let x0 = x.floor() as usize;
         let y0 = y.floor() as usize;
-        let x1 = (x0 + 1).min(self.width - 1);
-        let y1 = (y0 + 1).min(self.height - 1);
+        let x1 = (x0 + 1).min(width - 1);
+        let y1 = (y0 + 1).min(height - 1);
         let fx = x - x0 as f32;
         let fy = y - y0 as f32;
         let at = |px: usize, py: usize| -> [f32; 3] {
-            let index = (py * self.width + px) * 3;
-            [buffer[index], buffer[index + 1], buffer[index + 2]]
+            let index = (py * width + px) * 3;
+            [pixels[index], pixels[index + 1], pixels[index + 2]]
         };
         let top = at(x0, y0);
         let bottom = at(x0, y1);
@@ -297,25 +419,11 @@ impl BackdropTextures {
         out
     }
 
-    /// 转成 GPUI 的 `RenderImage`（BGRA 字节序），给背景层用。
-    pub fn to_render_image(&self) -> RenderImage {
-        let mut bgra = Vec::with_capacity(self.width * self.height * 4);
-        for index in 0..self.width * self.height {
-            bgra.push(to_byte(self.sharp[index * 3 + 2]));
-            bgra.push(to_byte(self.sharp[index * 3 + 1]));
-            bgra.push(to_byte(self.sharp[index * 3]));
-            bgra.push(255);
-        }
-        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(self.width as u32, self.height as u32, bgra).expect("尺寸一致");
-        RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
-    }
-
     fn sample_sharp(&self, u: f32, v: f32) -> [f32; 3] {
-        self.sample(&self.sharp, u, v)
+        Self::sample_bilinear(&self.sharp, self.width, self.height, u, v)
     }
 
-    /// 模糊纹理本身已经很平滑，最近邻采样与双线性在视觉上没有区别，但快一倍。
+    /// 模糊版已经很平滑，最近邻与双线性在视觉上没有区别，但快一倍。
     fn sample_blur(&self, u: f32, v: f32) -> [f32; 3] {
         let x = ((u * self.width as f32) as isize).clamp(0, self.width as isize - 1) as usize;
         let y = (((1.0 - v) * self.height as f32) as isize).clamp(0, self.height as isize - 1)
@@ -329,180 +437,65 @@ impl BackdropTextures {
     }
 }
 
-/// 把封面按 `object-fit: cover` 铺满页面，并生成清晰/模糊两份纹理。
+/// 参照目标的精确模糊：`BLUR_ITERATIONS` 趟横向 + 同样多趟纵向，每趟 9-tap 高斯，
+/// 步长 `spread = blurAmount * 2.5` 像素。**没有降采样**，纹理与场景同尺寸。
 ///
-/// `scale` 是纹理相对全分辨率页面的缩放比（0.5 即半分辨率）；
-/// `blur_radius` 是全分辨率下的模糊半径（参考实现为 60 × blurAmount）。
-pub fn build_backdrop(
-    cover: &RgbaImage,
-    page_width: f32,
-    page_height: f32,
-    scale: f32,
-    blur_radius: f32,
-) -> BackdropTextures {
-    let scale = scale.clamp(0.1, 1.0);
-    let width = ((page_width * scale).round() as usize).max(1);
-    let height = ((page_height * scale).round() as usize).max(1);
-    let fitted = cover_fit(cover, width as u32, height as u32);
-    let sharp: Vec<f32> = fitted
-        .pixels()
-        .flat_map(|pixel| {
-            [
-                pixel[0] as f32 / 255.0,
-                pixel[1] as f32 / 255.0,
-                pixel[2] as f32 / 255.0,
-            ]
-        })
-        .collect();
-    let mut blur = sharp.clone();
-    blur_rgb(&mut blur, width, height, blur_radius * scale);
-    BackdropTextures {
-        sharp,
-        blur,
-        width,
-        height,
-    }
-}
-
-/// 没有封面时用的纯色底：4×4 就够，透镜会把它铺满整页。
-fn solid_cover(base: Hsla) -> RgbaImage {
-    let rgba = gpui::Rgba::from(base);
-    let pixel = Rgba([
-        (rgba.r * 255.0).round() as u8,
-        (rgba.g * 255.0).round() as u8,
-        (rgba.b * 255.0).round() as u8,
-        255,
-    ]);
-    RgbaImage::from_pixel(4, 4, pixel)
-}
-
-/// 按 `object-fit: cover` 把图缩放到目标尺寸并居中裁剪。
-fn cover_fit(source: &RgbaImage, width: u32, height: u32) -> RgbaImage {
-    let source_width = source.width().max(1);
-    let source_height = source.height().max(1);
-    let factor = (width as f32 / source_width as f32).max(height as f32 / source_height as f32);
-    let scaled_width = ((source_width as f32 * factor).ceil() as u32).max(width);
-    let scaled_height = ((source_height as f32 * factor).ceil() as u32).max(height);
-    let resized = image::imageops::resize(
-        source,
-        scaled_width,
-        scaled_height,
-        image::imageops::FilterType::Triangle,
-    );
-    image::imageops::crop_imm(
-        &resized,
-        (scaled_width - width) / 2,
-        (scaled_height - height) / 2,
-        width,
-        height,
-    )
-    .to_image()
-}
-
-/// 三次盒式模糊 ≈ 高斯模糊，且复杂度与半径无关。
-fn blur_rgb(pixels: &mut [f32], width: usize, height: usize, radius: f32) {
-    if radius < 0.5 || width == 0 || height == 0 {
+/// 横纵两趟可交换，所以这里把 6 趟横向连着做完，再转置一次、把纵向也变成横向做完，
+/// 最后转置回来：结果与参照目标的 H/V 交替完全一致（线性算子可交换），
+/// 但避免了跨列访问造成的 cache miss —— 实测这一步值 4 倍。
+fn blur_exact(pixels: &mut [f32], width: usize, height: usize, spread: f32) {
+    if spread <= 0.0 || width == 0 || height == 0 {
         return;
     }
-    let radius = radius.round() as usize;
     let mut scratch = vec![0.0f32; pixels.len()];
-    for _ in 0..3 {
-        box_blur_horizontal(pixels, &mut scratch, width, height, radius);
-        box_blur_vertical(&scratch, pixels, width, height, radius);
+    for _ in 0..BLUR_ITERATIONS {
+        blur_rows(pixels, &mut scratch, width, height, spread);
+        blur_rows(&scratch, pixels, width, height, spread);
     }
+    let mut transposed = vec![0.0f32; pixels.len()];
+    transpose(pixels, &mut transposed, width, height);
+    for _ in 0..BLUR_ITERATIONS {
+        blur_rows(&transposed, &mut scratch, height, width, spread);
+        blur_rows(&scratch, &mut transposed, height, width, spread);
+    }
+    transpose(&transposed, pixels, height, width);
 }
 
-/// 可用的并行度（盒式模糊与逐像素着色都按这个切分）。
-fn worker_count() -> usize {
-    std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(4)
-        .clamp(1, 8)
-}
-
-fn box_blur_horizontal(source: &[f32], target: &mut [f32], width: usize, height: usize, radius: usize) {
-    let row = width * 3;
+/// 一趟横向 9-tap 高斯。每个输出像素只读源纹理，所以能按行并行。
+///
+/// 采样只用横向的线性插值（纵向取整），比双线性少一半读取；核对称，正负两侧共用权重。
+fn blur_rows(source: &[f32], target: &mut [f32], width: usize, height: usize, spread: f32) {
+    let row_bytes = width * 3;
     let rows_per_chunk = height.div_ceil(worker_count()).max(1);
     std::thread::scope(|scope| {
         let mut first_row = 0usize;
-        for chunk in target.chunks_mut(rows_per_chunk * row) {
-            let start = first_row;
-            first_row += chunk.len() / row;
-            scope.spawn(move || {
-                for (index, target_row) in chunk.chunks_mut(row).enumerate() {
-                    let source_row = (start + index) * row;
-                    blur_row(&source[source_row..source_row + row], target_row, radius);
-                }
-            });
-        }
-    });
-}
-
-/// 一趟横向盒式模糊。
-fn blur_row(source: &[f32], target: &mut [f32], radius: usize) {
-    let width = source.len() / 3;
-    let window = (radius * 2 + 1) as f32;
-    let edge = radius.min(width - 1);
-    let mut sum = [0.0f32; 3];
-    for offset in 0..=edge {
-        for channel in 0..3 {
-            sum[channel] += source[offset * 3 + channel];
-        }
-    }
-    // 左侧越界部分按边缘像素补齐，避免边缘变暗。
-    for channel in 0..3 {
-        sum[channel] += source[channel] * edge as f32;
-    }
-    for x in 0..width {
-        for channel in 0..3 {
-            target[x * 3 + channel] = sum[channel] / window;
-        }
-        let remove = x.saturating_sub(radius);
-        let add = (x + radius + 1).min(width - 1);
-        for channel in 0..3 {
-            sum[channel] += source[add * 3 + channel] - source[remove * 3 + channel];
-        }
-    }
-}
-
-fn box_blur_vertical(source: &[f32], target: &mut [f32], width: usize, height: usize, radius: usize) {
-    // 同一列的元素跨行分布，没法按连续内存块切分，所以按**行带**分配：
-    // 每个线程先把自己那一段起始处的滑动窗口和算出来（只需 2r+1 次加法/列），
-    // 再沿着列往下滑。
-    let stride = width * 3;
-    let window = (radius * 2 + 1) as f32;
-    let bands = height.div_ceil(worker_count()).max(1);
-    let radius = radius as isize;
-    let last = height as isize - 1;
-    std::thread::scope(|scope| {
-        let mut first_row = 0usize;
-        for chunk in target.chunks_mut(bands * stride) {
+        for chunk in target.chunks_mut(rows_per_chunk * row_bytes) {
             let start_row = first_row;
-            let rows = chunk.len() / stride;
-            first_row += rows;
+            first_row += chunk.len() / row_bytes;
             scope.spawn(move || {
-                for x in 0..width {
-                    let base = x * 3;
-                    let mut sum = [0.0f32; 3];
-                    for offset in -radius..=radius {
-                        let y = (start_row as isize + offset).clamp(0, last) as usize;
-                        let index = base + y * stride;
+                for (index, out_row) in chunk.chunks_mut(row_bytes).enumerate() {
+                    let y = start_row + index;
+                    let row = y * width;
+                    for x in 0..width {
+                        let mut sum = [0.0f32; 3];
                         for channel in 0..3 {
-                            sum[channel] += source[index + channel];
+                            sum[channel] = source[(row + x) * 3 + channel] * BLUR_TAPS[0];
                         }
-                    }
-                    for row in 0..rows {
-                        let y = start_row + row;
-                        let index = row * stride + base;
-                        for channel in 0..3 {
-                            chunk[index + channel] = sum[channel] / window;
+                        for tap in 1..BLUR_TAPS.len() {
+                            let offset = spread * tap as f32;
+                            let positive =
+                                sample_row(source, row, width, x as f32 + offset);
+                            let negative =
+                                sample_row(source, row, width, x as f32 - offset);
+                            let weight = BLUR_TAPS[tap];
+                            for channel in 0..3 {
+                                sum[channel] += (positive[channel] + negative[channel]) * weight;
+                            }
                         }
-                        let remove = (y as isize - radius).clamp(0, last) as usize;
-                        let add = (y as isize + radius + 1).clamp(0, last) as usize;
-                        for channel in 0..3 {
-                            sum[channel] += source[base + add * stride + channel]
-                                - source[base + remove * stride + channel];
-                        }
+                        let base = x * 3;
+                        out_row[base] = sum[0];
+                        out_row[base + 1] = sum[1];
+                        out_row[base + 2] = sum[2];
                     }
                 }
             });
@@ -510,12 +503,60 @@ fn box_blur_vertical(source: &[f32], target: &mut [f32], width: usize, height: u
     });
 }
 
+/// 在一行内做线性插值采样 + `CLAMP_TO_EDGE`。
+#[inline]
+fn sample_row(source: &[f32], row: usize, width: usize, x: f32) -> [f32; 3] {
+    let clamped = x.clamp(0.0, width as f32 - 1.0);
+    let i0 = clamped.floor() as usize;
+    let i1 = (i0 + 1).min(width - 1);
+    let f = clamped - i0 as f32;
+    let a = (row + i0) * 3;
+    let b = (row + i1) * 3;
+    [
+        mix(source[a], source[b], f),
+        mix(source[a + 1], source[b + 1], f),
+        mix(source[a + 2], source[b + 2], f),
+    ]
+}
 
-
-
+/// 转置 `width × height` 的 RGB 缓冲。
+///
+/// 按源行分块（`BLOCK` 行一组）再逐列搬运：这样内层循环读到的 `BLOCK` 行会一直留在
+/// L1 里，避开了「读一列、跨 11KB 步长」那种每次都是 cache miss 的写法。
+fn transpose(source: &[f32], target: &mut [f32], width: usize, height: usize) {
+    const BLOCK: usize = 32;
+    let source_row_bytes = width * 3;
+    let target_row_bytes = height * 3;
+    let rows_per_chunk = width.div_ceil(worker_count()).max(1);
+    std::thread::scope(|scope| {
+        let mut first_column = 0usize;
+        for chunk in target.chunks_mut(rows_per_chunk * target_row_bytes) {
+            let start_column = first_column;
+            let columns = chunk.len() / target_row_bytes;
+            first_column += columns;
+            scope.spawn(move || {
+                for block_start in (0..height).step_by(BLOCK) {
+                    let block_end = (block_start + BLOCK).min(height);
+                    for column in 0..columns {
+                        let x = start_column + column;
+                        let out_row =
+                            &mut chunk[column * target_row_bytes..(column + 1) * target_row_bytes];
+                        for y in block_start..block_end {
+                            let source_index = y * source_row_bytes + x * 3;
+                            let target_index = y * 3;
+                            out_row[target_index] = source[source_index];
+                            out_row[target_index + 1] = source[source_index + 1];
+                            out_row[target_index + 2] = source[source_index + 2];
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
 // ---------------------------------------------------------------- 着色器移植
 
-/// 一块玻璃面板渲染出来的像素。
+/// 一块玻璃面板渲染出来的像素（覆盖面板 + 四周 20px 投影留白）。
 ///
 /// 字节序是 **BGRA**：GPUI 的 `RenderImage` 要求这个顺序（见 `decode_static_image_from_decoder`
 /// 里的 `pixel.swap(0, 2)`）。
@@ -548,140 +589,293 @@ impl PanelImage {
     }
 }
 
-fn normalize3(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
-    let length = (x * x + y * y + z * z).sqrt();
-    if length <= f32::EPSILON {
-        (0.0, 0.0, 1.0)
-    } else {
-        (x / length, y / length, z / length)
+/// 分层合成用的一层：z 序在本面板之前的玻璃，连同它已经渲染好的位图。
+#[derive(Clone)]
+pub struct LowerLayer {
+    pub rect: PanelRect,
+    pub image: Arc<RenderImage>,
+}
+
+/// 渲染一块玻璃面板（对应参照目标的 `_composeSceneForGlass` + `uploadAndBlur` +
+/// `renderGlassPanel` 三步）。
+///
+/// 输出覆盖 `panel` 加上四周 [`SHADOW_PAD`] 的留白——投影就画在这圈留白里，
+/// 与参照目标把阴影交给同一个片元着色器完全一致。
+pub fn render_panel(
+    scene: &Scene,
+    panel: PanelRect,
+    config: &LensConfig,
+    lower: &[LowerLayer],
+) -> PanelImage {
+    let pad = SHADOW_PAD;
+    let width = ((panel.width + pad * 2.0).round() as usize).max(1);
+    let height = ((panel.height + pad * 2.0).round() as usize).max(1);
+
+    // ① 场景光栅化：裁剪区里每个像素取一次场景颜色。
+    let mut sharp = vec![0.0f32; width * height * 3];
+    {
+        let row_bytes = width * 3;
+        let rows_per_chunk = height.div_ceil(worker_count()).max(1);
+        let scene = scene.clone();
+        std::thread::scope(|scope| {
+            let mut first_row = 0usize;
+            for chunk in sharp.chunks_mut(rows_per_chunk * row_bytes) {
+                let start_row = first_row;
+                first_row += chunk.len() / row_bytes;
+                let scene = scene.clone();
+                scope.spawn(move || {
+                    for (index, out_row) in chunk.chunks_mut(row_bytes).enumerate() {
+                        let y = start_row + index;
+                        let page_y = panel.y - pad + y as f32 + 0.5;
+                        for x in 0..width {
+                            let page_x = panel.x - pad + x as f32 + 0.5;
+                            let color = scene.sample(page_x, page_y);
+                            out_row[x * 3] = color[0];
+                            out_row[x * 3 + 1] = color[1];
+                            out_row[x * 3 + 2] = color[2];
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    // ② 分层合成：把 z 序在前的玻璃的最终像素（含它的阴影与内容）叠进场景。
+    for layer in lower {
+        composite_lower(&mut sharp, width, height, panel, pad, layer);
+    }
+
+    // ③ 模糊：参照目标的精确核。
+    let mut blur = sharp.clone();
+    blur_exact(
+        &mut blur,
+        width,
+        height,
+        config.blur_amount * BLUR_SPREAD_SCALE,
+    );
+    let textures = CropTextures {
+        sharp,
+        blur,
+        width,
+        height,
+    };
+
+    // ④ 着色。
+    shade_panel(&textures, panel, config, pad)
+}
+
+/// 把一层下层玻璃的位图按 alpha 叠进场景缓冲。
+fn composite_lower(
+    target: &mut [f32],
+    width: usize,
+    height: usize,
+    panel: PanelRect,
+    pad: f32,
+    layer: &LowerLayer,
+) {
+    let Some(bytes) = layer.image.as_bytes(0) else {
+        return;
+    };
+    let size = layer.image.size(0);
+    let layer_width = i32::from(size.width);
+    let layer_height = i32::from(size.height);
+    if layer_width <= 0 || layer_height <= 0 {
+        return;
+    }
+    // 下层位图覆盖的是 `rect + 2*pad`，所以它的左上角在页面坐标里是 rect - pad。
+    let origin_x = layer.rect.x - pad;
+    let origin_y = layer.rect.y - pad;
+    for y in 0..height {
+        let page_y = panel.y - pad + y as f32 + 0.5;
+        let layer_y = page_y - origin_y;
+        if layer_y < 0.0 || layer_y >= layer_height as f32 {
+            continue;
+        }
+        for x in 0..width {
+            let page_x = panel.x - pad + x as f32 + 0.5;
+            let layer_x = page_x - origin_x;
+            if layer_x < 0.0 || layer_x >= layer_width as f32 {
+                continue;
+            }
+            let index = ((layer_y as i32 * layer_width + layer_x as i32) * 4) as usize;
+            let alpha = bytes[index + 3] as f32 / 255.0;
+            if alpha <= 0.0 {
+                continue;
+            }
+            let base = (y * width + x) * 3;
+            for channel in 0..3 {
+                // RenderImage 是 BGRA，取色时把通道换回来。
+                let source = bytes[index + 2 - channel] as f32 / 255.0;
+                target[base + channel] = mix(target[base + channel], source, alpha);
+            }
+        }
     }
 }
 
-fn dot3(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
-    ax * bx + ay * by + az * bz
-}
-
-/// 参考实现的 4 光源高光。
-///
-/// 注意第 3 个光源用的是 `N·L` 而不是半程向量——原着色器就是这么写的，照抄。
-fn specular_highlight(nx: f32, ny: f32, nz: f32) -> f32 {
-    // 视线方向 V = (0, 0, 1)，所以 H = normalize(L + V)。
-    // 指数用 powi 而不是 powf：这几个指数很大（90/120），powf 是这一层最大的开销。
-    let (h1x, h1y, h1z) = normalize3(0.4, 0.7, 1.0 + 1.0);
-    let sp1 = dot3(nx, ny, nz, h1x, h1y, h1z).max(0.0).powi(90);
-    let (h2x, h2y, h2z) = normalize3(-0.3, -0.5, 1.0 + 1.0);
-    let sp2 = dot3(nx, ny, nz, h2x, h2y, h2z).max(0.0).powi(50) * 0.3;
-    let (l3x, l3y, l3z) = normalize3(0.1, 0.3, 1.0);
-    let sp3 = dot3(nx, ny, nz, l3x, l3y, l3z).max(0.0).powi(6) * 0.1;
-    let (h4x, h4y, h4z) = normalize3(0.0, 0.9, 0.4 + 1.0);
-    let sp4 = dot3(nx, ny, nz, h4x, h4y, h4z).max(0.0).powi(120) * 0.6;
-    sp1 + sp2 + sp3 + sp4
-}
-
-fn to_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-/// 渲染一块面板时需要的上下文（`Copy` 开销很小，可以分发到多个线程）。
-struct PanelContext<'a> {
-    backdrop: &'a BackdropTextures,
+/// `FS_GLASS` 的 CPU 翻译。
+fn shade_panel(
+    textures: &CropTextures,
     panel: PanelRect,
+    config: &LensConfig,
+    pad: f32,
+) -> PanelImage {
+    let width = textures.width;
+    let height = textures.height;
+    let res = Vec2::new(width as f32, height as f32);
+    let half = Vec2::new(panel.width * 0.5, panel.height * 0.5);
+    let safe_half = Vec2::new(half.x.max(1.0), half.y.max(1.0));
+    let radius = config.corner_radius.min(half.x).min(half.y).max(0.0);
+    let z_radius = config.z_radius.max(1.0);
+    let max_depth = half.x.min(half.y);
+    let shadow_spread = config.shadow_spread.max(1.0);
+    let contact_falloff = (shadow_spread * 0.04).max(0.01);
+    let px_to_uv = Vec2::new(1.0 / res.x, -1.0 / res.y);
+    let mut bgra = vec![0u8; width * height * 4];
+    let row_bytes = width * 4;
+    let rows_per_chunk = height.div_ceil(worker_count()).max(1);
+    let context = ShadeContext {
+        textures,
+        config: *config,
+        res,
+        half,
+        safe_half,
+        radius,
+        z_radius,
+        max_depth,
+        shadow_spread,
+        contact_falloff,
+        px_to_uv,
+    };
+    let context = &context;
+    std::thread::scope(|scope| {
+        let mut first_row = 0usize;
+        for chunk in bgra.chunks_mut(rows_per_chunk * row_bytes) {
+            let start_row = first_row;
+            first_row += chunk.len() / row_bytes;
+            scope.spawn(move || {
+                for (index, out_row) in chunk.chunks_mut(row_bytes).enumerate() {
+                    context.shade_row(out_row, (start_row + index) as u32);
+                }
+            });
+        }
+    });
+    let _ = pad;
+    PanelImage {
+        width: width as u32,
+        height: height as u32,
+        bgra,
+    }
+}
+
+/// 着色一行的全部上下文。
+struct ShadeContext<'a> {
+    textures: &'a CropTextures,
     config: LensConfig,
+    res: Vec2,
     half: Vec2,
     safe_half: Vec2,
     radius: f32,
     z_radius: f32,
     max_depth: f32,
-    page_width: f32,
-    page_height: f32,
-    output_scale: f32,
-    /// 相邻的玻璃面板（已换算到本面板的局部坐标），用来做形状融合。
-    neighbor: Option<(Vec2, Vec2, f32)>,
-    merge_blend: f32,
+    shadow_spread: f32,
+    contact_falloff: f32,
+    px_to_uv: Vec2,
 }
 
-impl PanelContext<'_> {
-    /// 本面板的 SDF 与邻居的平滑并集。
-    fn shape_sdf(&self, local: Vec2) -> f32 {
-        let own = rounded_rect_sdf(local, self.half, self.radius);
-        match self.neighbor {
-            Some((center, half, radius)) => {
-                let other = rounded_rect_sdf(
-                    Vec2::new(local.x - center.x, local.y - center.y),
-                    half,
-                    radius,
-                );
-                smooth_union(own, other, self.merge_blend)
-            }
-            None => own,
-        }
-    }
-    /// 算出一整行像素，写进 `row`（BGRA，长度 = 宽度 × 4）。
-    fn fill_row(&self, row: &mut [u8], iy: u32) {
+impl ShadeContext<'_> {
+    /// 算出一整行像素（BGRA）。
+    fn shade_row(&self, row: &mut [u8], iy: u32) {
         let config = &self.config;
-        let half = self.half;
-        let safe_half = self.safe_half;
-        let z_radius = self.z_radius;
-        let max_depth = self.max_depth;
         let width = (row.len() / 4) as u32;
         for ix in 0..width {
-            // 输出像素中心 → 全分辨率的面板局部坐标（以中心为原点，y 向下）。
+            // v_localPx：以裁剪区中心为原点，范围 ±(size + 2*pad)/2。
             let local = Vec2::new(
-                (ix as f32 + 0.5) / self.output_scale - half.x,
-                (iy as f32 + 0.5) / self.output_scale - half.y,
+                (ix as f32 + 0.5) - self.res.x * 0.5,
+                (iy as f32 + 0.5) - self.res.y * 0.5,
             );
-            let sdf = self.shape_sdf(local);
-            // 抗锯齿遮罩：2px 过渡带。
-            let mask = 1.0 - smoothstep(-1.5, 0.5, sdf);
-            if mask <= 0.002 {
+            let sdf = rounded_rect_sdf(local, self.half, self.radius);
+            let index = ix as usize * 4;
+
+            // ---- 3.1 投影：只对 sdf > 0 的像素（面板外），画完就 return ----
+            if sdf > 0.0 {
+                let shadow_sdf = rounded_rect_sdf(
+                    Vec2::new(local.x, local.y - config.shadow_offset_y),
+                    self.half,
+                    self.radius,
+                );
+                let d = (shadow_sdf - 1.0).max(0.0);
+                let outer =
+                    (-d * d / (self.shadow_spread * self.shadow_spread)).exp() * 0.65;
+                let contact = (-d * 0.08 / self.contact_falloff).exp() * 0.35;
+                let alpha = (outer + contact) * config.shadow_opacity;
+                row[index] = 0;
+                row[index + 1] = 0;
+                row[index + 2] = 0;
+                row[index + 3] = to_byte(alpha);
                 continue;
             }
 
+            // ---- 3.2 抗锯齿 mask（边界 2px 过渡带）----
+            let mask = 1.0 - smoothstep(-1.5, 0.5, sdf);
+            // ---- 3.3 边缘权重与内部深度 ----
             let inside = -sdf;
-            let edge = smoothstep(max_depth * 0.35, 0.0, inside);
+            let edge = smoothstep(self.max_depth * 0.35, 0.0, inside);
 
-            // 倒角高度场与法线（中心差分，步长 2px）。
-            let center_height = bevel_height(inside, z_radius);
+            // ---- 3.4 倒角高度场与法线（中心差分，步长 2px）----
+            let center_height = bevel_height(inside, self.z_radius);
             let height_right = bevel_height(
-                -self.shape_sdf(Vec2::new(local.x + NORMAL_STEP, local.y)),
-                z_radius,
+                -rounded_rect_sdf(
+                    Vec2::new(local.x + NORMAL_STEP, local.y),
+                    self.half,
+                    self.radius,
+                ),
+                self.z_radius,
             );
             let height_left = bevel_height(
-                -self.shape_sdf(Vec2::new(local.x - NORMAL_STEP, local.y)),
-                z_radius,
+                -rounded_rect_sdf(
+                    Vec2::new(local.x - NORMAL_STEP, local.y),
+                    self.half,
+                    self.radius,
+                ),
+                self.z_radius,
             );
             let height_up = bevel_height(
-                -self.shape_sdf(Vec2::new(local.x, local.y + NORMAL_STEP)),
-                z_radius,
+                -rounded_rect_sdf(
+                    Vec2::new(local.x, local.y + NORMAL_STEP),
+                    self.half,
+                    self.radius,
+                ),
+                self.z_radius,
             );
             let height_down = bevel_height(
-                -self.shape_sdf(Vec2::new(local.x, local.y - NORMAL_STEP)),
-                z_radius,
+                -rounded_rect_sdf(
+                    Vec2::new(local.x, local.y - NORMAL_STEP),
+                    self.half,
+                    self.radius,
+                ),
+                self.z_radius,
             );
             let gradient = Vec2::new(
                 (height_right - height_left) / (2.0 * NORMAL_STEP),
                 (height_up - height_down) / (2.0 * NORMAL_STEP),
             );
             let (nx, ny, nz) = normalize3(-gradient.x, -gradient.y, 1.0);
-            let depth = smoothstep(0.0, z_radius, inside);
+            let depth = smoothstep(0.0, self.z_radius, inside);
 
-            // 折射：双凸药丸（双面）或穹顶（单面 + 放大镜）。
+            // ---- 3.5 / 3.6 折射 ----
             let refraction_px = if config.bevel_mode == 0 {
                 let thickness = center_height * 2.0;
-                let thickness_norm = thickness / (z_radius * 2.0).max(1.0);
+                let thickness_norm = thickness / (self.z_radius * 2.0).max(1.0);
                 let through = Vec2::new(
                     gradient.x * REFR_POW * thickness_norm * 0.5,
                     gradient.y * REFR_POW * thickness_norm * 0.5,
                 );
-                let scale = REFR_POW * config.refraction * 30.0;
                 let mut offset = Vec2::new(
                     (gradient.x * REFR_POW * 2.0 + through.x) * config.refraction * 30.0,
                     (gradient.y * REFR_POW * 2.0 + through.y) * config.refraction * 30.0,
                 );
-                let _ = scale;
-                // 向心项：越靠中心越把画面往外推，形成放大镜感。
-                offset.x += (-local.x / safe_half.x) * config.refraction * 4.0 * depth;
-                offset.y += (-local.y / safe_half.y) * config.refraction * 4.0 * depth;
+                offset.x += (-local.x / self.safe_half.x) * config.refraction * 4.0 * depth;
+                offset.y += (-local.y / self.safe_half.y) * config.refraction * 4.0 * depth;
                 offset
             } else {
                 Vec2::new(
@@ -690,52 +884,46 @@ impl PanelContext<'_> {
                 )
             };
 
-            // 逐像素噪声。
+            // ---- 3.7 微噪声 ----
             let micro = if config.distortion > 0.0 {
                 let noise = Vec2::new(local.x * 0.08, local.y * 0.08);
                 Vec2::new(
-                    (hash21(noise) - 0.5) * config.distortion * 4.0 / self.page_width,
-                    (hash21(Vec2::new(noise.x + 37.0, noise.y)) - 0.5)
-                        * config.distortion
-                        * 4.0
-                        / self.page_height,
+                    (hash21(noise) - 0.5) * config.distortion * 4.0 / self.res.x,
+                    (hash21(Vec2::new(noise.x + 37.0, noise.y)) - 0.5) * config.distortion * 4.0
+                        / self.res.y,
                 )
             } else {
                 Vec2::new(0.0, 0.0)
             };
 
-            // 色散：中心 10.8×chroma 像素，边缘 36×chroma 像素。
+            // ---- 3.8 色散 ----
             let chroma_scale = config.chrom_aberration * 18.0 * (edge * 0.7 + 0.3) * 2.0;
             let chroma = Vec2::new(
-                nx * chroma_scale / self.page_width,
-                ny * chroma_scale / -self.page_height,
+                nx * chroma_scale * self.px_to_uv.x,
+                ny * chroma_scale * self.px_to_uv.y,
             );
 
-            // 采样点：页面坐标 → 归一化 UV（v 向上为正，与着色器一致）。
-            let page_x = self.panel.x + local.x + half.x;
-            let page_y = self.panel.y + local.y + half.y;
-            let base_u = page_x / self.page_width + refraction_px.x / self.page_width + micro.x;
-            let base_v =
-                1.0 - page_y / self.page_height - refraction_px.y / self.page_height + micro.y;
-
-            // 双纹理采样：R 用 +色散、G 用原位置、B 用 −色散。
-            let sharp_right = self.backdrop.sample_sharp(base_u + chroma.x, base_v + chroma.y);
-            let sharp_mid = self.backdrop.sample_sharp(base_u, base_v);
-            let sharp_left = self.backdrop.sample_sharp(base_u - chroma.x, base_v - chroma.y);
-            let blur_right = self.backdrop.sample_blur(base_u + chroma.x, base_v + chroma.y);
-            let blur_mid = self.backdrop.sample_blur(base_u, base_v);
-            let blur_left = self.backdrop.sample_blur(base_u - chroma.x, base_v - chroma.y);
-
+            // ---- 3.9 双纹理采样 ----
+            let u = (ix as f32 + 0.5) / self.res.x;
+            let v = 1.0 - (iy as f32 + 0.5) / self.res.y;
+            let base_u = u + refraction_px.x * self.px_to_uv.x + micro.x;
+            let base_v = v + refraction_px.y * self.px_to_uv.y + micro.y;
+            let sharp_right = self.textures.sample_sharp(base_u + chroma.x, base_v + chroma.y);
+            let sharp_mid = self.textures.sample_sharp(base_u, base_v);
+            let sharp_left = self.textures.sample_sharp(base_u - chroma.x, base_v - chroma.y);
+            let blur_right = self.textures.sample_blur(base_u + chroma.x, base_v + chroma.y);
+            let blur_mid = self.textures.sample_blur(base_u, base_v);
+            let blur_left = self.textures.sample_blur(base_u - chroma.x, base_v - chroma.y);
+            let sharp = [sharp_right[0], sharp_mid[1], sharp_left[2]];
+            let blurred = [blur_right[0], blur_mid[1], blur_left[2]];
             // 边缘加权混合：中心几乎全用模糊，边缘最多掺 15% 清晰。
             let edge_mix = 1.0 - edge * 0.15;
-            let sharp = [sharp_right[0], sharp_mid[1], sharp_left[2]];
-            let blur = [blur_right[0], blur_mid[1], blur_left[2]];
             let mut color = [0.0f32; 3];
             for channel in 0..3 {
-                color[channel] = mix(sharp[channel], blur[channel], edge_mix);
+                color[channel] = mix(sharp[channel], blurred[channel], edge_mix);
             }
 
-            // 亮度 / 饱和度 / 冷色染色 / 深度提亮。
+            // ---- 3.10 亮度 / 饱和度 / 冷色染色 / 深度提亮 ----
             let brightness = 1.0 + config.brightness;
             for channel in 0..3 {
                 color[channel] *= brightness;
@@ -753,20 +941,21 @@ impl PanelContext<'_> {
                 color[channel] *= depth_gain;
             }
 
-            // Fresnel 与高光。
+            // ---- 3.11 Fresnel 与 3.12 四光源高光 ----
             let grazing = 1.0 - nz.abs();
             let fresnel = grazing * grazing * grazing * grazing * config.fresnel;
             let specular = specular_highlight(nx, ny, nz) * config.specular;
 
-            // 内描边（顶部更亮）、rim、内发光、伪环境反射。
+            // ---- 3.13 内描边 / rim / 内发光 / 伪环境反射 ----
             let inner_stroke = smoothstep(-BORDER_WIDTH - 1.0, -BORDER_WIDTH, sdf)
                 * (1.0 - smoothstep(-1.0, 0.0, sdf));
-            let top_bias = 0.5 + 0.5 * (-local.y / safe_half.y);
+            let top_bias = 0.5 + 0.5 * (-local.y / self.safe_half.y);
             let inner_stroke = inner_stroke * (0.4 + 0.6 * top_bias);
             let rim = edge * config.edge_highlight * 0.22;
             let inner_glow = smoothstep(5.0, 0.0, -sdf) * config.edge_highlight * 0.15;
             let environment = (ny * 0.5 + 0.5) * fresnel * 0.08;
 
+            // ---- 3.14 最终合成与 alpha ----
             let light = specular
                 + rim
                 + inner_glow
@@ -778,127 +967,13 @@ impl PanelContext<'_> {
             for channel in 0..3 {
                 color[channel] = mix(color[channel], 1.0, fresnel * 0.2);
             }
-
             let alpha = mask * config.opacity;
-            let index = ix as usize * 4;
             row[index] = to_byte(color[2]);
             row[index + 1] = to_byte(color[1]);
             row[index + 2] = to_byte(color[0]);
             row[index + 3] = to_byte(alpha);
         }
     }
-}
-
-/// `FS_GLASS` 的 CPU 移植：算出「透过这块玻璃看到的画面 + 玻璃自身的光照」。
-///
-/// `panel` 是面板在页面里的位置与尺寸（全分辨率 CSS px），`page_width`/`page_height`
-/// 是页面尺寸（对应着色器的 `u_res`）。`output_scale` 只影响采样密度：着色器里的所有
-/// 常数（1.5px 内描边、2px 法线步长、30× 折射系数…）都按全分辨率计算，所以降采样不会
-/// 让这些细节失真，只是输出更粗、GPUI 放大时做双线性插值。
-///
-/// 逐像素的折射/色散/光照是纯计算，按行切开并行跑：单线程 41ms，多线程约 1/N。
-pub fn render_panel(
-    backdrop: &BackdropTextures,
-    panel: PanelRect,
-    config: &LensConfig,
-    output_scale: f32,
-    page_width: f32,
-    page_height: f32,
-) -> PanelImage {
-    render_panel_with_neighbor(
-        backdrop,
-        panel,
-        config,
-        output_scale,
-        page_width,
-        page_height,
-        None,
-    )
-}
-
-/// 同上，但可以指定一块相邻面板：两者靠得比 `merge_blend` 更近时会融合成一滴。
-pub fn render_panel_with_neighbor(
-    backdrop: &BackdropTextures,
-    panel: PanelRect,
-    config: &LensConfig,
-    output_scale: f32,
-    page_width: f32,
-    page_height: f32,
-    neighbor: Option<PanelRect>,
-) -> PanelImage {
-    let output_scale = output_scale.clamp(0.15, 1.0);
-    let width = ((panel.width * output_scale).round() as u32).max(1);
-    let height = ((panel.height * output_scale).round() as u32).max(1);
-    let half = Vec2::new(panel.width * 0.5, panel.height * 0.5);
-    let context = PanelContext {
-        backdrop,
-        panel,
-        config: *config,
-        half,
-        safe_half: Vec2::new(half.x.max(1.0), half.y.max(1.0)),
-        radius: config.corner_radius.min(half.x).min(half.y).max(0.0),
-        z_radius: config.z_radius.max(1.0),
-        max_depth: half.x.min(half.y),
-        page_width: page_width.max(1.0),
-        page_height: page_height.max(1.0),
-        output_scale,
-        // 邻居的页面坐标换算到本面板的局部坐标（以本面板中心为原点）。
-        neighbor: neighbor.map(|rect| {
-            let neighbor_half = Vec2::new(rect.width * 0.5, rect.height * 0.5);
-            (
-                Vec2::new(
-                    rect.x + neighbor_half.x - (panel.x + half.x),
-                    rect.y + neighbor_half.y - (panel.y + half.y),
-                ),
-                neighbor_half,
-                config.corner_radius.min(neighbor_half.x).min(neighbor_half.y),
-            )
-        }),
-        merge_blend: config.merge_blend,
-    };
-    let mut bgra = vec![0u8; (width as usize) * (height as usize) * 4];
-    let row_bytes = width as usize * 4;
-    let threads = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(4)
-        .clamp(1, 8);
-    let rows_per_chunk = (height as usize).div_ceil(threads).max(1);
-    let context = &context;
-    std::thread::scope(|scope| {
-        let mut first_row = 0usize;
-        for chunk in bgra.chunks_mut(rows_per_chunk * row_bytes) {
-            let start = first_row;
-            first_row += chunk.len() / row_bytes;
-            scope.spawn(move || {
-                for (index, row) in chunk.chunks_mut(row_bytes).enumerate() {
-                    context.fill_row(row, (start + index) as u32);
-                }
-            });
-        }
-    });
-    PanelImage {
-        width,
-        height,
-        bgra,
-    }
-}
-
-
-/// 参考实现画在面板外的投影（`outer` + `contact` 两条高斯），这里换算成 GPUI 的
-/// box-shadow 参数：blur_radius ≈ 2×σ，所以 σ = spread 时 blur = 2×spread。
-pub fn shadow_layers(config: &LensConfig, shade: Hsla) -> Vec<gpui::BoxShadow> {
-    let spread = config.shadow_spread.max(1.0);
-    let _ = SHADOW_PAD;
-    vec![
-        gpui::BoxShadow::new(
-            px(0.0),
-            px(config.shadow_offset_y),
-            shade.opacity(config.shadow_opacity * 0.65),
-        )
-        .blur_radius(px(spread * 2.0)),
-        gpui::BoxShadow::new(px(0.0), px(config.shadow_offset_y * 0.5), shade.opacity(config.shadow_opacity * 0.35))
-            .blur_radius(px(spread * 0.6)),
-    ]
 }
 
 // ---------------------------------------------------------------- GPUI 集成
@@ -910,13 +985,13 @@ struct PanelKey {
     y: u32,
     width: u32,
     height: u32,
-    dark: bool,
+    /// 配置指纹：`button` 模式会改 brightness / z_radius / shadow_spread。
+    config_hash: u64,
     reduced: bool,
-    /// 没有封面（纯色背景）时的渲染结果与有封面时不同，要分开缓存。
     solid: bool,
 }
 
-/// 页面背景画布的窗口坐标与尺寸，用来把面板的窗口坐标换算成页面坐标。
+/// 页面背景画布在窗口里的位置与尺寸，用来把面板的窗口坐标换算成页面坐标。
 #[derive(Clone, Copy)]
 struct PageBounds {
     x: f32,
@@ -925,7 +1000,7 @@ struct PageBounds {
     height: f32,
 }
 
-/// 面板形状的弹簧状态：内容/尺寸变化时被踢一脚，随后回落，玻璃像液体一样化到新形状。
+/// 面板形状的弹簧状态：内容/尺寸变化时被踢一脚，随后回落。
 #[derive(Default)]
 struct ShapeSpring {
     width: f32,
@@ -936,7 +1011,6 @@ struct ShapeSpring {
 }
 
 impl ShapeSpring {
-    /// 推进一帧，返回形变能量 0..1。
     fn step(&mut self, width: f32, height: f32) -> f32 {
         let now = std::time::Instant::now();
         let dt = self
@@ -945,7 +1019,6 @@ impl ShapeSpring {
             .unwrap_or(0.0)
             .clamp(0.0, 0.05);
         self.last_frame = Some(now);
-        // 尺寸变了 = 内容变了，踢一脚。
         if (self.width - width).abs() > 0.5 || (self.height - height).abs() > 0.5 {
             self.width = width;
             self.height = height;
@@ -967,18 +1040,20 @@ impl ShapeSpring {
 
 #[derive(Default)]
 struct RuntimeInner {
-    /// 页面背景纹理（清晰 + 模糊）与其 RenderImage。
-    backdrop: Mutex<Option<(String, Arc<BackdropTextures>, Arc<RenderImage>)>>,
-    /// 面板渲染结果的缓存。
+    scene: Mutex<Option<(String, Scene)>>,
     panels: Mutex<std::collections::HashMap<PanelKey, Arc<RenderImage>>>,
-    /// 封面解码结果的缓存。
     cover: Mutex<Option<(std::path::PathBuf, Arc<RgbaImage>)>>,
-    /// 页面背景画布的位置，由背景层在 prepaint 时写入。
     page: Mutex<Option<PageBounds>>,
-    /// 每块面板的形状弹簧。
-    springs: Mutex<std::collections::HashMap<PanelKey, ShapeSpring>>,
-    /// 上一次触发形变的歌曲，用来在换歌时踢一脚形状弹簧。
+    springs: Mutex<std::collections::HashMap<SpringKey, ShapeSpring>>,
     last_pulse: Mutex<Option<String>>,
+    /// 本帧已经渲染过的玻璃面板，按 prepaint 顺序 —— 分层合成要用。
+    rendered: Mutex<Vec<(PanelRect, Arc<RenderImage>)>>,
+    /// 每块面板的交互状态。
+    interaction: Mutex<std::collections::HashMap<String, PanelInteraction>>,
+    /// 正在后台渲染的面板，避免同一块重复排队。
+    inflight: Mutex<std::collections::HashSet<PanelKey>>,
+    /// 后台渲染完成后置位，render 里据此再要一帧。
+    needs_redraw: std::sync::atomic::AtomicBool,
 }
 
 /// 玻璃渲染的共享状态：整个应用持有一份，克隆给各个画布。
@@ -987,11 +1062,6 @@ pub struct GlassRuntime {
     inner: Arc<RuntimeInner>,
 }
 
-/// 面板位图的渲染分辨率（相对全分辨率）。0.5 时成本降到 1/4，放大由 GPUI 双线性完成。
-const OUTPUT_SCALE: f32 = 0.5;
-/// 背景纹理的分辨率（相对全分辨率）。
-const BACKDROP_SCALE: f32 = 0.5;
-
 impl GlassRuntime {
     pub fn new() -> Self {
         Self::default()
@@ -999,15 +1069,13 @@ impl GlassRuntime {
 
     /// 系统是否关闭了「透明效果」（Windows 设置 → 个性化 → 颜色）。
     ///
-    /// 这是参考实现完全没有的无障碍适配：关掉时玻璃会切成更不透明、更少模糊的形态。
+    /// 这是参照目标完全没有的无障碍适配。
     pub fn reduced_transparency() -> bool {
         static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *CACHED.get_or_init(read_reduced_transparency)
     }
 
-    /// 换歌时踢一脚形状弹簧：面板会先缩一下再弹回，玻璃像液体一样「化」到新内容上。
-    ///
-    /// 这是参考实现没有的能力——原库唯一的形变是按钮按下时瞬时改 `zRadius`，没有过渡。
+    /// 换歌时踢一脚形状弹簧：面板会先缩一下再弹回。
     pub fn pulse_on_track_change(&self, track_id: &str) {
         let mut last = self.inner.last_pulse.lock().unwrap_or_else(|e| e.into_inner());
         if last.as_deref() == Some(track_id) {
@@ -1021,10 +1089,7 @@ impl GlassRuntime {
         }
     }
 
-    /// 是否有面板的形状弹簧还在动。
-    ///
-    /// 帧请求必须由 `render` 发出：在画布的 prepaint 里调 `request_animation_frame`
-    /// 可能没有当前视图上下文而 panic（这个坑项目里已经踩过一次）。
+    /// 是否有面板的形状弹簧还在动（帧请求必须由 `render` 发出）。
     pub fn is_animating(&self) -> bool {
         self.inner
             .springs
@@ -1050,52 +1115,40 @@ impl GlassRuntime {
         Some(image)
     }
 
-    /// 建立（或复用）页面背景的清晰/模糊纹理。
-    ///
-    /// 没有封面时用一块纯色当背景：折射、色散、内描边照常算，只是背景没有细节。
-    /// 这样降级路径下玻璃面板依然完整可见，不会退化成「只剩一圈阴影」。
-    fn backdrop_textures(
-        &self,
-        page: PageBounds,
-        cover: Option<&std::path::Path>,
-        base: Hsla,
-        config: &LensConfig,
-    ) -> Option<(Arc<BackdropTextures>, Arc<RenderImage>)> {
+    /// 建立（或复用）场景：详情页玻璃背后的内容。
+    fn scene(&self, cover: Option<&std::path::Path>, base: Hsla, page: PageBounds) -> Scene {
         let key = format!(
-            "{}x{}|{}|{:.3}",
+            "{}|{}x{}",
+            cover.map(|path| path.display().to_string()).unwrap_or_default(),
             page.width.round() as i32,
-            page.height.round() as i32,
-            cover
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "solid".to_owned()),
-            config.blur_amount
+            page.height.round() as i32
         );
         {
-            let cache = self.inner.backdrop.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((cached, textures, image)) = cache.as_ref() {
+            let cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((cached, scene)) = cache.as_ref() {
                 if cached == &key {
-                    return Some((textures.clone(), image.clone()));
+                    return scene.clone();
                 }
             }
         }
-        let source = match cover {
-            Some(path) => self.cover_image(path)?,
-            None => Arc::new(solid_cover(base)),
-        };
-        let textures = Arc::new(build_backdrop(
-            &source,
+        let cover_image = cover.and_then(|path| self.cover_image(path));
+        let rgba = gpui::Rgba::from(base);
+        let scene = Scene::new(
+            cover_image,
+            [rgba.r, rgba.g, rgba.b],
+            // 与 `backdrop()` 画的那三层保持一致：封面 0.85、压暗 0.34 → 0.66。
+            0.85,
+            0.34,
+            0.66,
             page.width,
             page.height,
-            BACKDROP_SCALE,
-            60.0 * config.blur_amount,
-        ));
-        let image = Arc::new(textures.to_render_image());
-        let mut cache = self.inner.backdrop.lock().unwrap_or_else(|e| e.into_inner());
-        *cache = Some((key, textures.clone(), image.clone()));
-        Some((textures, image))
+        );
+        let mut cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
+        *cache = Some((key, scene.clone()));
+        scene
     }
 
-    /// 渲染（或复用）一块面板的位图。
+    /// 渲染（或复用）一块面板的位图。`bounds` 覆盖「面板 + 四周 20px 投影留白」。
     fn panel_image(
         &self,
         bounds: Bounds<gpui::Pixels>,
@@ -1103,21 +1156,25 @@ impl GlassRuntime {
         base: Hsla,
         config: &LensConfig,
         reduced: bool,
+        drag: (f32, f32),
     ) -> Option<Arc<RenderImage>> {
         let page = self.page_bounds()?;
-        let x = f32::from(bounds.origin.x) - page.x;
-        let y = f32::from(bounds.origin.y) - page.y;
-        let width = f32::from(bounds.size.width);
-        let height = f32::from(bounds.size.height);
-        if width < 2.0 || height < 2.0 {
+        // bounds 含投影留白；再叠加 `floating` 拖拽位移得到面板的视觉位置。
+        let panel = PanelRect {
+            x: f32::from(bounds.origin.x) - page.x + SHADOW_PAD + drag.0,
+            y: f32::from(bounds.origin.y) - page.y + SHADOW_PAD + drag.1,
+            width: f32::from(bounds.size.width) - SHADOW_PAD * 2.0,
+            height: f32::from(bounds.size.height) - SHADOW_PAD * 2.0,
+        };
+        if panel.width < 2.0 || panel.height < 2.0 {
             return None;
         }
         let key = PanelKey {
-            x: x.max(0.0).round() as u32,
-            y: y.max(0.0).round() as u32,
-            width: width.round() as u32,
-            height: height.round() as u32,
-            dark: config.brightness < 0.0,
+            x: panel.x.max(0.0).round() as u32,
+            y: panel.y.max(0.0).round() as u32,
+            width: panel.width.round() as u32,
+            height: panel.height.round() as u32,
+            config_hash: config.fingerprint(),
             reduced,
             solid: cover.is_none(),
         };
@@ -1127,49 +1184,98 @@ impl GlassRuntime {
                 return Some(image.clone());
             }
         }
-        let (textures, _) = self.backdrop_textures(page, cover, base, config)?;
-        let rendered = render_panel(
-            &textures,
-            PanelRect {
-                x,
-                y,
-                width,
-                height,
-            },
-            config,
-            OUTPUT_SCALE,
-            page.width,
-            page.height,
-        );
-        let image = rendered.to_render_image();
-        let mut panels = self.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
-        // 缓存别无限涨：超过 24 张就清空重来（窗口尺寸变化时会有新键）。
-        if panels.len() > 24 {
-            panels.clear();
+        let scene = self.scene(cover, base, page);
+        // 分层合成：z 序在前的玻璃（已经渲染好的）先合成进场景。
+        let lower: Vec<LowerLayer> = self
+            .inner
+            .rendered
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(rect, image)| LowerLayer {
+                rect: *rect,
+                image: image.clone(),
+            })
+            .collect();
+        // 这条逐像素管线一次要几百毫秒（12 趟高斯 + 逐像素着色），放到后台线程算：
+        // 这一帧先不画玻璃，算完置脏标记、下一帧再画，UI 不会被冻住。
+        {
+            let mut inflight = self.inner.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            if !inflight.insert(key) {
+                return None;
+            }
         }
-        panels.insert(key, image.clone());
-        Some(image)
+        let runtime = self.clone();
+        let config = *config;
+        std::thread::spawn(move || {
+            let rendered = render_panel(&scene, panel, &config, &lower);
+            let image = rendered.to_render_image();
+            {
+                let mut panels = runtime.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
+                if panels.len() > 24 {
+                    panels.clear();
+                }
+                panels.insert(key, image.clone());
+            }
+            runtime
+                .inner
+                .rendered
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((panel, image));
+            runtime
+                .inner
+                .inflight
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+            runtime
+                .inner
+                .needs_redraw
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        None
+    }
+
+    /// 后台渲染完成，需要再画一帧。
+    pub fn take_needs_redraw(&self) -> bool {
+        self.inner
+            .needs_redraw
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
 impl GlassRuntime {
-    /// 背景层：铺满整页的封面模糊图，对应参考实现里的「场景画布」。
+    /// 背景层：铺满整页的封面 + 压暗渐变，对应参照目标的「场景画布」。
     ///
-    /// 它同时负责记录页面原点：面板的 `canvas` 在 prepaint 时要用它把自己的窗口坐标
-    /// 换算成页面坐标（面板在页面里的位置正是折射采样需要的）。
+    /// 它同时负责两件事：记录页面原点（面板的 `canvas` 要用它把自己的窗口坐标换算成
+    /// 页面坐标），以及**每帧清空**「本帧已渲染玻璃」列表（分层合成要用）。
     pub fn backdrop(
         &self,
         cover: Option<std::path::PathBuf>,
-        config: LensConfig,
         base: Hsla,
         shade: Hsla,
     ) -> Div {
         let mut layer = div().absolute().inset_0().bg(base);
-        // 无论有没有封面都要建这层画布：面板的 prepaint 靠它记录的页面原点把自己的
-        // 窗口坐标换算成页面坐标。没有封面时这里返回一张纯色背景，面板照常渲染。
-        let prepaint_runtime = self.clone();
-        let paint_runtime = self.clone();
+        if let Some(path) = cover {
+            layer = layer.child(
+                img(path)
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover)
+                    .opacity(0.85),
+            );
+        }
         layer = layer.child(
+            div().absolute().inset_0().bg(linear_gradient(
+                180.0,
+                linear_color_stop(shade.opacity(0.34), 0.0),
+                linear_color_stop(shade.opacity(0.66), 1.0),
+            )),
+        );
+        let runtime = self.clone();
+        layer.child(
             canvas(
                 move |bounds, _window, _cx| {
                     let page = PageBounds {
@@ -1178,91 +1284,131 @@ impl GlassRuntime {
                         width: f32::from(bounds.size.width),
                         height: f32::from(bounds.size.height),
                     };
-                    *prepaint_runtime
+                    *runtime.inner.page.lock().unwrap_or_else(|e| e.into_inner()) = Some(page);
+                    runtime
                         .inner
-                        .page
+                        .rendered
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = Some(page);
-                    prepaint_runtime
-                        .backdrop_textures(page, cover.as_deref(), base, &config)
-                        .map(|(_, image)| image)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clear();
                 },
-                move |bounds, image, window, _cx| {
-                    let _ = &paint_runtime;
-                    if let Some(image) = image {
-                        let _ = window.paint_image(
-                            bounds,
-                            bounds,
-                            Corners::all(px(0.0)),
-                            image,
-                            0,
-                            false,
-                        );
-                    }
-                },
+                |_bounds, _state, _window, _cx| {},
             )
             .absolute()
             .inset_0(),
-        );
-        // 压暗渐变：无论有没有封面都铺，保证上层文字始终可读。
-        layer.child(
-            div().absolute().inset_0().bg(linear_gradient(
-                180.0,
-                linear_color_stop(shade.opacity(0.34), 0.0),
-                linear_color_stop(shade.opacity(0.66), 1.0),
-            )),
         )
+    }
+
+    /// 取某块面板的交互状态（`floating` 拖拽与 `button` 的 hover/pressed）。
+    pub fn interaction(&self, id: &str) -> PanelInteraction {
+        self.inner
+            .interaction
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// 一块玻璃面板。
     ///
-    /// 面板本体由 CPU 端移植的 `FS_GLASS` 逐像素算出来，通过 `canvas` + `paint_image` 画上去；
-    /// 投影交给 GPUI 的 box-shadow（与着色器里的双高斯投影等价）。
+    /// 面板本体（含四周 20px 的投影留白）由 CPU 端移植的整条管线算出来，通过 `canvas` +
+    /// `paint_image` 画上去；投影也在这张位图里，与参照目标把阴影交给同一个着色器一致。
     pub fn panel(
         &self,
+        id: &str,
         cover: Option<std::path::PathBuf>,
         config: LensConfig,
         reduced: bool,
         base: Hsla,
-        shade: Hsla,
+        interaction: PanelInteraction,
     ) -> Div {
         let radius = px(config.corner_radius);
+        let id = id.to_owned();
         let prepaint_runtime = self.clone();
         let paint_runtime = self.clone();
-        let shadow_config = config;
-        div()
-            .relative()
+        let drag = interaction.drag;
+        let hover_id = id.clone();
+        let press_id = id.clone();
+        let move_id = id.clone();
+        let release_id = id.clone();
+        let release_id2 = id.clone();
+        let hover_runtime = self.clone();
+        let press_runtime = self.clone();
+        let move_runtime = self.clone();
+        let release_runtime = self.clone();
+        let release_runtime2 = self.clone();
+        let inner = div()
+            .absolute()
+            .inset_0()
             .rounded(radius)
-            .shadow(shadow_layers(&shadow_config, shade))
+            .id(gpui::ElementId::Name(format!("glass-panel-{id}").into()))
+            // `button` 模式：hover 时 brightness += 0.2。
+            .on_hover(move |hovered, window, _cx| {
+                let changed =
+                    hover_runtime.with_interaction(&hover_id, |state| state.hovered = *hovered);
+                if changed {
+                    window.refresh();
+                }
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |event, window, _cx| {
+                let changed = press_runtime.with_interaction(&press_id, |state| {
+                    state.pressed = true;
+                    state.drag_origin =
+                        Some((f32::from(event.position.x), f32::from(event.position.y)));
+                    state.drag_base = state.drag;
+                });
+                if changed {
+                    window.refresh();
+                }
+            })
+            // `floating`：拖拽时按累计位移平移（参照目标用 `transform: translate`）。
+            .on_mouse_move(move |event, _window, _cx| {
+                move_runtime.with_interaction(&move_id, |state| {
+                    let Some(origin) = state.drag_origin else {
+                        return;
+                    };
+                    let dx = f32::from(event.position.x) - origin.0;
+                    let dy = f32::from(event.position.y) - origin.1;
+                    state.drag = (state.drag_base.0 + dx, state.drag_base.1 + dy);
+                });
+            })
+            .on_mouse_up(gpui::MouseButton::Left, move |_event, window, _cx| {
+                let changed = release_runtime.with_interaction(&release_id, |state| {
+                    state.pressed = false;
+                    state.drag_origin = None;
+                });
+                if changed {
+                    window.refresh();
+                }
+            })
+            .on_mouse_up_out(gpui::MouseButton::Left, move |_event, _window, _cx| {
+                release_runtime2.with_interaction(&release_id2, |state| {
+                    state.pressed = false;
+                    state.drag_origin = None;
+                });
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
                         let width = f32::from(bounds.size.width);
                         let height = f32::from(bounds.size.height);
-                        let morph = {
-                            let mut springs = prepaint_runtime
-                                .inner
-                                .springs
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner());
-                            let key = PanelKey {
-                                x: f32::from(bounds.origin.x).max(0.0).round() as u32,
-                                y: f32::from(bounds.origin.y).max(0.0).round() as u32,
-                                width: width.round() as u32,
-                                height: height.round() as u32,
-                                dark: config.brightness < 0.0,
-                                reduced,
-                                solid: cover.is_none(),
-                            };
-                            springs.entry(key).or_default().step(width, height)
-                        };
-                        // 没有封面也要渲染：底是纯色，玻璃本身的光学照样成立。
+                        let morph = prepaint_runtime
+                            .inner
+                            .springs
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .entry(SpringKey::new(&id, width, height))
+                            .or_default()
+                            .step(width, height);
+                        let effective = button_config(config, interaction);
                         let image = prepaint_runtime.panel_image(
                             bounds,
                             cover.as_deref(),
                             base,
-                            &config,
+                            &effective,
                             reduced,
+                            interaction.drag,
                         );
                         (image, morph)
                     },
@@ -1271,17 +1417,20 @@ impl GlassRuntime {
                         let Some(image) = image else {
                             return;
                         };
-                        // 形变：内容变化时玻璃先缩一下再弹回，看起来像液体而不是硬边框。
+                        // 形变：内容变化时玻璃先缩一下再弹回。
                         let shrink_x = bounds.size.width * 0.035 * morph;
                         let shrink_y = bounds.size.height * 0.02 * morph;
                         let image_bounds = Bounds {
-                            origin: gpui::point(bounds.origin.x + shrink_x, bounds.origin.y + shrink_y),
+                            origin: gpui::point(
+                                bounds.origin.x + px(drag.0) + shrink_x,
+                                bounds.origin.y + px(drag.1) + shrink_y,
+                            ),
                             size: gpui::size(
                                 bounds.size.width - shrink_x * 2.0,
                                 bounds.size.height - shrink_y * 2.0,
                             ),
                         };
-                        // 圆角已经烘进图片的 alpha（SDF 抗锯齿），这里不再重复裁剪。
+                        // 圆角与投影都已经烘进位图，这里不再重复裁剪。
                         let _ = window.paint_image(
                             bounds,
                             image_bounds,
@@ -1293,8 +1442,97 @@ impl GlassRuntime {
                     },
                 )
                 .absolute()
-                .inset_0(),
-            )
+                .inset(px(-SHADOW_PAD)),
+            );
+        // 作为背景层铺满父容器（调用方不用再补定位）。
+        div().absolute().inset_0().child(inner)
+    }
+
+    fn with_interaction(&self, id: &str, update: impl FnOnce(&mut PanelInteraction)) -> bool {
+        let mut map = self
+            .inner
+            .interaction
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let state = map.entry(id.to_owned()).or_default();
+        let mut changed = false;
+        let before = *state;
+        update(state);
+        if state.hovered != before.hovered || state.pressed != before.pressed {
+            changed = true;
+        }
+        changed
+    }
+}
+
+/// `button` 模式：hover 提亮 0.2；按下把倒角压平、投影扩散放大（与参照目标一致）。
+fn button_config(config: LensConfig, interaction: PanelInteraction) -> LensConfig {
+    let mut effective = config;
+    if interaction.pressed {
+        effective.z_radius *= 0.8;
+        effective.shadow_spread *= 1.2;
+    } else if interaction.hovered {
+        effective.brightness += 0.2;
+    }
+    effective
+}
+
+/// 一块面板的交互状态（`floating` 拖拽与 `button` 的 hover/pressed）。
+#[derive(Default, Clone, Copy)]
+pub struct PanelInteraction {
+    pub hovered: bool,
+    pub pressed: bool,
+    /// `floating` 拖拽的累计位移（参照目标写的是 `transform: translate(...)`）。
+    pub drag: (f32, f32),
+    drag_origin: Option<(f32, f32)>,
+    drag_base: (f32, f32),
+}
+
+/// 形状弹簧的键：同一块面板（按调用方给的 id）在同一个尺寸下共用一个弹簧。
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SpringKey {
+    id: String,
+    width: u32,
+    height: u32,
+}
+
+impl SpringKey {
+    fn new(id: &str, width: f32, height: f32) -> Self {
+        Self {
+            id: id.to_owned(),
+            width: width.round() as u32,
+            height: height.round() as u32,
+        }
+    }
+}
+
+impl LensConfig {
+    /// 配置指纹：`button` 模式会改 brightness / z_radius / shadow_spread，缓存要分开。
+    fn fingerprint(&self) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for value in [
+            self.blur_amount,
+            self.refraction,
+            self.chrom_aberration,
+            self.edge_highlight,
+            self.specular,
+            self.fresnel,
+            self.distortion,
+            self.corner_radius,
+            self.z_radius,
+            self.opacity,
+            self.saturation,
+            self.tint_strength,
+            self.brightness,
+            self.shadow_opacity,
+            self.shadow_spread,
+            self.shadow_offset_y,
+        ] {
+            hash ^= value.to_bits() as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= self.bevel_mode as u64;
+        hash
     }
 }
 
@@ -1304,7 +1542,7 @@ impl GlassRuntime {
 #[cfg(windows)]
 fn read_reduced_transparency() -> bool {
     use windows_sys::Win32::System::Registry::{
-        HKEY_CURRENT_USER, KEY_READ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY,
+        HKEY, HKEY_CURRENT_USER, KEY_READ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
     const SUBKEY: &str = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
     const VALUE: &str = "EnableTransparency";
@@ -1369,47 +1607,74 @@ mod tests {
         image
     }
 
-    fn panel_of(config: &LensConfig) -> PanelImage {
-        // 模糊半径必须跟着配置走，否则测不出 blurAmount 的影响。
-        let backdrop = build_backdrop(
-            &test_cover(320, 320),
-            1280.0,
-            720.0,
-            0.5,
-            60.0 * config.blur_amount,
-        );
-        render_panel(
-            &backdrop,
-            PanelRect {
-                x: 120.0,
-                y: 90.0,
-                width: 600.0,
-                height: 400.0,
-            },
-            config,
-            0.5,
+    fn test_scene() -> Scene {
+        Scene::new(
+            Some(Arc::new(test_cover(320, 320))),
+            [0.10, 0.10, 0.12],
+            0.85,
+            0.34,
+            0.66,
             1280.0,
             720.0,
         )
     }
 
-    /// 圆角必须真的落在 alpha 上：四角透明、中心不透明。
+    fn test_panel() -> PanelRect {
+        PanelRect {
+            x: 120.0,
+            y: 90.0,
+            width: 600.0,
+            height: 400.0,
+        }
+    }
+
+    fn panel_of(config: &LensConfig) -> PanelImage {
+        render_panel(&test_scene(), test_panel(), config, &[])
+    }
+
+    /// 输出必须覆盖「面板 + 四周 20px 投影留白」。
+    #[test]
+    fn the_output_covers_the_panel_plus_shadow_padding() {
+        let panel = panel_of(&LensConfig::default());
+        assert_eq!(panel.width, 600 + 40);
+        assert_eq!(panel.height, 400 + 40);
+    }
+
+    /// 圆角落在面板本体上：面板四角透明、中心不透明；留白区是投影。
     #[test]
     fn the_panel_is_rounded_with_transparent_corners() {
-        let panel = panel_of(&LensConfig::default());
-        assert_eq!(panel.alpha(0, 0), 0, "左上角应当是透明的");
-        assert_eq!(panel.alpha(panel.width - 1, 0), 0, "右上角应当是透明的");
-        assert_eq!(panel.alpha(0, panel.height - 1), 0, "左下角应当是透明的");
-        assert_eq!(
-            panel.alpha(panel.width - 1, panel.height - 1),
-            0,
-            "右下角应当是透明的"
-        );
-        assert_eq!(
-            panel.alpha(panel.width / 2, panel.height / 2),
-            255,
-            "中心必须是不透明的"
-        );
+        let config = LensConfig {
+            shadow_opacity: 0.0,
+            ..Default::default()
+        };
+        let panel = panel_of(&config);
+        let pad = SHADOW_PAD as u32;
+        assert_eq!(panel.alpha(pad, pad), 0, "面板左上角应当是透明的");
+        assert_eq!(panel.alpha(panel.width - pad - 1, pad), 0);
+        assert_eq!(panel.alpha(pad, panel.height - pad - 1), 0);
+        assert_eq!(panel.alpha(panel.width - pad - 1, panel.height - pad - 1), 0);
+        assert_eq!(panel.alpha(panel.width / 2, panel.height / 2), 255);
+        // 留白区（面板外）在 shadowOpacity = 0 时也必须是全透明。
+        assert_eq!(panel.alpha(0, 0), 0);
+    }
+
+    /// 投影只画在面板外，且是黑色半透明。
+    #[test]
+    fn the_shadow_lives_in_the_padding_and_is_black() {
+        let config = LensConfig {
+            shadow_opacity: 0.6,
+            shadow_spread: 20.0,
+            shadow_offset_y: 10.0,
+            ..Default::default()
+        };
+        let panel = panel_of(&config);
+        // 面板正下方（留白里）应当有可观的阴影。
+        let below = panel.alpha(panel.width / 2, panel.height - 6);
+        assert!(below > 20, "面板下方应当有投影，实际 alpha={below}");
+        // 面板内部不画阴影。
+        assert_eq!(panel.alpha(panel.width / 2, panel.height / 2), 255);
+        let rgb = panel.rgb(panel.width / 2, panel.height - 6);
+        assert_eq!(rgb, [0, 0, 0], "投影必须是纯黑");
     }
 
     /// 折射：开启后采样点整体偏移，画面与不开折射时不同。
@@ -1427,7 +1692,6 @@ mod tests {
         };
         let flat_panel = panel_of(&flat);
         let bent_panel = panel_of(&bent);
-        // 取一条靠近边缘、折射最强的地方做比较。
         let mut differing = 0;
         for x in 0..flat_panel.width {
             let y = flat_panel.height / 2;
@@ -1438,7 +1702,7 @@ mod tests {
         assert!(differing > 20, "折射没有改变采样：只有 {differing} 个像素不同");
     }
 
-    /// 色散：红蓝通道按法线方向分开采样，边缘处 R 与 B 的差应当比中心大。
+    /// 色散：强度按 edge 加权，边缘的变化必须大于中心。
     #[test]
     fn chromatic_aberration_splits_the_colour_channels() {
         let base = LensConfig {
@@ -1452,7 +1716,6 @@ mod tests {
             chrom_aberration: 0.3,
             ..base
         });
-        // 色散强度按 edge 加权，所以边缘的变化必须明显大于中心。
         let change = |x: u32, y: u32| -> i32 {
             let a = plain.rgb(x, y);
             let b = split.rgb(x, y);
@@ -1461,7 +1724,8 @@ mod tests {
                 .sum()
         };
         let y = plain.height / 2;
-        let edge = change(3, y).max(change(plain.width - 4, y));
+        let pad = SHADOW_PAD as u32;
+        let edge = change(pad + 3, y).max(change(plain.width - pad - 4, y));
         let centre = change(plain.width / 2, y);
         assert!(
             edge > centre,
@@ -1469,7 +1733,7 @@ mod tests {
         );
     }
 
-    /// 模糊：blurAmount 越大，背景的高频越少（用相邻像素差衡量）。
+    /// 模糊：blurAmount 越大，背景的高频越少。
     #[test]
     fn more_blur_means_less_detail() {
         let roughness = |blur: f32| -> f32 {
@@ -1482,7 +1746,7 @@ mod tests {
             let panel = panel_of(&config);
             let mut total = 0.0;
             let y = panel.height / 2;
-            for x in 1..panel.width {
+            for x in (SHADOW_PAD as u32 + 1)..(panel.width - SHADOW_PAD as u32) {
                 let a = panel.rgb(x - 1, y);
                 let b = panel.rgb(x, y);
                 total += (a[0] as f32 - b[0] as f32).abs();
@@ -1497,14 +1761,46 @@ mod tests {
         );
     }
 
-    /// 面板内描边：顶部边缘比底部边缘更亮（着色器里的 topBias）。
+    /// 模糊核必须与参照目标的 9-tap 权重逐位一致（用独立的朴素实现做对照）。
+    #[test]
+    fn the_blur_kernel_matches_the_reference_weights() {
+        let width = 9usize;
+        let height = 3usize;
+        let mut source = vec![0.0f32; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                // 单点脉冲，便于直接读出核。
+                let value = if x == 4 && y == 1 { 1.0 } else { 0.0 };
+                let index = (y * width + x) * 3;
+                source[index] = value;
+                source[index + 1] = value;
+                source[index + 2] = value;
+            }
+        }
+        let spread = 1.0f32;
+        let mut target = vec![0.0f32; source.len()];
+        // 只跑一趟横向，直接与权重表对照。
+        blur_rows(&source, &mut target, width, height, spread);
+        let center = (1 * width + 4) * 3;
+        let left1 = (1 * width + 3) * 3;
+        let right1 = (1 * width + 5) * 3;
+        let left2 = (1 * width + 2) * 3;
+        assert!((target[center] - BLUR_TAPS[0]).abs() < 1e-6);
+        assert!((target[left1] - BLUR_TAPS[1]).abs() < 1e-6);
+        assert!((target[right1] - BLUR_TAPS[1]).abs() < 1e-6);
+        assert!((target[left2] - BLUR_TAPS[2]).abs() < 1e-6);
+        // 权重和应当约等于 1（参照目标的表加起来是 0.999999）。
+        let sum: f32 = BLUR_TAPS[0] + 2.0 * (BLUR_TAPS[1] + BLUR_TAPS[2] + BLUR_TAPS[3] + BLUR_TAPS[4]);
+        assert!((sum - 1.0).abs() < 1e-5, "核权重和 {sum}");
+    }
+
+    /// 内描边：顶部比底部亮（topBias）。
     #[test]
     fn the_inner_stroke_is_brighter_on_top() {
         let panel = panel_of(&LensConfig {
             edge_highlight: 0.2,
             ..Default::default()
         });
-        // 背景本身上下就不同，所以要比较「加上描边之后各自的增量」。
         let plain = panel_of(&LensConfig {
             edge_highlight: 0.0,
             ..Default::default()
@@ -1513,30 +1809,107 @@ mod tests {
             let rgb = panel.rgb(x, y);
             rgb[0] as i32 + rgb[1] as i32 + rgb[2] as i32
         };
+        let pad = SHADOW_PAD as u32;
         let x = panel.width / 2;
-        // 描边带只覆盖距边缘 1.5~2.5 个设备像素，必须取最外圈那一行。
-        let top_gain = luminance(&panel, x, 0) - luminance(&plain, x, 0);
-        let bottom_gain = luminance(&panel, x, panel.height - 1)
-            - luminance(&plain, x, plain.height - 1);
+        // 描边带只覆盖距边界 1.5~2.5 个像素，取最外圈那一行。
+        let top_gain = luminance(&panel, x, pad) - luminance(&plain, x, pad);
+        let bottom_gain = luminance(&panel, x, panel.height - pad - 1)
+            - luminance(&plain, x, plain.height - pad - 1);
         assert!(
             top_gain > bottom_gain,
             "顶部内描边应当比底部亮：顶 +{top_gain}，底 +{bottom_gain}"
         );
     }
 
-    /// 形状融合（metaball）的并集数学：间隙小于 blend 时中间会被填上。
-    ///
-    /// 参考实现完全没有这个能力，是本项目补的。注意**它只在本面板自己的位图范围内
-    /// 生效**：真正的「颈」落在面板边界之外，要看见它必须把两块面板画进同一张位图，
-    /// 而那要求改动布局，本轮没做（见模块文档的「仍存在的差距」）。
+    /// 分层合成：z 序在前的玻璃的位图必须出现在场景里（被折射到）。
     #[test]
-    fn nearby_shapes_merge_into_one_blob() {
-        // 两块形状各距交界 5px（间隙 10px）：平滑并集把它们连成一体。
-        assert!(smooth_union(5.0, 5.0, 28.0) < 0.0, "间隙 10px 时应当连上");
-        // 各距 20px（间隙 40px）：连不上。
-        assert!(smooth_union(20.0, 20.0, 28.0) > 0.0, "间隙 40px 时不该连上");
-        // blend 为 0 时退化成硬并集。
-        assert_eq!(smooth_union(5.0, 9.0, 0.0), 5.0);
+    fn lower_glass_layers_are_composited_into_the_scene() {
+        // 造一张纯红的「下层玻璃」位图，覆盖面板左上角一块。
+        let lower_rect = PanelRect {
+            x: 120.0,
+            y: 90.0,
+            width: 600.0,
+            height: 400.0,
+        };
+        let lower_width = (lower_rect.width + SHADOW_PAD * 2.0) as u32;
+        let lower_height = (lower_rect.height + SHADOW_PAD * 2.0) as u32;
+        let mut bytes = vec![0u8; (lower_width * lower_height * 4) as usize];
+        for pixel in bytes.chunks_exact_mut(4) {
+            // BGRA：红 = B0 G0 R255 A255
+            pixel[0] = 0;
+            pixel[1] = 0;
+            pixel[2] = 255;
+            pixel[3] = 255;
+        }
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(lower_width, lower_height, bytes).expect("尺寸一致");
+        let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1)));
+        let layer = LowerLayer {
+            rect: lower_rect,
+            image,
+        };
+        let config = LensConfig {
+            refraction: 0.0,
+            chrom_aberration: 0.0,
+            blur_amount: 0.0,
+            brightness: 0.0,
+            saturation: 0.0,
+            tint_strength: 0.0,
+            edge_highlight: 0.0,
+            specular: 0.0,
+            fresnel: 0.0,
+            ..Default::default()
+        };
+        let plain = render_panel(&test_scene(), test_panel(), &config, &[]);
+        let composited =
+            render_panel(&test_scene(), test_panel(), &config, std::slice::from_ref(&layer));
+        let x = composited.width / 2;
+        let y = composited.height / 2;
+        assert_ne!(
+            plain.rgb(x, y),
+            composited.rgb(x, y),
+            "下层玻璃的像素应当出现在场景里"
+        );
+        let rgb = composited.rgb(x, y);
+        assert!(rgb[0] > 200 && rgb[1] < 60, "应当是下层那层红色：{rgb:?}");
+    }
+
+    /// `button` 模式：hover 提亮、按下压平倒角并放大投影。
+    #[test]
+    fn button_mode_matches_the_reference_values() {
+        let base = LensConfig {
+            z_radius: 40.0,
+            shadow_spread: 10.0,
+            brightness: 0.0,
+            ..Default::default()
+        };
+        let hovered = button_config(
+            base,
+            PanelInteraction {
+                hovered: true,
+                ..Default::default()
+            },
+        );
+        assert!((hovered.brightness - 0.2).abs() < 1e-6, "hover 应当提亮 0.2");
+        assert!((hovered.z_radius - 40.0).abs() < 1e-6);
+
+        let pressed = button_config(
+            base,
+            PanelInteraction {
+                hovered: true,
+                pressed: true,
+                ..Default::default()
+            },
+        );
+        assert!((pressed.z_radius - 32.0).abs() < 1e-6, "按下应当把 zRadius 压到 0.8 倍");
+        assert!((
+            pressed.shadow_spread - 12.0
+        )
+        .abs()
+            < 1e-6,
+            "按下应当把 shadowSpread 放大到 1.2 倍"
+        );
+        assert!((pressed.brightness - 0.0).abs() < 1e-6, "按下不提亮");
     }
 
     /// 无障碍：降低透明度时折射与色散都要收敛。
@@ -1557,25 +1930,26 @@ mod tests {
         assert!(LensConfig::for_theme(false, false).brightness > 0.0);
     }
 
-    /// 用真实封面渲染「背景 + 玻璃面板」的合成图，方便肉眼比对
-    /// （`cargo test -- --ignored dump_panel_preview --nocapture`）。
+    /// 把一块面板渲染成 PNG，方便肉眼比对
+    /// （`cargo test --release -- --ignored dump_panel_preview --nocapture`）。
     #[test]
     #[ignore = "离线比对用"]
     fn dump_panel_preview() {
         const PAGE_WIDTH: f32 = 1280.0;
         const PAGE_HEIGHT: f32 = 720.0;
         let config = LensConfig::for_theme(true, false);
-        // 优先用封面缓存里最新的一张真图；没有就用合成图。
         let cover = newest_cached_cover()
             .and_then(|path| image::open(path).ok())
             .map(|image| image.to_rgba8())
             .unwrap_or_else(|| test_cover(320, 320));
-        let backdrop = build_backdrop(
-            &cover,
+        let scene = Scene::new(
+            Some(Arc::new(cover)),
+            [0.09, 0.09, 0.11],
+            0.85,
+            0.34,
+            0.66,
             PAGE_WIDTH,
             PAGE_HEIGHT,
-            0.5,
-            60.0 * config.blur_amount,
         );
         let rect = PanelRect {
             x: 352.0,
@@ -1584,39 +1958,31 @@ mod tests {
             height: 620.0,
         };
         let started = std::time::Instant::now();
-        let panel = render_panel(&backdrop, rect, &config, 0.5, PAGE_WIDTH, PAGE_HEIGHT);
+        let panel = render_panel(&scene, rect, &config, &[]);
         println!(
-            "面板渲染：{}×{}，耗时 {:.1} ms",
+            "面板渲染：{}×{}（含 20px 投影留白），耗时 {:.1} ms",
             panel.width,
             panel.height,
             started.elapsed().as_secs_f32() * 1000.0
         );
-        let started = std::time::Instant::now();
-        let _ = build_backdrop(&cover, PAGE_WIDTH, PAGE_HEIGHT, 0.5, 60.0 * config.blur_amount);
-        println!("背景构建：耗时 {:.1} ms", started.elapsed().as_secs_f32() * 1000.0);
 
-        // 合成：背景（含压暗渐变）+ 面板。
+        // 背景：直接按场景公式光栅化整页。
         let mut canvas = RgbaImage::new(PAGE_WIDTH as u32, PAGE_HEIGHT as u32);
         for y in 0..canvas.height() {
             for x in 0..canvas.width() {
-                let u = (x as f32 + 0.5) / PAGE_WIDTH;
-                let v = 1.0 - (y as f32 + 0.5) / PAGE_HEIGHT;
-                let sample = backdrop.sample_sharp(u, v);
-                let shade = 0.34 + 0.32 * (y as f32 / PAGE_HEIGHT);
+                let color = scene.sample(x as f32 + 0.5, y as f32 + 0.5);
                 canvas.put_pixel(
                     x,
                     y,
                     Rgba([
-                        to_byte(sample[0] * (1.0 - shade)),
-                        to_byte(sample[1] * (1.0 - shade)),
-                        to_byte(sample[2] * (1.0 - shade)),
+                        to_byte(color[0]),
+                        to_byte(color[1]),
+                        to_byte(color[2]),
                         255,
                     ]),
                 );
             }
         }
-        // 面板单独存一张带 alpha 的 PNG，缩放与合成交给 Pillow 做双线性，
-        // 免得用最近邻放大时出现假的网格纹理。
         let mut layer = RgbaImage::new(panel.width, panel.height);
         for y in 0..panel.height {
             for x in 0..panel.width {
@@ -1630,7 +1996,7 @@ mod tests {
         layer.save(&panel_path).expect("保存面板图");
         println!("背景图：{}", backdrop_path.display());
         println!("面板图：{}", panel_path.display());
-        println!("面板放置：{},{}", rect.x, rect.y);
+        println!("面板放置：{},{}（含 20px 留白）", rect.x - SHADOW_PAD, rect.y - SHADOW_PAD);
     }
 
     /// 封面缓存里最新的一张 `-320.jpg`。
