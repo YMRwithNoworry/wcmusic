@@ -88,6 +88,10 @@ pub struct LensConfig {
     pub shadow_spread: f32,
     /// 投影 Y 偏移。
     pub shadow_offset_y: f32,
+    /// 这块玻璃能不能拖动（参照目标的 `floating`：Pointer Events 拖拽）。
+    pub floating: bool,
+    /// 这块玻璃是不是按钮（参照目标的 `button`：hover 抬升 + 按下效果）。
+    pub button: bool,
     /// 0 = 双凸药丸（双面折射）；1 = 穹顶（单面 + 放大镜）。
     pub bevel_mode: u8,
 }
@@ -112,6 +116,8 @@ impl Default for LensConfig {
             shadow_opacity: 0.30,
             shadow_spread: 10.0,
             shadow_offset_y: 1.0,
+            floating: false,
+            button: false,
             bevel_mode: 0,
         }
     }
@@ -142,6 +148,10 @@ impl LensConfig {
             shadow_opacity: 0.42,
             shadow_spread: 26.0,
             shadow_offset_y: 14.0,
+            // 详情页的两块面板可以拖动（对应参照目标里给元素加 `floating`）。
+            floating: true,
+            // 它们不是按钮，所以不吃 hover/pressed（与参照目标的默认一致）。
+            button: false,
             bevel_mode: 0,
         };
         if reduced {
@@ -696,6 +706,8 @@ pub fn render_panel(
     lower: &[LowerLayer],
     dpr: f32,
 ) -> PanelImage {
+    // 设 `WCMUSIC_GLASS_PROFILE=1` 会把三段耗时打到 stderr（调优用）。
+    let profile_start = std::time::Instant::now();
     // 参照目标整条管线都跑在**设备像素**上（uniform 全部乘过 dpr），这里照做：
     // 面板尺寸与 20px 留白都按 dpr 放大，输出位图的分辨率随之提高。
     let dpr = dpr.clamp(0.5, 4.0);
@@ -732,6 +744,8 @@ pub fn render_panel(
         });
     }
 
+    let raster_done = profile_start.elapsed();
+
     // ② 分层合成：把 z 序在前的玻璃的最终像素（含它的阴影与内容）叠进场景。
     for layer in lower {
         composite_lower(&mut sharp, width, height, panel, dpr, layer);
@@ -745,6 +759,7 @@ pub fn render_panel(
         height,
         config.blur_amount * BLUR_SPREAD_SCALE,
     );
+    let blur_done = profile_start.elapsed();
     let textures = CropTextures {
         sharp,
         blur,
@@ -753,7 +768,21 @@ pub fn render_panel(
     };
 
     // ④ 着色。
-    shade_panel(&textures, panel, config, dpr)
+    let out = shade_panel(&textures, panel, config, dpr);
+    if std::env::var_os("WCMUSIC_GLASS_PROFILE").is_some() {
+        let total = profile_start.elapsed();
+        eprintln!(
+            "[glass] 并行度 {} / {}x{} 光栅 {:.1}ms 模糊 {:.1}ms 着色 {:.1}ms 合计 {:.1}ms",
+            worker_count(),
+            width,
+            height,
+            raster_done.as_secs_f32() * 1000.0,
+            (blur_done - raster_done).as_secs_f32() * 1000.0,
+            (total - blur_done).as_secs_f32() * 1000.0,
+            total.as_secs_f32() * 1000.0,
+        );
+    }
+    out
 }
 
 /// 把一层下层玻璃的位图按 alpha 叠进场景缓冲。
@@ -1573,6 +1602,9 @@ impl GlassRuntime {
         interaction: PanelInteraction,
     ) -> Div {
         let radius = px(config.corner_radius);
+        // 参照目标：`floating` 门控拖拽，`button` 门控 hover/pressed。
+        let floating = config.floating;
+        let button = config.button;
         let id = id.to_owned();
         let prepaint_runtime = self.clone();
         let paint_runtime = self.clone();
@@ -1595,6 +1627,9 @@ impl GlassRuntime {
             .id(gpui::ElementId::Name(format!("glass-panel-{id}").into()))
             // `button` 模式：hover 时 brightness += 0.2。
             .on_hover(move |hovered, window, _cx| {
+                if !button {
+                    return;
+                }
                 let changed =
                     hover_runtime.with_interaction(&hover_id, |state| state.hovered = *hovered);
                 if changed {
@@ -1602,11 +1637,18 @@ impl GlassRuntime {
                 }
             })
             .on_mouse_down(gpui::MouseButton::Left, move |event, window, _cx| {
+                if !floating && !button {
+                    return;
+                }
                 let changed = press_runtime.with_interaction(&press_id, |state| {
-                    state.pressed = true;
-                    state.drag_origin =
-                        Some((f32::from(event.position.x), f32::from(event.position.y)));
-                    state.drag_base = state.drag;
+                    if button {
+                        state.pressed = true;
+                    }
+                    if floating {
+                        state.drag_origin =
+                            Some((f32::from(event.position.x), f32::from(event.position.y)));
+                        state.drag_base = state.drag;
+                    }
                 });
                 if changed {
                     window.refresh();
@@ -1614,6 +1656,9 @@ impl GlassRuntime {
             })
             // `floating`：拖拽时按累计位移平移（参照目标用 `transform: translate`）。
             .on_mouse_move(move |event, _window, _cx| {
+                if !floating {
+                    return;
+                }
                 move_runtime.update_drag(
                     &move_id,
                     f32::from(event.position.x),
@@ -1621,6 +1666,9 @@ impl GlassRuntime {
                 );
             })
             .on_mouse_up(gpui::MouseButton::Left, move |_event, window, _cx| {
+                if !floating && !button {
+                    return;
+                }
                 let changed = release_runtime.with_interaction(&release_id, |state| {
                     state.pressed = false;
                     state.drag_origin = None;
@@ -1630,6 +1678,9 @@ impl GlassRuntime {
                 }
             })
             .on_mouse_up_out(gpui::MouseButton::Left, move |_event, _window, _cx| {
+                if !floating && !button {
+                    return;
+                }
                 release_runtime2.with_interaction(&release_id2, |state| {
                     state.pressed = false;
                     state.drag_origin = None;
@@ -1755,6 +1806,10 @@ impl GlassRuntime {
 /// `button` 模式：hover 提亮 0.2；按下把倒角压平、投影扩散放大（与参照目标一致）。
 fn button_config(config: LensConfig, interaction: PanelInteraction) -> LensConfig {
     let mut effective = config;
+    // 参照目标用 `config.button` 门控：不是按钮的面板既不吃 hover 也不吃 pressed。
+    if !config.button {
+        return effective;
+    }
     if interaction.pressed {
         effective.z_radius *= 0.8;
         effective.shadow_spread *= 1.2;
@@ -1814,6 +1869,8 @@ impl LensConfig {
             self.shadow_opacity,
             self.shadow_spread,
             self.shadow_offset_y,
+            f32::from(self.floating as u8),
+            f32::from(self.button as u8),
         ] {
             hash ^= value.to_bits() as u64;
             hash = hash.wrapping_mul(0x100000001b3);
@@ -2199,10 +2256,12 @@ mod tests {
     /// `button` 模式：hover 提亮、按下压平倒角并放大投影。
     #[test]
     fn button_mode_matches_the_reference_values() {
+        // `button: true` 才吃 hover/pressed（参照目标的 `config.button` 门控）。
         let base = LensConfig {
             z_radius: 40.0,
             shadow_spread: 10.0,
             brightness: 0.0,
+            button: true,
             ..Default::default()
         };
         let hovered = button_config(
@@ -2450,6 +2509,98 @@ mod tests {
             plain.sample(rect.x + 1.0, rect.y + 1.0),
             with_artwork.sample(rect.x + 1.0, rect.y + 1.0),
             "圆角外应当是原背景"
+        );
+    }
+
+    /// `floating` / `button` 是门控开关（参照目标 `if (!config.floating) continue;`）。
+    #[test]
+    fn floating_and_button_are_gating_switches() {
+        // 默认值必须与参照目标一致。
+        let defaults = LensConfig::default();
+        assert!(!defaults.floating, "参照目标默认 floating: false");
+        assert!(!defaults.button, "参照目标默认 button: false");
+
+        // 不是按钮的面板：hover / 按下都不改变渲染参数。
+        let hovered = PanelInteraction {
+            hovered: true,
+            ..Default::default()
+        };
+        let pressed = PanelInteraction {
+            pressed: true,
+            ..Default::default()
+        };
+        let plain = LensConfig::default();
+        assert_eq!(button_config(plain, hovered).brightness, plain.brightness);
+        assert_eq!(button_config(plain, pressed).z_radius, plain.z_radius);
+        assert_eq!(
+            button_config(plain, pressed).shadow_spread,
+            plain.shadow_spread
+        );
+
+        // 是按钮的面板：hover 提亮 0.2、按下压平倒角并放大投影。
+        let button = LensConfig {
+            button: true,
+            ..plain
+        };
+        assert!((button_config(button, hovered).brightness - (button.brightness + 0.2)).abs() < 1e-6);
+        assert!((button_config(button, pressed).z_radius - button.z_radius * 0.8).abs() < 1e-6);
+        assert!(
+            (button_config(button, pressed).shadow_spread - button.shadow_spread * 1.2).abs() < 1e-6
+        );
+
+        // 详情页的两块面板可拖动，但不是按钮。
+        let themed = LensConfig::for_theme(false, false);
+        assert!(themed.floating);
+        assert!(!themed.button);
+    }
+
+    /// 场景输入变化时缓存自动失效（对应参照目标的 `markChanged` / `_globalDirty`）。
+    #[test]
+    fn changing_the_scene_inputs_invalidates_the_caches() {
+        let runtime = GlassRuntime::new();
+        let key = PanelKey {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            config_hash: 5,
+            reduced: false,
+            solid: false,
+        };
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
+        let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1)));
+        let artwork = |x: f32, y: f32| {
+            Some(SceneArtwork {
+                rect: PanelRect {
+                    x,
+                    y,
+                    width: 280.0,
+                    height: 280.0,
+                },
+                radius: PANEL_RADIUS,
+            })
+        };
+
+        runtime.set_artwork(artwork(10.0, 20.0));
+        runtime
+            .inner
+            .panels
+            .lock()
+            .unwrap()
+            .insert(key, image.clone());
+        // 亚像素抖动不算变化：缓存保留，避免每帧重算。
+        runtime.set_artwork(artwork(10.2, 20.1));
+        assert_eq!(
+            runtime.inner.panels.lock().unwrap().len(),
+            1,
+            "亚像素抖动不应当清缓存"
+        );
+        // 明显移动 → 自动失效。
+        runtime.set_artwork(artwork(60.0, 20.0));
+        assert!(
+            runtime.inner.panels.lock().unwrap().is_empty(),
+            "封面元素移动后缓存应当自动失效"
         );
     }
 
