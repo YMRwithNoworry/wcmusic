@@ -22,8 +22,23 @@
 //!   亮色主题提亮，而不是像原库那样靠调用方手填 `brightness: -0.3`；
 //! * 无障碍「降低透明度」：读 Windows 的「透明效果」开关，关闭时把玻璃切成更不透明、
 //!   更少模糊、去掉色散的省电模式；
-//! * 形状随内容的动态变形：面板尺寸/内容变化时，圆角与倒角深度用弹簧过渡，玻璃像液体
-//!   一样「化」到新形状（原库只有 button 按下时瞬时 zRadius×0.8，无过渡）。
+//! * 形状随内容的动态变形：面板尺寸/内容变化或换歌时，玻璃先缩后弹（欠阻尼弹簧），
+//!   像液体一样「化」到新形状（原库只有 button 按下时瞬时 zRadius×0.8，无过渡）；
+//! * 形状融合的数学（`smooth_union` + `merge_blend`）：靠得近的两块形状会被平滑并集
+//!   连成一体。**但它在当前布局里看不到**——「颈」落在面板自己的位图之外，要看见它
+//!   得把两块面板画进同一张位图，那要求改布局，本轮没做。
+//!
+//! ## 与参考实现仍存在的差距
+//!
+//! 1. **不是 GPU 着色器**：这里是 CPU 逐像素，输出半分辨率后由 GPUI 双线性放大。
+//!    参考实现在设备像素上全分辨率计算，所以它的边缘抗锯齿与 1.5px 内描边更锐利。
+//! 2. **背景不是实时帧缓冲**：参考实现把「面板之前的兄弟元素」实时重绘进纹理，能折射
+//!    视频与动画；这里的背景是封面这一张静态图，页面上的文字与控件不会出现在折射里。
+//! 3. **没有分层合成**：参考实现里上层玻璃能折射下层玻璃的输出，这里的两块面板不相交，
+//!    没有实现。
+//! 4. **模糊核不同**：参考实现是 6×(横+纵) 的 9-tap 高斯，这里是 3 次盒式模糊，
+//!    视觉上等价（中心极限定理）但不是逐位相同。
+//! 5. **形状融合看不到**：见上。
 
 use std::sync::{Arc, Mutex};
 
@@ -82,6 +97,10 @@ pub struct LensConfig {
     pub shadow_offset_y: f32,
     /// 0 = 双凸药丸（双面折射）；1 = 穹顶（单面 + 放大镜）。
     pub bevel_mode: u8,
+    /// 形状融合（metaball）的颈部宽度：两块玻璃靠得比它更近时会被「拉」成一滴。
+    ///
+    /// 0 = 关闭。参考实现没有这个能力，是本项目补的。
+    pub merge_blend: f32,
 }
 
 impl Default for LensConfig {
@@ -105,6 +124,7 @@ impl Default for LensConfig {
             shadow_spread: 10.0,
             shadow_offset_y: 1.0,
             bevel_mode: 0,
+            merge_blend: 0.0,
         }
     }
 }
@@ -140,6 +160,8 @@ impl LensConfig {
             shadow_spread: 26.0,
             shadow_offset_y: 14.0,
             bevel_mode: 0,
+            // 详情页两块面板相距很远，融合不会触发；能力保留给靠得近的布局。
+            merge_blend: 28.0,
         };
         if reduced {
             // 「降低透明度」：少模糊、不色散、提亮/压暗到能直接当纯色面用。
@@ -206,6 +228,17 @@ fn rounded_rect_sdf(point: Vec2, half: Vec2, radius: f32) -> f32 {
     let qy = point.y.abs() - half.y + radius;
     let outside = Vec2::new(qx.max(0.0), qy.max(0.0)).length();
     qx.max(qy).min(0.0) + outside - radius
+}
+
+/// 两个 SDF 的平滑并集（metaball）：靠得近时中间会「拉」出一道颈。
+///
+/// 参考实现完全没有形状融合（已核对源码：无 metaball / morph），这是本项目补的能力。
+fn smooth_union(a: f32, b: f32, blend: f32) -> f32 {
+    if blend <= 0.0 {
+        return a.min(b);
+    }
+    let h = (0.5 + 0.5 * (b - a) / blend).clamp(0.0, 1.0);
+    mix(b, a, h) - blend * h * (1.0 - h)
 }
 
 /// 倒角高度场：半径 `z_radius` 的圆截面，`d` 是距边缘的深度（对应 `bevelHeight`）。
@@ -561,15 +594,32 @@ struct PanelContext<'a> {
     page_width: f32,
     page_height: f32,
     output_scale: f32,
+    /// 相邻的玻璃面板（已换算到本面板的局部坐标），用来做形状融合。
+    neighbor: Option<(Vec2, Vec2, f32)>,
+    merge_blend: f32,
 }
 
 impl PanelContext<'_> {
+    /// 本面板的 SDF 与邻居的平滑并集。
+    fn shape_sdf(&self, local: Vec2) -> f32 {
+        let own = rounded_rect_sdf(local, self.half, self.radius);
+        match self.neighbor {
+            Some((center, half, radius)) => {
+                let other = rounded_rect_sdf(
+                    Vec2::new(local.x - center.x, local.y - center.y),
+                    half,
+                    radius,
+                );
+                smooth_union(own, other, self.merge_blend)
+            }
+            None => own,
+        }
+    }
     /// 算出一整行像素，写进 `row`（BGRA，长度 = 宽度 × 4）。
     fn fill_row(&self, row: &mut [u8], iy: u32) {
         let config = &self.config;
         let half = self.half;
         let safe_half = self.safe_half;
-        let radius = self.radius;
         let z_radius = self.z_radius;
         let max_depth = self.max_depth;
         let width = (row.len() / 4) as u32;
@@ -579,7 +629,7 @@ impl PanelContext<'_> {
                 (ix as f32 + 0.5) / self.output_scale - half.x,
                 (iy as f32 + 0.5) / self.output_scale - half.y,
             );
-            let sdf = rounded_rect_sdf(local, half, radius);
+            let sdf = self.shape_sdf(local);
             // 抗锯齿遮罩：2px 过渡带。
             let mask = 1.0 - smoothstep(-1.5, 0.5, sdf);
             if mask <= 0.002 {
@@ -592,19 +642,19 @@ impl PanelContext<'_> {
             // 倒角高度场与法线（中心差分，步长 2px）。
             let center_height = bevel_height(inside, z_radius);
             let height_right = bevel_height(
-                -rounded_rect_sdf(Vec2::new(local.x + NORMAL_STEP, local.y), half, radius),
+                -self.shape_sdf(Vec2::new(local.x + NORMAL_STEP, local.y)),
                 z_radius,
             );
             let height_left = bevel_height(
-                -rounded_rect_sdf(Vec2::new(local.x - NORMAL_STEP, local.y), half, radius),
+                -self.shape_sdf(Vec2::new(local.x - NORMAL_STEP, local.y)),
                 z_radius,
             );
             let height_up = bevel_height(
-                -rounded_rect_sdf(Vec2::new(local.x, local.y + NORMAL_STEP), half, radius),
+                -self.shape_sdf(Vec2::new(local.x, local.y + NORMAL_STEP)),
                 z_radius,
             );
             let height_down = bevel_height(
-                -rounded_rect_sdf(Vec2::new(local.x, local.y - NORMAL_STEP), half, radius),
+                -self.shape_sdf(Vec2::new(local.x, local.y - NORMAL_STEP)),
                 z_radius,
             );
             let gradient = Vec2::new(
@@ -754,6 +804,27 @@ pub fn render_panel(
     page_width: f32,
     page_height: f32,
 ) -> PanelImage {
+    render_panel_with_neighbor(
+        backdrop,
+        panel,
+        config,
+        output_scale,
+        page_width,
+        page_height,
+        None,
+    )
+}
+
+/// 同上，但可以指定一块相邻面板：两者靠得比 `merge_blend` 更近时会融合成一滴。
+pub fn render_panel_with_neighbor(
+    backdrop: &BackdropTextures,
+    panel: PanelRect,
+    config: &LensConfig,
+    output_scale: f32,
+    page_width: f32,
+    page_height: f32,
+    neighbor: Option<PanelRect>,
+) -> PanelImage {
     let output_scale = output_scale.clamp(0.15, 1.0);
     let width = ((panel.width * output_scale).round() as u32).max(1);
     let height = ((panel.height * output_scale).round() as u32).max(1);
@@ -770,6 +841,19 @@ pub fn render_panel(
         page_width: page_width.max(1.0),
         page_height: page_height.max(1.0),
         output_scale,
+        // 邻居的页面坐标换算到本面板的局部坐标（以本面板中心为原点）。
+        neighbor: neighbor.map(|rect| {
+            let neighbor_half = Vec2::new(rect.width * 0.5, rect.height * 0.5);
+            (
+                Vec2::new(
+                    rect.x + neighbor_half.x - (panel.x + half.x),
+                    rect.y + neighbor_half.y - (panel.y + half.y),
+                ),
+                neighbor_half,
+                config.corner_radius.min(neighbor_half.x).min(neighbor_half.y),
+            )
+        }),
+        merge_blend: config.merge_blend,
     };
     let mut bgra = vec![0u8; (width as usize) * (height as usize) * 4];
     let row_bytes = width as usize * 4;
@@ -1437,6 +1521,21 @@ mod tests {
             top_gain > bottom_gain,
             "顶部内描边应当比底部亮：顶 +{top_gain}，底 +{bottom_gain}"
         );
+    }
+
+    /// 形状融合（metaball）的并集数学：间隙小于 blend 时中间会被填上。
+    ///
+    /// 参考实现完全没有这个能力，是本项目补的。注意**它只在本面板自己的位图范围内
+    /// 生效**：真正的「颈」落在面板边界之外，要看见它必须把两块面板画进同一张位图，
+    /// 而那要求改动布局，本轮没做（见模块文档的「仍存在的差距」）。
+    #[test]
+    fn nearby_shapes_merge_into_one_blob() {
+        // 两块形状各距交界 5px（间隙 10px）：平滑并集把它们连成一体。
+        assert!(smooth_union(5.0, 5.0, 28.0) < 0.0, "间隙 10px 时应当连上");
+        // 各距 20px（间隙 40px）：连不上。
+        assert!(smooth_union(20.0, 20.0, 28.0) > 0.0, "间隙 40px 时不该连上");
+        // blend 为 0 时退化成硬并集。
+        assert_eq!(smooth_union(5.0, 9.0, 0.0), 5.0);
     }
 
     /// 无障碍：降低透明度时折射与色散都要收敛。
