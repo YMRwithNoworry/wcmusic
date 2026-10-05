@@ -154,8 +154,9 @@ impl LensConfig {
             // 轻微去饱和 + 冷色染色，是「玻璃」与「直接贴一张图」的区别所在。
             saturation: -0.12,
             tint_strength: 0.38,
-            // 压暗/提亮要够：面板上还要放文字，太透会读不清。
-            brightness: if dark { -0.52 } else { 0.30 },
+            // 压暗/提亮要够：面板上还要放文字。亮封面上白字尤其容易糊，
+            // 实测亮度 0.48 时对比度只有 3.5:1，所以暗色主题压到 0.38 左右。
+            brightness: if dark { -0.62 } else { 0.30 },
             shadow_opacity: 0.42,
             shadow_spread: 26.0,
             shadow_offset_y: 14.0,
