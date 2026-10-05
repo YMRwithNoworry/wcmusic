@@ -608,10 +608,14 @@ pub fn render_panel(
     panel: PanelRect,
     config: &LensConfig,
     lower: &[LowerLayer],
+    dpr: f32,
 ) -> PanelImage {
-    let pad = SHADOW_PAD;
-    let width = ((panel.width + pad * 2.0).round() as usize).max(1);
-    let height = ((panel.height + pad * 2.0).round() as usize).max(1);
+    // 参照目标整条管线都跑在**设备像素**上（uniform 全部乘过 dpr），这里照做：
+    // 面板尺寸与 20px 留白都按 dpr 放大，输出位图的分辨率随之提高。
+    let dpr = dpr.clamp(0.5, 4.0);
+    let pad = SHADOW_PAD * dpr;
+    let width = ((panel.width * dpr + pad * 2.0).round() as usize).max(1);
+    let height = ((panel.height * dpr + pad * 2.0).round() as usize).max(1);
 
     // ① 场景光栅化：裁剪区里每个像素取一次场景颜色。
     let mut sharp = vec![0.0f32; width * height * 3];
@@ -628,9 +632,9 @@ pub fn render_panel(
                 scope.spawn(move || {
                     for (index, out_row) in chunk.chunks_mut(row_bytes).enumerate() {
                         let y = start_row + index;
-                        let page_y = panel.y - pad + y as f32 + 0.5;
+                        let page_y = panel.y - SHADOW_PAD + (y as f32 + 0.5) / dpr;
                         for x in 0..width {
-                            let page_x = panel.x - pad + x as f32 + 0.5;
+                            let page_x = panel.x - SHADOW_PAD + (x as f32 + 0.5) / dpr;
                             let color = scene.sample(page_x, page_y);
                             out_row[x * 3] = color[0];
                             out_row[x * 3 + 1] = color[1];
@@ -644,7 +648,7 @@ pub fn render_panel(
 
     // ② 分层合成：把 z 序在前的玻璃的最终像素（含它的阴影与内容）叠进场景。
     for layer in lower {
-        composite_lower(&mut sharp, width, height, panel, pad, layer);
+        composite_lower(&mut sharp, width, height, panel, dpr, layer);
     }
 
     // ③ 模糊：参照目标的精确核。
@@ -663,7 +667,7 @@ pub fn render_panel(
     };
 
     // ④ 着色。
-    shade_panel(&textures, panel, config, pad)
+    shade_panel(&textures, panel, config, dpr)
 }
 
 /// 把一层下层玻璃的位图按 alpha 叠进场景缓冲。
@@ -672,7 +676,7 @@ fn composite_lower(
     width: usize,
     height: usize,
     panel: PanelRect,
-    pad: f32,
+    dpr: f32,
     layer: &LowerLayer,
 ) {
     let Some(bytes) = layer.image.as_bytes(0) else {
@@ -685,16 +689,17 @@ fn composite_lower(
         return;
     }
     // 下层位图覆盖的是 `rect + 2*pad`，所以它的左上角在页面坐标里是 rect - pad。
-    let origin_x = layer.rect.x - pad;
-    let origin_y = layer.rect.y - pad;
+    // 两层都在设备像素坐标系里对齐。
+    let origin_x = (layer.rect.x - SHADOW_PAD) * dpr;
+    let origin_y = (layer.rect.y - SHADOW_PAD) * dpr;
     for y in 0..height {
-        let page_y = panel.y - pad + y as f32 + 0.5;
+        let page_y = (panel.y - SHADOW_PAD) * dpr + y as f32 + 0.5;
         let layer_y = page_y - origin_y;
         if layer_y < 0.0 || layer_y >= layer_height as f32 {
             continue;
         }
         for x in 0..width {
-            let page_x = panel.x - pad + x as f32 + 0.5;
+            let page_x = (panel.x - SHADOW_PAD) * dpr + x as f32 + 0.5;
             let layer_x = page_x - origin_x;
             if layer_x < 0.0 || layer_x >= layer_width as f32 {
                 continue;
@@ -719,17 +724,19 @@ fn shade_panel(
     textures: &CropTextures,
     panel: PanelRect,
     config: &LensConfig,
-    pad: f32,
+    dpr: f32,
 ) -> PanelImage {
     let width = textures.width;
     let height = textures.height;
     let res = Vec2::new(width as f32, height as f32);
-    let half = Vec2::new(panel.width * 0.5, panel.height * 0.5);
+    // 局部坐标与裁剪区尺寸都是设备像素。
+    let half = Vec2::new(panel.width * dpr * 0.5, panel.height * dpr * 0.5);
     let safe_half = Vec2::new(half.x.max(1.0), half.y.max(1.0));
-    let radius = config.corner_radius.min(half.x).min(half.y).max(0.0);
-    let z_radius = config.z_radius.max(1.0);
+    // 像素类的配置在参照目标里也是乘过 dpr 的（`u_radius = cornerRadius * dpr` 等）。
+    let radius = (config.corner_radius * dpr).min(half.x).min(half.y).max(0.0);
+    let z_radius = (config.z_radius * dpr).max(1.0);
     let max_depth = half.x.min(half.y);
-    let shadow_spread = config.shadow_spread.max(1.0);
+    let shadow_spread = (config.shadow_spread * dpr).max(1.0);
     let contact_falloff = (shadow_spread * 0.04).max(0.01);
     let px_to_uv = Vec2::new(1.0 / res.x, -1.0 / res.y);
     let mut bgra = vec![0u8; width * height * 4];
@@ -747,6 +754,7 @@ fn shade_panel(
         shadow_spread,
         contact_falloff,
         px_to_uv,
+        dpr,
     };
     let context = &context;
     std::thread::scope(|scope| {
@@ -761,7 +769,6 @@ fn shade_panel(
             });
         }
     });
-    let _ = pad;
     PanelImage {
         width: width as u32,
         height: height as u32,
@@ -782,6 +789,8 @@ struct ShadeContext<'a> {
     shadow_spread: f32,
     contact_falloff: f32,
     px_to_uv: Vec2,
+    /// 设备像素比：投影偏移也是像素量，要跟着缩放。
+    dpr: f32,
 }
 
 impl ShadeContext<'_> {
@@ -801,7 +810,7 @@ impl ShadeContext<'_> {
             // ---- 3.1 投影：只对 sdf > 0 的像素（面板外），画完就 return ----
             if sdf > 0.0 {
                 let shadow_sdf = rounded_rect_sdf(
-                    Vec2::new(local.x, local.y - config.shadow_offset_y),
+                    Vec2::new(local.x, local.y - config.shadow_offset_y * self.dpr),
                     self.half,
                     self.radius,
                 );
@@ -1164,6 +1173,7 @@ impl GlassRuntime {
         config: &LensConfig,
         reduced: bool,
         drag: (f32, f32),
+        dpr: f32,
     ) -> Option<Arc<RenderImage>> {
         let page = self.page_bounds()?;
         // bounds 含投影留白；再叠加 `floating` 拖拽位移得到面板的视觉位置。
@@ -1227,7 +1237,7 @@ impl GlassRuntime {
         let runtime = self.clone();
         let config = *config;
         std::thread::spawn(move || {
-            let rendered = render_panel(&scene, panel, &config, &lower);
+            let rendered = render_panel(&scene, panel, &config, &lower, dpr);
             let image = rendered.to_render_image();
             {
                 let mut panels = runtime.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
@@ -1471,7 +1481,9 @@ impl GlassRuntime {
             })
             .child(
                 canvas(
-                    move |bounds, _window, _cx| {
+                    move |bounds, window, _cx| {
+                        // 参照目标按设备像素渲染，这里跟着窗口的缩放比走。
+                        let scale_factor = window.scale_factor();
                         let width = f32::from(bounds.size.width);
                         let height = f32::from(bounds.size.height);
                         let morph = prepaint_runtime
@@ -1500,13 +1512,14 @@ impl GlassRuntime {
                             );
                     }
                     let image = prepaint_runtime.panel_image(
-                            bounds,
-                            cover.as_deref(),
-                            base,
-                            &effective,
-                            reduced,
-                            interaction.drag,
-                        );
+                        bounds,
+                        cover.as_deref(),
+                        base,
+                        &effective,
+                        reduced,
+                        interaction.drag,
+                        scale_factor,
+                    );
                         (image, morph)
                     },
                     move |bounds, (image, morph), window, _cx| {
@@ -1747,7 +1760,7 @@ mod tests {
     }
 
     fn panel_of(config: &LensConfig) -> PanelImage {
-        render_panel(&test_scene(), test_panel(), config, &[])
+        render_panel(&test_scene(), test_panel(), config, &[], 1.0)
     }
 
     /// 纯横向渐变：没有任何高频，适合测「位移类」效果。
@@ -1776,7 +1789,7 @@ mod tests {
     }
 
     fn smooth_panel(config: &LensConfig) -> PanelImage {
-        render_panel(&smooth_scene(), test_panel(), config, &[])
+        render_panel(&smooth_scene(), test_panel(), config, &[], 1.0)
     }
 
     /// 输出必须覆盖「面板 + 四周 20px 投影留白」。
@@ -2007,9 +2020,15 @@ mod tests {
             fresnel: 0.0,
             ..Default::default()
         };
-        let plain = render_panel(&test_scene(), test_panel(), &config, &[]);
+        let plain = render_panel(&test_scene(), test_panel(), &config, &[], 1.0);
         let composited =
-            render_panel(&test_scene(), test_panel(), &config, std::slice::from_ref(&layer));
+            render_panel(
+                &test_scene(),
+                test_panel(),
+                &config,
+                std::slice::from_ref(&layer),
+                1.0,
+            );
         let x = composited.width / 2;
         let y = composited.height / 2;
         assert_ne!(
@@ -2223,6 +2242,25 @@ mod tests {
         assert!(runtime.inner.panels.lock().unwrap().is_empty());
     }
 
+    /// 设备像素比：整条管线按 dpr 放大（参照目标的 uniform 全部乘过 dpr）。
+    #[test]
+    fn the_pipeline_renders_at_device_pixel_ratio() {
+        let config = LensConfig::default();
+        let single = render_panel(&test_scene(), test_panel(), &config, &[], 1.0);
+        let double = render_panel(&test_scene(), test_panel(), &config, &[], 2.0);
+        assert_eq!(single.width, 600 + 40);
+        assert_eq!(double.width, (600 + 40) * 2);
+        assert_eq!(double.height, (400 + 40) * 2);
+        // 几何不变，只是分辨率变高：内部照样不透明、留白照样透明。
+        assert_eq!(single.alpha(single.width / 2, single.height / 2), 255);
+        assert_eq!(double.alpha(double.width / 2, double.height / 2), 255);
+        assert_eq!(single.alpha(SHADOW_PAD as u32, SHADOW_PAD as u32), 0);
+        assert_eq!(
+            double.alpha((SHADOW_PAD * 2.0) as u32, (SHADOW_PAD * 2.0) as u32),
+            0
+        );
+    }
+
     /// 把一块面板渲染成 PNG，方便肉眼比对
     /// （`cargo test --release -- --ignored dump_panel_preview --nocapture`）。
     #[test]
@@ -2251,7 +2289,7 @@ mod tests {
             height: 620.0,
         };
         let started = std::time::Instant::now();
-        let panel = render_panel(&scene, rect, &config, &[]);
+        let panel = render_panel(&scene, rect, &config, &[], 1.0);
         println!(
             "面板渲染：{}×{}（含 20px 投影留白），耗时 {:.1} ms",
             panel.width,
