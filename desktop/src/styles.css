@@ -712,3 +712,24 @@ input[type="number"] {
   color: var(--primary);
   padding: 0;
 }
+
+.player-bar .step {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.player-bar .step:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.player-bar .time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

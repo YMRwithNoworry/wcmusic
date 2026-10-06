@@ -11,7 +11,7 @@ interface Props {
 
 /// 曲目列表：点行播放，可选收藏按钮。搜索页、榜单页、歌单页共用。
 export default function TrackList({ tracks, onToggleSave, saved, empty }: Props) {
-  const { play, snapshot } = usePlayer();
+  const { playAt, snapshot } = usePlayer();
   const playingId = snapshot?.current?.id ?? null;
 
   if (tracks.length === 0) {
@@ -20,11 +20,11 @@ export default function TrackList({ tracks, onToggleSave, saved, empty }: Props)
 
   return (
     <ul className={onToggleSave ? "track-list with-save" : "track-list"}>
-      {tracks.map((track) => (
+      {tracks.map((track, index) => (
         <li
           key={`${track.source}-${track.id}`}
           className={track.id === playingId ? "track playing" : "track"}
-          onClick={() => void play(track)}
+          onClick={() => void playAt(tracks, index)}
         >
           <span className="track-title">{track.title}</span>
           <span className="track-artist">{track.artist}</span>

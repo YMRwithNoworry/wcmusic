@@ -1,7 +1,17 @@
 import { formatTime, usePlayer } from "../player-context";
 
 export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () => void }) {
-  const { snapshot, artwork, toggle, seek, setVolume, setSpatial } = usePlayer();
+  const {
+    snapshot,
+    artwork,
+    toggle,
+    next,
+    previous,
+    seek,
+    setVolume,
+    setSpatial,
+    queueLength,
+  } = usePlayer();
   const track = snapshot?.current ?? null;
   const duration = track?.durationMs ?? 0;
   const position = snapshot?.position_ms ?? 0;
@@ -25,10 +35,28 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
       </div>
 
       <div className="controls">
+        <button
+          className="step"
+          onClick={() => void previous()}
+          disabled={queueLength === 0}
+          title="上一首"
+        >
+          ⏮
+        </button>
         <button className="play" onClick={() => void toggle()} disabled={!track}>
           {snapshot?.playing ? "暂停" : "播放"}
         </button>
-        <span className="time">{formatTime(position)}</span>
+        <button
+          className="step"
+          onClick={() => void next()}
+          disabled={queueLength === 0}
+          title="下一首"
+        >
+          ⏭
+        </button>
+        <span className="time">
+          {formatTime(position)} / {formatTime(duration)}
+        </span>
         <input
           className="progress"
           type="range"

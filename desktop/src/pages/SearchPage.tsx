@@ -1,7 +1,8 @@
 import { useState } from "react";
 
-import { online } from "../api";
-import { formatTime, usePlayer } from "../player-context";
+import { favorites, online } from "../api";
+import TrackList from "../components/TrackList";
+import { useSettings } from "../settings-context";
 import type { OnlineSearchChannel, Track } from "../types";
 
 const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
@@ -12,13 +13,12 @@ const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 ];
 
 export default function SearchPage() {
+  const { settings, replace } = useSettings();
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { play, snapshot } = usePlayer();
-  const playingId = snapshot?.current?.id ?? null;
 
   const run = async () => {
     const keyword = query.trim();
@@ -36,6 +36,15 @@ export default function SearchPage() {
       setLoading(false);
     }
   };
+
+  const savedTracks = settings?.saved_tracks ?? [];
+  const isTrackSaved = (track: Track) =>
+    savedTracks.some(
+      (item) =>
+        item.folder === "我的收藏" &&
+        item.track.id === track.id &&
+        item.track.source === track.source,
+    );
 
   return (
     <div className="search">
@@ -67,24 +76,19 @@ export default function SearchPage() {
       </div>
 
       {error ? <p className="error">{error}</p> : null}
-      {!loading && !error && results.length === 0 ? (
-        <p className="hint">输入关键字后回车即可搜索，点结果行开始播放。</p>
-      ) : null}
 
-      <ul className="track-list">
-        {results.map((track) => (
-          <li
-            key={`${track.source}-${track.id}`}
-            className={track.id === playingId ? "track playing" : "track"}
-            onClick={() => void play(track)}
-          >
-            <span className="track-title">{track.title}</span>
-            <span className="track-artist">{track.artist}</span>
-            <span className="track-album">{track.album}</span>
-            <span className="track-time">{formatTime(track.durationMs)}</span>
-          </li>
-        ))}
-      </ul>
+      {loading ? (
+        <p className="hint">搜索中…</p>
+      ) : (
+        <TrackList
+          tracks={results}
+          onToggleSave={(track) => {
+            void favorites.toggleTrack(track, "我的收藏").then(replace);
+          }}
+          saved={isTrackSaved}
+          empty="输入关键字后回车即可搜索，点结果行开始播放。"
+        />
+      )}
     </div>
   );
 }
