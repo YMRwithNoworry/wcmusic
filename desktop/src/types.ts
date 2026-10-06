@@ -122,3 +122,16 @@ export interface PlaybackSnapshot {
   spatial: boolean;
   error: string | null;
 }
+
+export interface LyricLine {
+  time_ms: number;
+  text: string;
+  translation: string | null;
+}
+
+export interface LyricsPresets {
+  fonts: string[];
+  text_colors: number[];
+  highlight_colors: number[];
+  stroke_colors: number[];
+}

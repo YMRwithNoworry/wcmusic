@@ -249,7 +249,7 @@ fn finite_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct LyricLine {
     pub time_ms: u64,
     pub text: String,

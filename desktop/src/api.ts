@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   AppSettings,
+  LyricLine,
+  LyricsPresets,
   OnlineSearchChannel,
   PlatformPlaylist,
   PlatformRanking,
@@ -55,4 +57,10 @@ export const favorites = {
     invoke<AppSettings>("toggle_saved_playlist", { playlist }),
   toggleTrack: (track: Track, folder: string) =>
     invoke<AppSettings>("toggle_saved_track", { track, folder }),
+};
+
+/// 歌词。
+export const lyrics = {
+  load: (track: Track) => invoke<LyricLine[]>("load_lyrics", { track }),
+  presets: () => invoke<LyricsPresets>("lyrics_presets"),
 };

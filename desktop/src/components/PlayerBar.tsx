@@ -1,6 +1,6 @@
 import { formatTime, usePlayer } from "../player-context";
 
-export default function PlayerBar() {
+export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () => void }) {
   const { snapshot, artwork, toggle, seek, setVolume, setSpatial } = usePlayer();
   const track = snapshot?.current ?? null;
   const duration = track?.durationMs ?? 0;
@@ -8,7 +8,7 @@ export default function PlayerBar() {
 
   return (
     <footer className="player-bar">
-      <div className="now">
+      <div className="now" onClick={onOpenNowPlaying} title="打开歌曲详情页">
         <div className="cover">
           {artwork ? <img src={artwork} alt="" /> : null}
         </div>

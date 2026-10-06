@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import PlayerBar from "./components/PlayerBar";
 import HomePage from "./pages/HomePage";
+import NowPlayingPage from "./pages/NowPlayingPage";
 import PlaylistsPage from "./pages/PlaylistsPage";
 import RankingsPage from "./pages/RankingsPage";
 import SearchPage from "./pages/SearchPage";
@@ -43,6 +44,7 @@ function page(tab: Tab) {
 
 function Shell() {
   const [tab, setTab] = useState<Tab>("主页");
+  const [nowPlaying, setNowPlaying] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   // 启动时拉一次应用信息，同时验证前后端 IPC 是否打通。
@@ -58,8 +60,11 @@ function Shell() {
           {TABS.map((name) => (
             <button
               key={name}
-              className={name === tab ? "tab active" : "tab"}
-              onClick={() => setTab(name)}
+              className={name === tab && !nowPlaying ? "tab active" : "tab"}
+              onClick={() => {
+                setNowPlaying(false);
+                setTab(name);
+              }}
             >
               {name}
             </button>
@@ -69,8 +74,10 @@ function Shell() {
           {info ? `${info.name} ${info.version}` : "连接后端中…"}
         </div>
       </aside>
-      <main className="content">{page(tab)}</main>
-      <PlayerBar />
+      <main className="content">
+        {nowPlaying ? <NowPlayingPage onBack={() => setNowPlaying(false)} /> : page(tab)}
+      </main>
+      <PlayerBar onOpenNowPlaying={() => setNowPlaying(true)} />
     </div>
   );
 }

@@ -41,7 +41,9 @@ pub fn run() {
             commands::track_artwork,
             commands::playlist_folders,
             commands::toggle_saved_playlist,
-            commands::toggle_saved_track
+            commands::toggle_saved_track,
+            commands::load_lyrics,
+            commands::lyrics_presets
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");

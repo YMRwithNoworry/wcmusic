@@ -205,3 +205,32 @@ pub fn toggle_saved_track(
         }
     })
 }
+
+/// 抓取歌词（酷我/酷狗/QQ/网易云），平台没给翻译时自动补全。
+#[tauri::command(async)]
+pub fn load_lyrics(
+    track: Track,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::lyrics::LyricLine>, String> {
+    let use_proxy = state.settings().use_network_proxy;
+    crate::lyrics::fetch_lyrics_with_translation(&track, use_proxy)
+}
+
+/// 歌词设置页要用的候选值（字体、配色、描边）。
+#[derive(Serialize)]
+pub struct LyricsPresets {
+    fonts: Vec<&'static str>,
+    text_colors: Vec<u32>,
+    highlight_colors: Vec<u32>,
+    stroke_colors: Vec<u32>,
+}
+
+#[tauri::command]
+pub fn lyrics_presets() -> LyricsPresets {
+    LyricsPresets {
+        fonts: crate::lyrics::FONT_FAMILIES.to_vec(),
+        text_colors: crate::lyrics::TEXT_COLORS.to_vec(),
+        highlight_colors: crate::lyrics::HIGHLIGHT_COLORS.to_vec(),
+        stroke_colors: crate::lyrics::STROKE_COLORS.to_vec(),
+    }
+}
