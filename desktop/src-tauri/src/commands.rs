@@ -4,7 +4,7 @@
 //! Tauri 会把它们放到工作线程，不卡住窗口。
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 use wcmusic_core::{OnlineSearchChannel, PlatformPlaylist, PlatformRanking, Track};
 
 use crate::online;
@@ -362,4 +362,72 @@ pub fn hotkey_list(state: State<'_, AppState>) -> Vec<HotKeyView> {
             }
         })
         .collect()
+}
+
+/// 显示 / 隐藏桌面歌词窗口（置顶、无边框、透明）。
+///
+/// 窗口第一次显示时按设置里的尺寸与位置创建；已经存在就直接显隐。
+#[tauri::command]
+pub fn toggle_lyrics_window(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let style = state.settings().lyrics;
+    toggle_lyrics_window_inner(&app, &style)
+}
+
+/// 命令与启动流程共用的实现。
+pub fn toggle_lyrics_window_inner(
+    app: &tauri::AppHandle,
+    style: &crate::lyrics::LyricsStyle,
+) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("lyrics") {
+        let visible = window.is_visible().unwrap_or(false);
+        if visible {
+            window.hide().map_err(|error| error.to_string())?;
+            return Ok(false);
+        }
+        window.show().map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+    create_lyrics_window(app, style)?;
+    Ok(true)
+}
+
+/// 启动时如果设置里开着桌面歌词，就把窗口建出来。
+pub fn show_lyrics_window(
+    app: &tauri::AppHandle,
+    style: &crate::lyrics::LyricsStyle,
+) -> Result<(), String> {
+    if app.get_webview_window("lyrics").is_some() {
+        return Ok(());
+    }
+    create_lyrics_window(app, style)
+}
+
+fn create_lyrics_window(
+    app: &tauri::AppHandle,
+    style: &crate::lyrics::LyricsStyle,
+) -> Result<(), String> {
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        "lyrics",
+        tauri::WebviewUrl::App("index.html#lyrics".into()),
+    )
+    .title("WCMusic 桌面歌词")
+    .inner_size(style.window_width as f64, style.window_height as f64)
+    .position(
+        style.window_x.unwrap_or(120.0) as f64,
+        style.window_y.unwrap_or(120.0) as f64,
+    )
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(style.always_on_top)
+    .skip_taskbar(true)
+    .build()
+    .map_err(|error| error.to_string())?;
+    let _ = window.set_focus();
+    eprintln!("桌面歌词窗口已创建");
+    Ok(())
 }

@@ -94,3 +94,8 @@ export const hotkeys = {
 export const desktopWindow = {
   toggleMain: () => invoke<boolean>("toggle_main_window"),
 };
+
+/// 桌面歌词窗口。
+export const lyricsWindow = {
+  toggle: () => invoke<boolean>("toggle_lyrics_window"),
+};

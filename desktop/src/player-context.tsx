@@ -11,7 +11,7 @@ import {
 
 import { listen } from "@tauri-apps/api/event";
 
-import { desktopWindow, player } from "./api";
+import { desktopWindow, lyricsWindow, player } from "./api";
 import { useSettings } from "./settings-context";
 import type { PlaybackSnapshot, Track } from "./types";
 
@@ -194,8 +194,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       case "toggle_window":
         void desktopWindow.toggleMain();
         break;
+      case "toggle_lyrics":
+        void lyricsWindow.toggle();
+        break;
       default:
-        // 「显示/隐藏桌面歌词」等桌面歌词窗口做出来之后再接。
         break;
     }
   };

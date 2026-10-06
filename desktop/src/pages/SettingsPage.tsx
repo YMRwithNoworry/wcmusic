@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { app, hotkeys } from "../api";
+import { app, hotkeys, lyricsWindow } from "../api";
 import { useSettings } from "../settings-context";
 import type {
   HotKeyIssue,
@@ -151,6 +151,9 @@ export default function SettingsPage() {
             value={settings.lyrics_enabled}
             onChange={(lyrics_enabled) => void update({ lyrics_enabled })}
           />
+        </Row>
+        <Row label="桌面歌词窗口" hint="置顶透明窗口，可用快捷键「显示/隐藏桌面歌词」开关">
+          <button onClick={() => void lyricsWindow.toggle()}>显示 / 隐藏</button>
         </Row>
         <Row label="显示翻译">
           <Switch

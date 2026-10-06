@@ -33,6 +33,13 @@ pub fn run() {
             }) {
                 app.state::<state::AppState>().install_hotkeys(service);
             }
+            // 设置里开着桌面歌词就把窗口建出来（与旧桌面端一致）。
+            let settings = app.state::<state::AppState>().settings();
+            if settings.lyrics_enabled
+                && let Err(error) = commands::show_lyrics_window(app.handle(), &settings.lyrics)
+            {
+                eprintln!("创建桌面歌词窗口失败：{error}");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -75,7 +82,8 @@ pub fn run() {
             commands::open_external,
             commands::hotkey_issues,
             commands::hotkey_list,
-            commands::toggle_main_window
+            commands::toggle_main_window,
+            commands::toggle_lyrics_window
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");
