@@ -8,6 +8,7 @@ import PlaylistsPage from "./pages/PlaylistsPage";
 import RankingsPage from "./pages/RankingsPage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
+import SourcesPage from "./pages/SourcesPage";
 import { PlayerProvider } from "./player-context";
 import { SettingsProvider } from "./settings-context";
 import type { AppInfo } from "./types";
@@ -35,6 +36,8 @@ function page(tab: Tab) {
       return <RankingsPage />;
     case "歌单":
       return <PlaylistsPage />;
+    case "音源":
+      return <SourcesPage />;
     case "设置":
       return <SettingsPage />;
     default:

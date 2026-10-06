@@ -54,6 +54,8 @@ enum Command {
         track: Track,
         quality: String,
         use_proxy: bool,
+        /// 解析整曲地址用的音源脚本（当前生效的那一份）。
+        script: String,
     },
     Pause,
     Resume,
@@ -98,7 +100,15 @@ impl Playback {
     }
 
     /// 播放一首在线歌曲：地址解析与下载都在音频线程里做，这里立刻返回。
-    pub fn play(&self, track: Track, quality: &str, use_proxy: bool) -> Result<(), String> {
+    ///
+    /// `script` 是当前生效的音源脚本（内置或导入的）。
+    pub fn play(
+        &self,
+        track: Track,
+        quality: &str,
+        use_proxy: bool,
+        script: String,
+    ) -> Result<(), String> {
         if track.source == TrackSource::Local {
             return Err("本地歌曲文件不可用".to_owned());
         }
@@ -112,6 +122,7 @@ impl Playback {
             track,
             quality: quality.to_owned(),
             use_proxy,
+            script,
         })
     }
 
@@ -200,7 +211,8 @@ fn handle(command: Command, player: &mut Option<AudioPlayer>, shared: &Arc<Mutex
             track,
             quality,
             use_proxy,
-        } => start(track, &quality, use_proxy, player, shared),
+            script,
+        } => start(track, &quality, use_proxy, script, player, shared),
         Command::Pause => {
             if let Some(player) = player.as_ref() {
                 let _ = player.pause();
@@ -250,6 +262,7 @@ fn start(
     track: Track,
     quality: &str,
     use_proxy: bool,
+    script: String,
     player: &mut Option<AudioPlayer>,
     shared: &Arc<Mutex<Shared>>,
 ) {
@@ -267,13 +280,7 @@ fn start(
         fail(shared, "搜索结果缺少平台歌曲 ID");
         return;
     };
-    let url = match source::resolve_url(
-        source::built_in_script(),
-        source_key,
-        &song_id,
-        quality,
-        use_proxy,
-    ) {
+    let url = match source::resolve_url(&script, source_key, &song_id, quality, use_proxy) {
         Ok(url) => url,
         Err(error) => {
             fail(shared, &error);

@@ -135,3 +135,10 @@ export interface LyricsPresets {
   highlight_colors: number[];
   stroke_colors: number[];
 }
+
+export interface SourceView {
+  index: number | null;
+  name: string;
+  active: boolean;
+  capabilities: string[];
+}

@@ -10,7 +10,7 @@ use wcmusic_core::{OnlineSearchChannel, PlatformPlaylist, PlatformRanking, Track
 use crate::online;
 use crate::playback::{self, PlaybackSnapshot};
 use crate::settings::{AppSettings, SavedPlaylist, SavedTrack};
-use crate::source;
+use crate::source::{self, SourceView};
 use crate::state::AppState;
 
 /// 收藏歌曲的四个文件夹，与旧 GPUI 端的 `PLAYLIST_FOLDERS` 一致。
@@ -98,8 +98,10 @@ pub fn play_track(track: Track, state: State<'_, AppState>) -> Result<PlaybackSn
         .get(settings.quality_index)
         .copied()
         .unwrap_or("320k");
+    // 用当前生效的音源脚本解析整曲地址（导入的音源优先，否则内置）。
+    let script = state.with_sources(|sources| sources.active_script().to_owned());
     state.with_playback(|playback| {
-        playback.play(track, quality, settings.use_network_proxy)
+        playback.play(track, quality, settings.use_network_proxy, script)
     })?;
     Ok(state.with_playback(|playback| playback.snapshot()))
 }
@@ -233,4 +235,44 @@ pub fn lyrics_presets() -> LyricsPresets {
         highlight_colors: crate::lyrics::HIGHLIGHT_COLORS.to_vec(),
         stroke_colors: crate::lyrics::STROKE_COLORS.to_vec(),
     }
+}
+
+/// 音源列表：第一项是内置音源，后面是导入的音源。
+#[tauri::command]
+pub fn list_sources(state: State<'_, AppState>) -> Vec<SourceView> {
+    state.with_sources(|sources| sources.list())
+}
+
+/// 弹出原生文件选择框挑一个音源脚本；取消返回 `None`。
+///
+/// 同步命令跑在主线程，弹的是模态框，与旧桌面端行为一致。
+#[tauri::command]
+pub fn pick_source_file() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("音源脚本", &["js"])
+        .pick_file()
+        .map(|path| path.display().to_string())
+}
+
+/// 导入并校验一个音源脚本文件；校验通过就设为当前音源。
+#[tauri::command(async)]
+pub fn import_source_file(path: String, state: State<'_, AppState>) -> Result<SourceView, String> {
+    state.with_sources(|sources| source::import_from_path(sources, &path))
+}
+
+/// 删除一个导入的音源（下标来自 [`list_sources`]）。
+#[tauri::command]
+pub fn remove_source(index: usize, state: State<'_, AppState>) -> Result<Vec<SourceView>, String> {
+    state.with_sources(|sources| sources.remove(index))?;
+    Ok(state.with_sources(|sources| sources.list()))
+}
+
+/// 切换当前音源；`index = None` 表示用内置音源。
+#[tauri::command]
+pub fn select_source(
+    index: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SourceView>, String> {
+    state.with_sources(|sources| sources.select(index))?;
+    Ok(state.with_sources(|sources| sources.list()))
 }

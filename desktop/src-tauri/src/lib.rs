@@ -43,7 +43,12 @@ pub fn run() {
             commands::toggle_saved_playlist,
             commands::toggle_saved_track,
             commands::load_lyrics,
-            commands::lyrics_presets
+            commands::lyrics_presets,
+            commands::list_sources,
+            commands::pick_source_file,
+            commands::import_source_file,
+            commands::remove_source,
+            commands::select_source
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");

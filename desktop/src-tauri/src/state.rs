@@ -4,11 +4,13 @@ use std::sync::Mutex;
 
 use crate::playback::Playback;
 use crate::settings::AppSettings;
+use crate::source::SourceStore;
 
 /// 全局状态。命令里用 `State<'_, AppState>` 取。
 pub struct AppState {
     settings: Mutex<AppSettings>,
     playback: Mutex<Playback>,
+    sources: Mutex<SourceStore>,
 }
 
 impl AppState {
@@ -19,6 +21,7 @@ impl AppState {
         Self {
             settings: Mutex::new(settings),
             playback: Mutex::new(playback),
+            sources: Mutex::new(SourceStore::new()),
         }
     }
 
@@ -47,6 +50,15 @@ impl AppState {
     pub fn with_playback<T>(&self, action: impl FnOnce(&mut Playback) -> T) -> T {
         let mut guard = self
             .playback
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        action(&mut guard)
+    }
+
+    /// 借用音源库执行一次操作。
+    pub fn with_sources<T>(&self, action: impl FnOnce(&mut SourceStore) -> T) -> T {
+        let mut guard = self
+            .sources
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         action(&mut guard)

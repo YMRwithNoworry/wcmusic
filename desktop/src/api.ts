@@ -10,6 +10,7 @@ import type {
   PlatformPlaylist,
   PlatformRanking,
   PlaybackSnapshot,
+  SourceView,
   Track,
 } from "./types";
 
@@ -63,4 +64,13 @@ export const favorites = {
 export const lyrics = {
   load: (track: Track) => invoke<LyricLine[]>("load_lyrics", { track }),
   presets: () => invoke<LyricsPresets>("lyrics_presets"),
+};
+
+/// 音源。
+export const sources = {
+  list: () => invoke<SourceView[]>("list_sources"),
+  pickFile: () => invoke<string | null>("pick_source_file"),
+  importFile: (path: string) => invoke<SourceView>("import_source_file", { path }),
+  remove: (index: number) => invoke<SourceView[]>("remove_source", { index }),
+  select: (index: number | null) => invoke<SourceView[]>("select_source", { index }),
 };

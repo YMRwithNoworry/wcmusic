@@ -28,6 +28,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ureq = "2.12.1"
 base64 = "0.22"
 regex = "1.11"
+# 导入音源时的原生文件选择框（与旧桌面端同一套 rfd）。
+rfd = "0.15.4"
 
 [patch.crates-io]
 rquickjs-sys = { path = "../../native/vendor/rquickjs-sys" }
