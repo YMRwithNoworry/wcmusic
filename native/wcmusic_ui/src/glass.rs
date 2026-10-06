@@ -53,6 +53,11 @@ pub struct PanelRect {
     pub height: f32,
 }
 
+/// 两个矩形是否相交（参照目标用 DOM 的 sampleRect 相交判断动态贡献者）。
+fn rects_intersect(a: PanelRect, b: PanelRect) -> bool {
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+}
+
 /// 参照目标的 19 项配置（`src/defaults.ts`）。
 #[derive(Clone, Copy, Debug)]
 pub struct LensConfig {
@@ -1115,6 +1120,10 @@ struct PanelKey {
     config_hash: u64,
     reduced: bool,
     solid: bool,
+    /// 设备像素比：窗口在不同缩放比的显示器之间移动时要重算（位图分辨率跟着 dpr）。
+    dpr_bits: u32,
+    /// 场景代号：换歌/换主题后场景重建，旧位图不能再用。
+    scene_gen: u64,
 }
 
 /// 页面背景画布在窗口里的位置与尺寸，用来把面板的窗口坐标换算成页面坐标。
@@ -1178,8 +1187,18 @@ struct RuntimeInner {
     interaction: Mutex<std::collections::HashMap<String, PanelInteraction>>,
     /// 每块面板最近一次的布局矩形（页面坐标），拖拽的边界约束要用。
     panel_bounds: Mutex<std::collections::HashMap<String, (f32, f32, f32, f32)>>,
-    /// 正在后台渲染的面板，避免同一块重复排队。
-    inflight: Mutex<std::collections::HashSet<PanelKey>>,
+    /// 每块面板最近一次渲染好的位图（按面板 id），连同它所属的场景代号。
+    ///
+    /// 拖拽时面板位置每帧都在变，缓存必然未命中；这时先把上一次的位图按新位置画出来，
+    /// 玻璃不会在拖拽中消失（参照目标每帧都重绘，任何时候都有上一帧的像素可用）。
+    last_images: Mutex<std::collections::HashMap<String, (u64, Arc<RenderImage>)>>,
+    /// 正在后台渲染的面板（按面板 id），避免同一块面板重复排队。
+    inflight: Mutex<std::collections::HashSet<String>>,
+    /// 页面声明的动态区域（页面坐标），对应参照目标带 `data-dynamic` 或含 `<video>` 的兄弟元素。
+    dynamic_regions: Mutex<std::collections::HashMap<String, PanelRect>>,
+    /// 场景代号：每重建一次场景加一。在途渲染带的是发起时的代号，
+    /// 换歌之后它的结果不会被当成本帧的场景像素取用。
+    scene_gen: std::sync::atomic::AtomicU64,
     /// 后台渲染完成后置位，render 里据此再要一帧。
     needs_redraw: std::sync::atomic::AtomicBool,
     /// 页面上那张封面元素的矩形（同一个文件），由页面在 prepaint 时登记。
@@ -1249,11 +1268,15 @@ impl GlassRuntime {
     }
 
     /// 建立（或复用）场景：详情页玻璃背后的内容。
+    ///
+    /// 缓存键 = 封面路径 + 页面尺寸 + 封面元素矩形 + 底色（主题）。键变了说明玻璃背后的内容
+    /// 整个换了（换歌、换主题、换页面尺寸），此时顺带清掉面板位图 —— 它们折射的是旧场景。
     fn scene(&self, cover: Option<&std::path::Path>, base: Hsla, page: PageBounds) -> Scene {
         // 封面元素的矩形由页面登记；它变了场景也要重算，所以进缓存键。
         let artwork = *self.inner.artwork.lock().unwrap_or_else(|e| e.into_inner());
+        let rgba = gpui::Rgba::from(base);
         let key = format!(
-            "{}|{}x{}|{}",
+            "{}|{}x{}|{}|{},{},{}",
             cover.map(|path| path.display().to_string()).unwrap_or_default(),
             page.width.round() as i32,
             page.height.round() as i32,
@@ -1267,7 +1290,10 @@ impl GlassRuntime {
                     artwork.radius
                 ),
                 None => String::new(),
-            }
+            },
+            to_byte(rgba.r),
+            to_byte(rgba.g),
+            to_byte(rgba.b),
         );
         {
             let cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
@@ -1278,7 +1304,6 @@ impl GlassRuntime {
             }
         }
         let cover_image = cover.and_then(|path| self.cover_image(path));
-        let rgba = gpui::Rgba::from(base);
         let scene = Scene::new(
             cover_image,
             [rgba.r, rgba.g, rgba.b],
@@ -1290,14 +1315,31 @@ impl GlassRuntime {
             page.height,
         )
         .with_artwork(artwork);
-        let mut cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
-        *cache = Some((key, scene.clone()));
+        {
+            let mut cache = self.inner.scene.lock().unwrap_or_else(|e| e.into_inner());
+            *cache = Some((key, scene.clone()));
+        }
+        // 场景换了：代号 +1，所有面板位图都过期，连同拖拽兜底用的那张一起作废。
+        self.inner
+            .scene_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.inner
+            .panels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.inner
+            .last_images
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         scene
     }
 
     /// 渲染（或复用）一块面板的位图。`bounds` 覆盖「面板 + 四周 20px 投影留白」。
     fn panel_image(
         &self,
+        id: &str,
         bounds: Bounds<gpui::Pixels>,
         cover: Option<&std::path::Path>,
         base: Hsla,
@@ -1317,6 +1359,14 @@ impl GlassRuntime {
         if panel.width < 2.0 || panel.height < 2.0 {
             return None;
         }
+        // 先过场景缓存：换歌/换主题/换尺寸会让它重建，并顺手清掉过期的面板位图
+        // （否则这里会命中上一首封面的位图）。
+        let scene = self.scene(cover, base, page);
+        // 场景代号：在途渲染带着它，换场景之后旧结果不会被取用。
+        let scene_gen = self
+            .inner
+            .scene_gen
+            .load(std::sync::atomic::Ordering::Relaxed);
         let key = PanelKey {
             x: panel.x.max(0.0).round() as u32,
             y: panel.y.max(0.0).round() as u32,
@@ -1325,26 +1375,30 @@ impl GlassRuntime {
             config_hash: config.fingerprint(),
             reduced,
             solid: cover.is_none(),
+            dpr_bits: dpr.to_bits(),
+            scene_gen,
         };
-        if self
+        let global_dynamic = self
             .inner
             .scene_dynamic
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // 只有与动态内容相交的面板每帧重算（参照目标 `_glassHasDynamicContributors`）；
+        // 与正在拖动的下层玻璃相交的面板同理（参照目标 `_markGlassAndDependents`）。
+        let touched = !global_dynamic
+            && (self.panel_meets_dynamic_region(panel)
+                || self.panel_meets_dragged_panel(id, panel));
         {
-            // 场景里有动态内容：每帧重算，等价于参照目标对 `data-dynamic` 的每帧重捕获。
-            self.inner
-                .panels
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clear();
-        }
-        {
-            let panels = self.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
+            let mut panels = self.inner.panels.lock().unwrap_or_else(|e| e.into_inner());
+            if global_dynamic {
+                // 整个场景都是动态的：所有面板每帧重算。
+                panels.clear();
+            } else if touched {
+                panels.remove(&key);
+            }
             if let Some(image) = panels.get(&key) {
                 return Some(image.clone());
             }
         }
-        let scene = self.scene(cover, base, page);
         // 分层合成：z 序在前的玻璃（已经渲染好的）先合成进场景。
         let lower: Vec<LowerLayer> = self
             .inner
@@ -1358,15 +1412,18 @@ impl GlassRuntime {
             })
             .collect();
         // 这条逐像素管线一次要几百毫秒（12 趟高斯 + 逐像素着色），放到后台线程算：
-        // 这一帧先不画玻璃，算完置脏标记、下一帧再画，UI 不会被冻住。
+        // 这一帧先把上一次的位图按当前位置画出来，算完置脏标记、下一帧换成新位图。
         {
             let mut inflight = self.inner.inflight.lock().unwrap_or_else(|e| e.into_inner());
-            if !inflight.insert(key) {
-                return None;
+            if !inflight.insert(id.to_owned()) {
+                // 这块面板已经在后台渲染：不要为拖拽途中的每个新位置再排一个线程，
+                // 先用上一次的位图顶住。
+                return self.last_image(id, scene_gen);
             }
         }
         let runtime = self.clone();
         let config = *config;
+        let panel_id = id.to_owned();
         std::thread::spawn(move || {
             let rendered = render_panel(&scene, panel, &config, &lower, dpr);
             let image = rendered.to_render_image();
@@ -1379,6 +1436,12 @@ impl GlassRuntime {
             }
             runtime
                 .inner
+                .last_images
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(panel_id.clone(), (scene_gen, image.clone()));
+            runtime
+                .inner
                 .rendered
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1388,13 +1451,76 @@ impl GlassRuntime {
                 .inflight
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .remove(&key);
+                .remove(&panel_id);
             runtime
                 .inner
                 .needs_redraw
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         });
-        None
+        self.last_image(id, scene_gen)
+    }
+
+    /// 某块面板最近一次渲染好的位图（拖拽途中位置还没算完时先顶一帧）。
+    ///
+    /// 只认当前场景代号：换歌/换主题之后，上一次场景的位图不能拿来顶帧。
+    fn last_image(&self, id: &str, scene_gen: u64) -> Option<Arc<RenderImage>> {
+        self.inner
+            .last_images
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .filter(|(stored, _)| *stored == scene_gen)
+            .map(|(_, image)| image.clone())
+    }
+
+    /// 面板的采样矩形（含 20px 留白）是否与任一动态区域相交。
+    fn panel_meets_dynamic_region(&self, panel: PanelRect) -> bool {
+        let regions = self
+            .inner
+            .dynamic_regions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        regions.values().any(|region| rects_intersect(*region, panel))
+    }
+
+    /// 是否有别的面板正在被拖动、且它的矩形与 `panel` 相交。
+    ///
+    /// 下层玻璃被拖动会改变它自己的像素，z 序在它之后的玻璃必须跟着重绘，
+    /// 对应参照目标的 `_markGlassAndDependents`（拖动时先清旧足迹、再标新足迹）。
+    /// `panel_bounds` 里存的已经是带拖拽位移的矩形（prepaint 每帧写入），这里不再叠加。
+    fn panel_meets_dragged_panel(&self, id: &str, panel: PanelRect) -> bool {
+        let bounds = self
+            .inner
+            .panel_bounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if bounds.is_empty() {
+            return false;
+        }
+        let interaction = self
+            .inner
+            .interaction
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        bounds.iter().any(|(other, (x, y, width, height))| {
+            if other == id {
+                return false;
+            }
+            let Some(state) = interaction.get(other) else {
+                return false;
+            };
+            // 只有拖拽中的面板才会每帧换像素；停住的面板走缓存。
+            state.drag_origin.is_some()
+                && rects_intersect(
+                    PanelRect {
+                        x: *x,
+                        y: *y,
+                        width: *width,
+                        height: *height,
+                    },
+                    panel,
+                )
+        })
     }
 
     /// 标记场景里是否存在动态内容（对应参照目标的 `data-dynamic` / `<video>`）。
@@ -1496,6 +1622,53 @@ impl GlassRuntime {
         .absolute()
         .inset_0()
     }
+    /// 声明 / 撤销一块动态区域（页面坐标），对应参照目标给兄弟元素加 `data-dynamic`
+    /// 或放一个 `<video>`：与它相交的玻璃每帧重跑着色器，不相交的照旧走缓存。
+    pub fn set_dynamic_region(&self, id: &str, rect: Option<PanelRect>) {
+        let mut regions = self
+            .inner
+            .dynamic_regions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match rect {
+            Some(rect) => {
+                regions.insert(id.to_owned(), rect);
+            }
+            None => {
+                regions.remove(id);
+            }
+        }
+    }
+
+    /// 覆盖在一个动态元素上，把它登记为动态区域（对应参照目标的 `data-dynamic`）。
+    ///
+    /// 用法与 [`Self::artwork_probe`] 相同：作为那个元素的 `child` 加进去，它会绝对定位铺满
+    /// 父元素。参照目标靠 MutationObserver 自动发现 `data-dynamic`，这里由页面显式登记 ——
+    /// 登记之后「哪块玻璃要跟着每帧重绘」由运行时自己按相交关系判断，不需要调用方再置标志。
+    #[allow(dead_code)] // 详情页玻璃背后没有动态内容，这个能力由测试覆盖
+    pub fn dynamic_probe(&self, id: &str) -> impl IntoElement {
+        let runtime = self.clone();
+        let id = id.to_owned();
+        canvas(
+            move |bounds, _window, _cx| {
+                let Some(page) = runtime.page_bounds() else {
+                    return;
+                };
+                runtime.set_dynamic_region(
+                    &id,
+                    Some(PanelRect {
+                        x: f32::from(bounds.origin.x) - page.x,
+                        y: f32::from(bounds.origin.y) - page.y,
+                        width: f32::from(bounds.size.width),
+                        height: f32::from(bounds.size.height),
+                    }),
+                );
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    }
     /// 让所有缓存失效（对应参照目标的 `_globalDirty`：resize、结构变化、上下文恢复）。
     pub fn invalidate(&self) {
         self.inner
@@ -1505,6 +1678,11 @@ impl GlassRuntime {
             .take();
         self.inner
             .panels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.inner
+            .last_images
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
@@ -1719,6 +1897,7 @@ impl GlassRuntime {
                             );
                     }
                     let image = prepaint_runtime.panel_image(
+                        &id,
                         bounds,
                         cover.as_deref(),
                         base,
@@ -1730,8 +1909,12 @@ impl GlassRuntime {
                         (image, morph)
                     },
                     move |bounds, (image, morph), window, _cx| {
-                        // 拖拽中注册窗口级鼠标监听：指针移出面板也收得到位移，
-                        // 对应参照目标的 `setPointerCapture`（GPUI 没有这个 API）。
+                        // 拖拽中注册窗口级鼠标监听：指针移出面板也收得到位移，对应参照目标的
+                        // `setPointerCapture`。gpui-pre 的 Windows 平台在按下时已经调了
+                        // `SetCapture`、抬起时 `ReleaseCapture`（`gpui-pre-windows-0.3.4/src/events.rs:488`），
+                        // 所以拖到窗口外同样收得到；`Window::capture_pointer(HitboxId)` 虽然存在
+                        // （`gpui-pre-0.3.4/src/window.rs:2971`），但公共 API 拿不到 Div 自己的
+                        // HitboxId，这里用窗口级监听做等价实现。
                         if paint_runtime
                             .interaction(&paint_id)
                             .drag_origin
@@ -1782,6 +1965,16 @@ impl GlassRuntime {
                 .absolute()
                 .inset(px(-SHADOW_PAD)),
             );
+        // `floating`：参照目标 hover 时 `cursor: grab`、拖拽时 `cursor: grabbing`。
+        let inner = if floating {
+            inner.cursor(if interaction.drag_origin.is_some() {
+                gpui::CursorStyle::ClosedHand
+            } else {
+                gpui::CursorStyle::OpenHand
+            })
+        } else {
+            inner
+        };
         // 作为背景层铺满父容器（调用方不用再补定位）。
         div().absolute().inset_0().child(inner)
     }
@@ -2413,6 +2606,8 @@ mod tests {
             config_hash: 5,
             reduced: false,
             solid: false,
+            dpr_bits: 1.0f32.to_bits(),
+            scene_gen: 0,
         };
         let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
             ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
@@ -2566,6 +2761,8 @@ mod tests {
             config_hash: 5,
             reduced: false,
             solid: false,
+            dpr_bits: 1.0f32.to_bits(),
+            scene_gen: 0,
         };
         let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
             ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
@@ -2601,6 +2798,90 @@ mod tests {
         assert!(
             runtime.inner.panels.lock().unwrap().is_empty(),
             "封面元素移动后缓存应当自动失效"
+        );
+    }
+
+    /// 换歌（封面变）或换主题（底色变）时场景会重建，面板位图必须跟着作废 ——
+    /// 否则玻璃会一直折射上一首的封面（详情页开着时切歌、自动下一首都会碰到）。
+    #[test]
+    fn a_new_scene_drops_the_panel_bitmaps() {
+        let runtime = GlassRuntime::new();
+        let page = PageBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1280.0,
+            height: 720.0,
+        };
+        let key = PanelKey {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            config_hash: 5,
+            reduced: false,
+            solid: false,
+            dpr_bits: 1.0f32.to_bits(),
+            scene_gen: 0,
+        };
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
+        let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1)));
+        let fill = || {
+            runtime
+                .inner
+                .panels
+                .lock()
+                .unwrap()
+                .insert(key, image.clone());
+            runtime
+                .inner
+                .last_images
+                .lock()
+                .unwrap()
+                .insert("info".to_owned(), (0, image.clone()));
+        };
+
+        // 场景先进缓存，再放一块面板位图。
+        runtime.scene(None, gpui::black(), page);
+        fill();
+        runtime.scene(None, gpui::black(), page);
+        assert_eq!(
+            runtime.inner.panels.lock().unwrap().len(),
+            1,
+            "场景没变时不应当清缓存"
+        );
+
+        // 底色变了（换主题）：场景重建 → 面板位图（含拖拽兜底的那张）一起作废。
+        runtime.scene(None, gpui::white(), page);
+        assert!(
+            runtime.inner.panels.lock().unwrap().is_empty(),
+            "底色变化后应当重算面板"
+        );
+        assert!(runtime.inner.last_images.lock().unwrap().is_empty());
+    }
+
+    /// 在途渲染带的是发起时的场景代号：换歌之后，旧场景的位图不能被拿来顶帧，
+    /// 否则玻璃会一直显示上一首的封面。
+    #[test]
+    fn a_render_from_an_old_scene_is_not_reused() {
+        let runtime = GlassRuntime::new();
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(1, 1, vec![0u8, 0, 0, 255]).expect("1×1");
+        let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1)));
+        runtime
+            .inner
+            .last_images
+            .lock()
+            .unwrap()
+            .insert("info".to_owned(), (7, image));
+
+        assert!(
+            runtime.last_image("info", 7).is_some(),
+            "同一场景代号可以用作兜底"
+        );
+        assert!(
+            runtime.last_image("info", 8).is_none(),
+            "换了场景代号之后不能用旧场景的位图"
         );
     }
 
@@ -2671,6 +2952,166 @@ mod tests {
         println!("背景图：{}", backdrop_path.display());
         println!("面板图：{}", panel_path.display());
         println!("面板放置：{},{}（含 20px 留白）", rect.x - SHADOW_PAD, rect.y - SHADOW_PAD);
+    }
+
+    /// 动态区域只让与它相交的面板每帧重算（参照目标 `_glassHasDynamicContributors`）。
+    #[test]
+    fn dynamic_regions_only_affect_the_panels_they_touch() {
+        let runtime = GlassRuntime::new();
+        let rect = |x: f32, y: f32| PanelRect {
+            x,
+            y,
+            width: 300.0,
+            height: 200.0,
+        };
+        let info = rect(32.0, 400.0);
+        let lyrics = rect(400.0, 40.0);
+
+        assert!(
+            !runtime.panel_meets_dynamic_region(info),
+            "没有动态区域时所有面板都走缓存"
+        );
+
+        // 左栏底部的动态元素只压到歌曲信息面板。
+        runtime.set_dynamic_region("video", Some(rect(40.0, 380.0)));
+        assert!(
+            runtime.panel_meets_dynamic_region(info),
+            "与动态区域相交的面板要每帧重算"
+        );
+        assert!(
+            !runtime.panel_meets_dynamic_region(lyrics),
+            "不相交的面板照旧走缓存"
+        );
+
+        // 紧贴但不相交不算。
+        runtime.set_dynamic_region("video", Some(rect(332.0, 400.0)));
+        assert!(
+            !runtime.panel_meets_dynamic_region(info),
+            "只有紧贴、没有重叠时不算相交"
+        );
+
+        // 撤销声明后恢复缓存。
+        runtime.set_dynamic_region("video", None);
+        assert!(!runtime.panel_meets_dynamic_region(info));
+    }
+
+    /// 下层玻璃被拖动时，与它相交的面板要跟着重绘（参照目标 `_markGlassAndDependents`）。
+    #[test]
+    fn a_dragged_panel_makes_the_panels_it_overlaps_redraw() {
+        let runtime = GlassRuntime::new();
+        let set_bounds = |id: &str, rect: (f32, f32, f32, f32)| {
+            runtime
+                .inner
+                .panel_bounds
+                .lock()
+                .unwrap()
+                .insert(id.to_owned(), rect);
+        };
+        // `panel_bounds` 里存的已经是「布局矩形 + 拖拽位移」（prepaint 每帧写入）。
+        set_bounds("info", (32.0, 400.0, 300.0, 200.0));
+        set_bounds("lyrics", (400.0, 40.0, 300.0, 200.0));
+        let lyrics = PanelRect {
+            x: 400.0,
+            y: 40.0,
+            width: 300.0,
+            height: 200.0,
+        };
+        assert!(
+            !runtime.panel_meets_dragged_panel("lyrics", lyrics),
+            "没有面板在拖动时走缓存"
+        );
+
+        // 拖动中：位置每帧都在变，但还没压到歌词面板。
+        runtime.with_interaction("info", |state| state.drag_origin = Some((0.0, 0.0)));
+        assert!(
+            !runtime.panel_meets_dragged_panel("lyrics", lyrics),
+            "不相交的拖动不影响其它面板"
+        );
+
+        // 歌曲信息面板被拖到歌词面板上方：两块面板相交，歌词面板要重绘。
+        set_bounds("info", (452.0, 220.0, 300.0, 200.0));
+        assert!(
+            runtime.panel_meets_dragged_panel("lyrics", lyrics),
+            "与正在拖动的下层玻璃相交时要重绘"
+        );
+        assert!(
+            !runtime.panel_meets_dragged_panel(
+                "info",
+                PanelRect {
+                    x: 452.0,
+                    y: 220.0,
+                    width: 300.0,
+                    height: 200.0,
+                }
+            ),
+            "面板不因为自己正在被拖动而重绘"
+        );
+
+        // 松手后恢复缓存。
+        runtime.with_interaction("info", |state| state.drag_origin = None);
+        assert!(!runtime.panel_meets_dragged_panel("lyrics", lyrics));
+    }
+
+    /// 模糊耗时实测（差异清单「响应时序」一节的数字来源）：
+    /// `cargo test --release -- --ignored bench_blur_timing --nocapture`。
+    #[test]
+    #[ignore = "性能实测用"]
+    fn bench_blur_timing() {
+        // 920×660 = 880×620 的面板加上四周 20px 留白，与详情页歌词面板同量级。
+        let width = 920usize;
+        let height = 660usize;
+        let spread = 1.25f32;
+        let mut buffer = vec![0.0f32; width * height * 3];
+        for (i, value) in buffer.iter_mut().enumerate() {
+            *value = ((i % 251) as f32) / 251.0;
+        }
+        let mut warm = buffer.clone();
+        blur_exact(&mut warm, width, height, spread);
+        for round in 0..3 {
+            let mut data = buffer.clone();
+            let started = std::time::Instant::now();
+            blur_exact(&mut data, width, height, spread);
+            println!(
+                "blur_exact（12 趟）第{}次: {:.1} ms",
+                round + 1,
+                started.elapsed().as_secs_f32() * 1000.0
+            );
+        }
+        // 单趟横向（内部按行并行）
+        let mut scratch = vec![0.0f32; buffer.len()];
+        let started = std::time::Instant::now();
+        blur_rows(&buffer, &mut scratch, width, height, spread);
+        let parallel_ms = started.elapsed().as_secs_f32() * 1000.0;
+        println!("blur_rows 单趟（按行并行）: {parallel_ms:.2} ms");
+        // 单线程对照：同样的算式串行跑一遍，用来看并行已经拿到多少倍。
+        let started = std::time::Instant::now();
+        let mut out = vec![0.0f32; buffer.len()];
+        for y in 0..height {
+            for x in 0..width {
+                let row = y * width;
+                let mut sum = [0.0f32; 3];
+                for channel in 0..3 {
+                    sum[channel] = buffer[(row + x) * 3 + channel] * BLUR_TAPS[0];
+                }
+                for tap in 1..BLUR_TAPS.len() {
+                    let offset = spread * tap as f32;
+                    let positive = sample_row(&buffer, row, width, x as f32 + offset);
+                    let negative = sample_row(&buffer, row, width, x as f32 - offset);
+                    for channel in 0..3 {
+                        sum[channel] += (positive[channel] + negative[channel]) * BLUR_TAPS[tap];
+                    }
+                }
+                out[(row + x) * 3] = sum[0];
+                out[(row + x) * 3 + 1] = sum[1];
+                out[(row + x) * 3 + 2] = sum[2];
+            }
+        }
+        let serial_ms = started.elapsed().as_secs_f32() * 1000.0;
+        println!(
+            "同一趟（单线程）: {serial_ms:.1} ms，并行加速比 {:.2}×",
+            serial_ms / parallel_ms
+        );
+        std::hint::black_box(&out);
     }
 
     /// 封面缓存里最新的一张 `-320.jpg`。
