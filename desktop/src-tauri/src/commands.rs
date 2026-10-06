@@ -9,9 +9,12 @@ use wcmusic_core::{OnlineSearchChannel, PlatformPlaylist, PlatformRanking, Track
 
 use crate::online;
 use crate::playback::{self, PlaybackSnapshot};
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, SavedPlaylist, SavedTrack};
 use crate::source;
 use crate::state::AppState;
+
+/// 收藏歌曲的四个文件夹，与旧 GPUI 端的 `PLAYLIST_FOLDERS` 一致。
+const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -152,4 +155,53 @@ pub fn track_artwork(
 ) -> Result<Option<String>, String> {
     let use_proxy = state.settings().use_network_proxy;
     playback::artwork_data_url(&track, use_proxy)
+}
+
+/// 收藏歌曲的四个文件夹名（前端用它渲染「爱听的」分组）。
+#[tauri::command]
+pub fn playlist_folders() -> Vec<&'static str> {
+    PLAYLIST_FOLDERS.to_vec()
+}
+
+/// 收藏 / 取消收藏一个平台歌单，返回落盘后的整份设置。
+#[tauri::command]
+pub fn toggle_saved_playlist(
+    playlist: PlatformPlaylist,
+    state: State<'_, AppState>,
+) -> AppSettings {
+    state.update_settings(|settings| {
+        match settings
+            .saved_playlists
+            .iter()
+            .position(|saved| saved.matches(&playlist))
+        {
+            Some(index) => {
+                settings.saved_playlists.remove(index);
+            }
+            None => settings.saved_playlists.push(SavedPlaylist::new(playlist)),
+        }
+    })
+}
+
+/// 收藏 / 取消收藏一首歌到指定文件夹，返回落盘后的整份设置。
+#[tauri::command]
+pub fn toggle_saved_track(
+    track: Track,
+    folder: String,
+    state: State<'_, AppState>,
+) -> AppSettings {
+    state.update_settings(|settings| {
+        match settings
+            .saved_tracks
+            .iter()
+            .position(|saved| saved.matches(&folder, &track))
+        {
+            Some(index) => {
+                settings.saved_tracks.remove(index);
+            }
+            None => settings
+                .saved_tracks
+                .push(SavedTrack::new(folder, track)),
+        }
+    })
 }

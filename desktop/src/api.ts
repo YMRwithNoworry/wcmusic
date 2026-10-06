@@ -47,3 +47,12 @@ export const player = {
   setSpatial: (enabled: boolean) => invoke<void>("set_spatial_audio", { enabled }),
   artwork: (track: Track) => invoke<string | null>("track_artwork", { track }),
 };
+
+/// 收藏：歌单与歌曲（都写回 settings.json）。
+export const favorites = {
+  folders: () => invoke<string[]>("playlist_folders"),
+  togglePlaylist: (playlist: PlatformPlaylist) =>
+    invoke<AppSettings>("toggle_saved_playlist", { playlist }),
+  toggleTrack: (track: Track, folder: string) =>
+    invoke<AppSettings>("toggle_saved_track", { track, folder }),
+};

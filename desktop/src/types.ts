@@ -39,7 +39,6 @@ export interface PlatformPlaylist {
 
 export interface SavedPlaylist {
   playlist: PlatformPlaylist;
-  folder: string;
 }
 
 export interface SavedTrack {

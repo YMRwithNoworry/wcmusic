@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 
 import { api } from "./api";
 import PlayerBar from "./components/PlayerBar";
+import HomePage from "./pages/HomePage";
+import PlaylistsPage from "./pages/PlaylistsPage";
+import RankingsPage from "./pages/RankingsPage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import { PlayerProvider } from "./player-context";
@@ -21,8 +24,25 @@ function Placeholder({ tab }: { tab: Tab }) {
   );
 }
 
+function page(tab: Tab) {
+  switch (tab) {
+    case "主页":
+      return <HomePage />;
+    case "搜索":
+      return <SearchPage />;
+    case "排行榜":
+      return <RankingsPage />;
+    case "歌单":
+      return <PlaylistsPage />;
+    case "设置":
+      return <SettingsPage />;
+    default:
+      return <Placeholder tab={tab} />;
+  }
+}
+
 function Shell() {
-  const [tab, setTab] = useState<Tab>("搜索");
+  const [tab, setTab] = useState<Tab>("主页");
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   // 启动时拉一次应用信息，同时验证前后端 IPC 是否打通。
@@ -49,15 +69,7 @@ function Shell() {
           {info ? `${info.name} ${info.version}` : "连接后端中…"}
         </div>
       </aside>
-      <main className="content">
-        {tab === "搜索" ? (
-          <SearchPage />
-        ) : tab === "设置" ? (
-          <SettingsPage />
-        ) : (
-          <Placeholder tab={tab} />
-        )}
-      </main>
+      <main className="content">{page(tab)}</main>
       <PlayerBar />
     </div>
   );

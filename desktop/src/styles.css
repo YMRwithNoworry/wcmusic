@@ -383,3 +383,157 @@ input[type="number"] {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* 首页 / 榜单 / 歌单 */
+.hero {
+  margin-bottom: 18px;
+}
+
+.hero-kicker {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.hero h1 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 10px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.link {
+  background: none;
+  border: 0;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.playlist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+}
+
+.playlist-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.playlist-card:hover {
+  border-color: var(--primary);
+}
+
+.playlist-card.active {
+  border-color: var(--primary);
+}
+
+.playlist-cover {
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+  margin-bottom: 8px;
+}
+
+.playlist-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playlist-name {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playlist-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playlist-card .save,
+.track .save {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.playlist-card:hover .save,
+.track:hover .save {
+  opacity: 1;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.chip {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--fg);
+}
+
+.chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.track-list.with-save .track {
+  grid-template-columns: 2fr 1.2fr 1.2fr 56px;
+}
+
+.track .save {
+  position: static;
+  opacity: 1;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.track .save:hover {
+  color: var(--fg);
+}
