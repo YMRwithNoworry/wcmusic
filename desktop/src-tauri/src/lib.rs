@@ -19,11 +19,20 @@ mod state;
 mod tray;
 mod update;
 
+use tauri::{Emitter, Manager};
+
 pub fn run() {
     tauri::Builder::default()
         .manage(state::AppState::load())
         .setup(|app| {
             tray::setup(app)?;
+            // 全局快捷键：收到动作就发给前端，由前端执行（播放队列与状态都在前端）。
+            let handle = app.handle().clone();
+            if let Some(service) = hotkey::HotKeyService::start(move |action| {
+                let _ = handle.emit("wcmusic://hotkey", action);
+            }) {
+                app.state::<state::AppState>().install_hotkeys(service);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -63,7 +72,10 @@ pub fn run() {
             commands::remove_source,
             commands::select_source,
             commands::check_update,
-            commands::open_external
+            commands::open_external,
+            commands::hotkey_issues,
+            commands::hotkey_list,
+            commands::toggle_main_window
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");

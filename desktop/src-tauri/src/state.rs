@@ -2,6 +2,7 @@
 
 use std::sync::Mutex;
 
+use crate::hotkey::{HotKeyAction, HotKeyService};
 use crate::playback::Playback;
 use crate::settings::AppSettings;
 use crate::source::SourceStore;
@@ -11,6 +12,8 @@ pub struct AppState {
     settings: Mutex<AppSettings>,
     playback: Mutex<Playback>,
     sources: Mutex<SourceStore>,
+    /// 全局快捷键服务；启动失败（非 Windows 等）时为 `None`。
+    hotkeys: Mutex<Option<HotKeyService>>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             settings: Mutex::new(settings),
             playback: Mutex::new(playback),
             sources: Mutex::new(SourceStore::new()),
+            hotkeys: Mutex::new(None),
         }
     }
 
@@ -62,5 +66,41 @@ impl AppState {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         action(&mut guard)
+    }
+
+    /// 装上快捷键服务（`setup` 里拿到 `AppHandle` 之后调用），并按设置注册一次。
+    pub fn install_hotkeys(&self, service: HotKeyService) {
+        {
+            let mut slot = self
+                .hotkeys
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            *slot = Some(service);
+        }
+        self.apply_hotkeys();
+    }
+
+    /// 按当前设置重新注册全局快捷键（设置改动后调用）。
+    pub fn apply_hotkeys(&self) {
+        let settings = self.settings();
+        let bindings = crate::hotkey::bindings_from(&settings.hotkeys);
+        let slot = self
+            .hotkeys
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(service) = slot.as_ref() {
+            service.apply(bindings);
+        }
+    }
+
+    /// 最近一次注册失败的动作与原因（设置页展示）。
+    pub fn hotkey_errors(&self) -> Vec<(HotKeyAction, String)> {
+        let slot = self
+            .hotkeys
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        slot.as_ref()
+            .map(|service| service.errors())
+            .unwrap_or_default()
     }
 }

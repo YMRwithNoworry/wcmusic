@@ -9,7 +9,9 @@ import {
   type ReactNode,
 } from "react";
 
-import { player } from "./api";
+import { listen } from "@tauri-apps/api/event";
+
+import { desktopWindow, player } from "./api";
 import { useSettings } from "./settings-context";
 import type { PlaybackSnapshot, Track } from "./types";
 
@@ -154,6 +156,67 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     advanced.current = key;
     void step(1, true);
   }, [snapshot?.finished, snapshot?.current, step]);
+
+  // 全局快捷键：后端用 Win32 注册，动作以事件发到前端，由这里执行。
+  const lastVolume = useRef(0.8);
+  if ((snapshot?.volume ?? 0) > 0) {
+    lastVolume.current = snapshot?.volume ?? lastVolume.current;
+  }
+  const hotkeyHandler = useRef<(action: string) => void>(() => {});
+  hotkeyHandler.current = (action: string) => {
+    const volume = snapshot?.volume ?? 1;
+    const position = snapshot?.position_ms ?? 0;
+    switch (action) {
+      case "previous":
+        void step(-1, false);
+        break;
+      case "next":
+        void step(1, false);
+        break;
+      case "toggle_play":
+        void player.toggle().then(refresh);
+        break;
+      case "volume_up":
+        void player.setVolume(Math.min(1, volume + 0.05)).then(refresh);
+        break;
+      case "volume_down":
+        void player.setVolume(Math.max(0, volume - 0.05)).then(refresh);
+        break;
+      case "mute":
+        void player.setVolume(volume > 0 ? 0 : lastVolume.current).then(refresh);
+        break;
+      case "seek_forward":
+        void player.seek(position + 5000).then(refresh);
+        break;
+      case "seek_backward":
+        void player.seek(Math.max(0, position - 5000)).then(refresh);
+        break;
+      case "toggle_window":
+        void desktopWindow.toggleMain();
+        break;
+      default:
+        // 「显示/隐藏桌面歌词」等桌面歌词窗口做出来之后再接。
+        break;
+    }
+  };
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void listen<string>("wcmusic://hotkey", (event) => {
+      hotkeyHandler.current(event.payload);
+    }).then((stop) => {
+      if (disposed) {
+        stop();
+      } else {
+        unlisten = stop;
+      }
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const value = useMemo<PlayerContextValue>(
     () => ({

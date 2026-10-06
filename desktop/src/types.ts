@@ -148,3 +148,16 @@ export interface UpdateCheck {
   latest_version: string | null;
   release_url: string | null;
 }
+
+export interface HotKeyIssue {
+  action: string;
+  label: string;
+  message: string;
+}
+
+export interface HotKeyView {
+  action: string;
+  label: string;
+  binding: string;
+  display: string;
+}

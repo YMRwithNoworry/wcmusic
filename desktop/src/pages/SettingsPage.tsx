@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { app } from "../api";
+import { app, hotkeys } from "../api";
 import { useSettings } from "../settings-context";
 import type {
+  HotKeyIssue,
+  HotKeyView,
   LyricsAlignment,
   LyricsAnimation,
   PlaybackMode,
@@ -59,6 +61,22 @@ export default function SettingsPage() {
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [bindings, setBindings] = useState<HotKeyView[]>([]);
+  const [issues, setIssues] = useState<HotKeyIssue[]>([]);
+
+  const loadHotkeys = useCallback(async () => {
+    try {
+      setBindings(await hotkeys.list());
+      setIssues(await hotkeys.issues());
+    } catch {
+      // 后端还没起来时忽略。
+    }
+  }, []);
+
+  // 开关变化后后端会重新注册，这里跟着刷新绑定与失败信息。
+  useEffect(() => {
+    void loadHotkeys();
+  }, [loadHotkeys, settings?.hotkeys.enabled]);
 
   if (!settings) {
     return <p className="hint">正在读取设置…</p>;
@@ -207,6 +225,26 @@ export default function SettingsPage() {
             onChange={(use_network_proxy) => void update({ use_network_proxy })}
           />
         </Row>
+      </section>
+
+      <section>
+        <h2>全局快捷键</h2>
+        <Row label="启用全局快捷键" hint="关闭后不再抢占其它程序的按键">
+          <Switch
+            value={settings.hotkeys.enabled}
+            onChange={(enabled) => void update({ hotkeys: { ...settings.hotkeys, enabled } })}
+          />
+        </Row>
+        {bindings.map((item) => (
+          <Row key={item.action} label={item.label}>
+            <span className="hint">{item.display}</span>
+          </Row>
+        ))}
+        {issues.map((issue) => (
+          <p className="error" key={`${issue.action}-${issue.message}`}>
+            {issue.label}：{issue.message}
+          </p>
+        ))}
       </section>
 
       <section>

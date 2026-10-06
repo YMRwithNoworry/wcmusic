@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   AppSettings,
+  HotKeyIssue,
+  HotKeyView,
   LyricLine,
   LyricsPresets,
   OnlineSearchChannel,
@@ -80,4 +82,15 @@ export const sources = {
 export const app = {
   checkUpdate: () => invoke<UpdateCheck>("check_update"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
+};
+
+/// 全局快捷键。
+export const hotkeys = {
+  list: () => invoke<HotKeyView[]>("hotkey_list"),
+  issues: () => invoke<HotKeyIssue[]>("hotkey_issues"),
+};
+
+/// 主窗口显隐（快捷键动作）。
+export const desktopWindow = {
+  toggleMain: () => invoke<boolean>("toggle_main_window"),
 };

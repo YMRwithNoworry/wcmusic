@@ -32,5 +32,15 @@ regex = "1.11"
 # 导入音源时的原生文件选择框（与旧桌面端同一套 rfd）。
 rfd = "0.15.4"
 
+# 全局快捷键用 Win32 的 RegisterHotKey + 消息窗口。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [patch.crates-io]
 rquickjs-sys = { path = "../../native/vendor/rquickjs-sys" }

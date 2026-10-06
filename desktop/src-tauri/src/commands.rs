@@ -42,7 +42,10 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 /// 整份覆盖保存设置（前端把改完的整份设置传回来）。
 #[tauri::command]
 pub fn save_settings(state: State<'_, AppState>, settings: AppSettings) -> AppSettings {
-    state.update_settings(|current| *current = settings)
+    let saved = state.update_settings(|current| *current = settings);
+    // 快捷键可能被改了：按新设置重新注册一次。
+    state.apply_hotkeys();
+    saved
 }
 
 /// 关键字搜索（每个平台最多 `limit` 条）。
@@ -295,4 +298,68 @@ pub fn open_external(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("打开链接失败：{error}"))
+}
+
+/// 某个动作的快捷键注册失败信息。
+#[derive(Serialize)]
+pub struct HotKeyIssue {
+    action: crate::hotkey::HotKeyAction,
+    label: String,
+    message: String,
+}
+
+/// 最近一次注册失败的快捷键（设置页用来提示「已被其它程序占用」等）。
+#[tauri::command]
+pub fn hotkey_issues(state: State<'_, AppState>) -> Vec<HotKeyIssue> {
+    state
+        .hotkey_errors()
+        .into_iter()
+        .map(|(action, message)| HotKeyIssue {
+            action,
+            label: action.label().to_owned(),
+            message,
+        })
+        .collect()
+}
+
+/// 显示 / 隐藏主界面（快捷键「显示/隐藏主界面」用）。
+#[tauri::command]
+pub fn toggle_main_window(window: tauri::WebviewWindow) -> Result<bool, String> {
+    let visible = window.is_visible().map_err(|error| error.to_string())?;
+    if visible {
+        window.hide().map_err(|error| error.to_string())?;
+    } else {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    Ok(!visible)
+}
+
+/// 一条快捷键绑定（设置页展示用）。
+#[derive(Serialize)]
+pub struct HotKeyView {
+    action: crate::hotkey::HotKeyAction,
+    label: &'static str,
+    binding: String,
+    /// 给人看的写法（例如 `Ctrl+Alt+←`）。
+    display: String,
+}
+
+/// 当前设置里的十个全局快捷键。
+#[tauri::command]
+pub fn hotkey_list(state: State<'_, AppState>) -> Vec<HotKeyView> {
+    let settings = state.settings();
+    crate::hotkey::HotKeyAction::ALL
+        .into_iter()
+        .map(|action| {
+            let binding = settings.hotkeys.binding(action).to_owned();
+            HotKeyView {
+                action,
+                label: action.label(),
+                display: crate::hotkey::binding_label(&binding),
+                binding,
+            }
+        })
+        .collect()
 }
