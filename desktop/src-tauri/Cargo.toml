@@ -14,7 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# 托盘用内置的 tray-icon；图标解码要 image-png / image-ico。
+tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 曲库索引、SQLite、音源 QuickJS 运行时、洛雪备份/M3U 解析都复用共享核心。

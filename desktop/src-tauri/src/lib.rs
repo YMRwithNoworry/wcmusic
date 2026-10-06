@@ -5,7 +5,7 @@
 //!
 //! 模块：`audio` 播放器与下载、`lyrics` 歌词与外观、`settings` 设置持久化、
 //! `hotkey` 快捷键、`source` 音源脚本、`online` 在线内容、`playback` 播放控制、
-//! `state` 运行期状态、`commands` 命令面。
+//! `update` 更新检查、`tray` 托盘、`state` 运行期状态、`commands` 命令面。
 
 mod audio;
 mod commands;
@@ -16,11 +16,23 @@ mod playback;
 mod settings;
 mod source;
 mod state;
+mod tray;
 mod update;
 
 pub fn run() {
     tauri::Builder::default()
         .manage(state::AppState::load())
+        .setup(|app| {
+            tray::setup(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 点关闭按钮收进托盘而不是退出：退出走托盘菜单。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::get_settings,
