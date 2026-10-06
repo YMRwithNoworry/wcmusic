@@ -1,18 +1,31 @@
 # WCMusic
 
-WCMusic 是面向 Windows 与 Android 的 GPUI + Rust 音乐播放器。Windows 桌面界面使用 GPUI 原生渲染，Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验；Android 继续使用 Flutter 客户端。
+WCMusic 是面向 Windows 与 Android 的音乐播放器。Windows 桌面端正在从 GPUI 迁移到 **Tauri 2 + React**，Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验；Android 继续使用 Flutter 客户端。
 
-## GPUI 桌面客户端
+## 桌面客户端
 
-Windows 桌面客户端位于 `native/wcmusic_ui`，使用 `gpui-kit 0.6`（GPUI + GPUI Component）构建。启动桌面界面：
+Windows 桌面端有两套实现，功能对齐前并存：
+
+**新端：Tauri 2 + React（`desktop/`，后续改动都落在这里）**
+
+Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript。已迁移：在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
+
+```text
+cd desktop && npm install                 # 首次拉前端依赖
+WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu
+```
+
+产物在 `desktop/src-tauri/target/release/wcmusic-desktop.exe`。前端 `dist/` 是编译期嵌进 exe 的，改完前端必须重新构建。
+
+**旧端：GPUI（`native/wcmusic_ui`，保留到功能对齐）**
+
+使用 `gpui-kit 0.6`（GPUI + GPUI Component）构建。启动桌面界面：
 
 ```text
 cargo run --manifest-path native/wcmusic_ui/Cargo.toml
 ```
 
-生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。如果本机并行编译时内存紧张，可通过 `WCMUSIC_BUILD_JOBS=1` 控制 Cargo 并行任务数。
-
-GPUI 客户端使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等组件重做了统一侧边导航、搜索、榜单、歌单、音源设置以及底部播放控制栏，并保留原有搜索、播放、榜单、歌单与音源管理功能。它通过 `wcmusic_core::LibraryIndex` 使用同一套 Rust 曲库检索能力。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
+生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。如果本机并行编译时内存紧张，可通过 `WCMUSIC_BUILD_JOBS=1` 控制 Cargo 并行任务数。它使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等组件实现统一侧边导航、搜索、榜单、歌单、音源设置以及底部播放控制栏。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
 
 ## 桌面歌词
 
@@ -87,7 +100,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows GPUI 发布可执行文件为 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。Android 发布仍使用上面的 Flutter APK 命令。
+Windows 桌面端发布可执行文件：新端 `desktop/src-tauri/target/release/wcmusic-desktop.exe`（`nu build_desktop.nu`），旧端 `native/wcmusic_ui/target/release/wcmusic_ui.exe`（`nu build_gpui.nu`）。Android 发布仍使用上面的 Flutter APK 命令。
 
 ## 目录
 

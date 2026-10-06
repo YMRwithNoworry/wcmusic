@@ -17,7 +17,7 @@ jdk在这里D:\MC\jdk
 
 # WCMusic 项目说明（Agent 上下文）
 
-面向 Windows 与 Android 的音乐播放器。两个客户端共用同一套 Rust 核心：Windows 桌面端用 Rust + GPUI 原生渲染，Android 端继续用 Flutter。
+面向 Windows 与 Android 的音乐播放器。两个客户端共用同一套 Rust 核心：Windows 桌面端正在从 Rust + GPUI 迁移到 **Tauri 2 + React**（新端在 `desktop/`，旧的 `native/wcmusic_ui` 在功能对齐前保留），Android 端继续用 Flutter。
 
 ## 架构与目录
 
@@ -27,6 +27,9 @@ jdk在这里D:\MC\jdk
 | `native/wcmusic_core/src/ffi.rs` | 给 Dart/Android 的 C ABI（`wcmusic_*` 前缀，返回 JSON 字符串，Dart 侧用 `wcmusic_string_free` 释放） |
 | `native/wcmusic_ui` | Windows 桌面端（gpui-kit 0.6）。`main.rs` 是 7000+ 行的视图层单文件；`lyrics.rs`/`lyrics_window.rs` 桌面歌词；`settings.rs` 设置持久化；`audio_player.rs`、`tray.rs`、`hotkey.rs`、`smooth_scroll.rs`、`picker.rs` |
 | `native/wcmusic_ui/src/app_icon.rs` | 窗口/托盘图标的按尺寸装载（`LoadImageW` + `WM_SETICON`）与窗口标题常量 |
+| `desktop` | **新的 Windows 桌面端（Tauri 2 + React）**：`src/` 是 React 前端（Vite + TS），`src-tauri/` 是 Rust 后端（复用 `native/wcmusic_core`）。后端模块：`commands`（命令面）、`state`、`playback`、`audio`、`lyrics`、`settings`、`hotkey`、`source`、`online`、`update`、`tray` |
+| `desktop/src-tauri/tauri.conf.json` | 窗口与打包配置：无边框主窗口 + 置顶透明的桌面歌词窗口；能力清单在 `capabilities/` |
+| `build_desktop.nu` | 构建 Tauri 桌面端（先 `npm run build` 出 `dist/`，再 `cargo build --release` 把前端嵌进 exe） |
 | `native/tools/icon_gen` | 由 `assets/icons/app_icon.png` 生成多尺寸 ICO（去白底、裁边、小尺寸特写版），产物同步到 `assets/icons/` 与 `windows/runner/resources/` |
 | `native/vendor/rquickjs-sys` | `[patch.crates-io]` 里的本地 rquickjs-sys |
 | `lib/domain` | Flutter 领域模型与 Repository 接口 |
@@ -40,6 +43,7 @@ jdk在这里D:\MC\jdk
 
 - Flutter 3.44.8：`D:/tools/flutter/bin/flutter.bat`（**不在 PATH**，必须写全路径）
 - Rust 1.98：`C:/Users/Administrator/.cargo/bin/cargo.exe`（同样不在 PATH），默认 host 为 `x86_64-pc-windows-gnu`
+- Node 26 / npm 11：`C:/Program Files/nodejs`（桌面端前端依赖装在 `desktop/`，先 `npm install`）
 - JDK 在 `D:/MC/jdk`：默认 `graalvm-25.2.4+7.1`，Android 打包必须切到 `jdk-21.0.2`
 - Android SDK `D:/tools/android-sdk`，NDK `28.2.13676358`
 - 国内镜像：`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`、`PUB_HOSTED_URL=https://pub.flutter-io.cn`
@@ -51,7 +55,11 @@ jdk在这里D:\MC\jdk
 D:/tools/flutter/bin/flutter.bat analyze   # 当前 No issues found
 D:/tools/flutter/bin/flutter.bat test
 C:/Users/Administrator/.cargo/bin/cargo.exe test --manifest-path native/wcmusic_core/Cargo.toml
-nu build_gpui.nu                           # 等价于 cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+nu build_gpui.nu                           # 旧 GPUI 桌面端：cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu   # 新 Tauri 桌面端：先 vite build 出 dist/，再 cargo build --release（把前端嵌进 exe）
+cd desktop && npm install && cd ..         # 首次拉前端依赖
+cd desktop && npm run build && cd ..       # 只出前端 dist/（改完前端必须重跑构建，dist 是编译期嵌进 exe 的）
+C:/Users/Administrator/.cargo/bin/cargo.exe +stable-x86_64-pc-windows-msvc test --manifest-path desktop/src-tauri/Cargo.toml --lib   # Tauri 后端单测
 nu build_android.nu                        # Flutter APK + cargo ndk 产物
 cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/icon_gen/Cargo.toml -- --preview native/tools/icon_gen/target/preview   # 重新生成多尺寸 ICO
 ```
@@ -60,7 +68,9 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 
 - `rquickjs-sys` 的构建脚本要调用 C 编译器（MSVC + Windows SDK）。`native/wcmusic_core/target` 和 `native/wcmusic_ui/target` 里的既有产物由 `stable-x86_64-pc-windows-msvc` 工具链生成；本机目前只有 gnu 工具链且没有 gcc/cl.exe，`cargo check` 会停在 `cc-rs: failed to find tool "gcc.exe"` —— 属环境缺工具链，不是代码问题，不要为此改代码。
 - `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
-- Windows 侧只改 Flutter 代码不会影响桌面客户端，桌面 UI 的改动要落在 `native/wcmusic_ui`。
+- Windows 侧只改 Flutter 代码不会影响桌面客户端；桌面端现在有**两套**实现：`native/wcmusic_ui`（旧 GPUI，功能对齐前保留，不再加新功能）与 `desktop`（新 Tauri 2 + React，后续改动都落在这里）。
+- 新桌面端的构建链：`desktop/src-tauri` 是一个独立 cargo 包（自带 `[patch.crates-io] rquickjs-sys`，路径相对它自己），必须用 MSVC 工具链；前端产物 `desktop/dist` 在 `cargo build` 时嵌入 exe，所以**改完前端要重新构建**。
+- 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。
 - 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.3）。
 - **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步 `Cargo.toml` / `Cargo.lock` / `pubspec.yaml`）→ 构建 Windows 包（必成）与 Android 包（尽力而为，失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。
 - 安装包发布在**源码仓库** `YMRwithNoworry/wcmusic` 的 Release 里（历史版本仍留在 `YMRwithNoworry/wcmusic-releases`），资产名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`；应用内更新检测（`native/wcmusic_ui/src/update.rs`）查的就是源码仓库的 Release。
