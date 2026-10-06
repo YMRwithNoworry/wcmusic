@@ -3,7 +3,6 @@
 mod app_icon;
 mod audio_effects;
 mod audio_player;
-mod glass;
 mod hotkey;
 mod lyrics;
 mod lyrics_window;
@@ -604,8 +603,6 @@ struct MusicApp {
     capturing_hotkey: Option<HotKeyAction>,
     /// 捕获快捷键用的全局按键观察者。
     hotkey_observer: Option<Subscription>,
-    /// 详情页液态玻璃的渲染缓存（背景纹理 + 每块面板的位图）。
-    glass: glass::GlassRuntime,
     use_network_proxy: bool,
     rows: Vec<TrackRow>,
     rankings: Vec<PlatformRanking>,
@@ -723,7 +720,6 @@ impl MusicApp {
             hotkey_event_slot: Arc::new(Mutex::new(None)),
             capturing_hotkey: None,
             hotkey_observer: None,
-            glass: glass::GlassRuntime::new(),
             use_network_proxy: settings.use_network_proxy,
             rows: Vec::new(),
             rankings: Vec::new(),
@@ -2728,8 +2724,6 @@ impl MusicApp {
 
     fn close_now_playing(&mut self, cx: &mut Context<Self>) {
         self.show_now_playing = false;
-        // 离开详情页时释放玻璃的纹理缓存（对应参照目标的 `_globalDirty`）。
-        self.glass.invalidate();
         cx.notify();
     }
 
@@ -3618,33 +3612,45 @@ impl MusicApp {
         let title = row.title.clone();
         let artist = row.artist.clone();
         let album = row.album.clone();
-        // 液态玻璃：整页背景是封面本身，两块面板按参考实现的 FS_GLASS 逐像素折射它。
-        // 没有本地封面时回退到纯色背景，玻璃面板仍然正常渲染。
+        // 整页背景是封面本身；没有本地封面时回退到纯色背景。
         let cover = row
             .artwork_path
             .as_deref()
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_file());
-        // 换歌时让玻璃「化」一下：形状弹簧被踢一脚，面板先缩后弹。
-        self.glass.pulse_on_track_change(&row.track.id);
-        // 无障碍：系统关掉「透明效果」时切成更不透明、更少模糊的形态。
-        let reduced = glass::GlassRuntime::reduced_transparency();
-        let lens = glass::LensConfig::for_theme(cx.theme().is_dark(), reduced);
         let shade = hsla(0.0, 0.0, 0.0, 1.0);
-        // 封面与两块玻璃面板共用同一个圆角半径，四角一致、不再出现直角。
+        // 封面圆角与卡片一致，四角不再出现直角。
         let artwork = div()
             .size(px(280.0))
-            .rounded(px(glass::PANEL_RADIUS))
+            .rounded(px(22.0))
             .overflow_hidden()
-            .child(track_artwork_sized(row, 280.0, p))
-            // 把封面登记进玻璃背后的场景：拖拽玻璃到它上面时要能折射到。
-            .child(self.glass.artwork_probe(glass::PANEL_RADIUS));
+            .child(track_artwork_sized(row, 280.0, p));
 
         div()
             .size_full()
             .relative()
-            // 铺满整页的毛玻璃背景：绝对定位，直接铺满根节点，不受内容内边距影响。
-            .child(self.glass.backdrop(cover.clone(), p.background, shade))
+            // 铺满整页的背景：底色 → 封面（cover 铺满）→ 压暗渐变。
+            // 绝对定位，直接铺满根节点，不受内容内边距影响。
+            .child({
+                let mut layer = div().absolute().inset_0().bg(p.background);
+                if let Some(path) = cover.clone() {
+                    layer = layer.child(
+                        img(path)
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover)
+                            .opacity(0.85),
+                    );
+                }
+                layer.child(
+                    div().absolute().inset_0().bg(linear_gradient(
+                        180.0,
+                        linear_color_stop(shade.opacity(0.34), 0.0),
+                        linear_color_stop(shade.opacity(0.66), 1.0),
+                    )),
+                )
+            })
             .child(
                 div()
                     .size_full()
@@ -3684,33 +3690,19 @@ impl MusicApp {
                                 .child(artwork),
                         )
                         .child(
-                            // 歌曲信息放进一块玻璃卡片：玻璃作为背景层，文字叠在上面。
-                            div()
-                                .relative()
+                            // 歌曲信息卡片：标题、歌手与专辑。
+                            v_flex()
+                                .gap_2()
+                                .p(px(16.0))
                                 .child(
-                                    self.glass.panel(
-                                        "now-playing-info",
-                                        cover.clone(),
-                                        lens,
-                                        reduced,
-                                        p.background,
-                                        self.glass.interaction("now-playing-info"),
-                                    ),
+                                    div()
+                                        .text_size(px(23.0))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(p.foreground)
+                                        .child(title),
                                 )
-                                .child(
-                                    v_flex()
-                                        .gap_2()
-                                        .p(px(16.0))
-                                        .child(
-                                            div()
-                                                .text_size(px(23.0))
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(p.foreground)
-                                                .child(title),
-                                        )
-                                        .child(div().text_sm().text_color(p.muted).child(artist))
-                                        .child(div().text_xs().text_color(p.muted).child(album)),
-                                ),
+                                .child(div().text_sm().text_color(p.muted).child(artist))
+                                .child(div().text_xs().text_color(p.muted).child(album)),
                         ),
                 )
                 .child(
@@ -3718,19 +3710,7 @@ impl MusicApp {
                         .flex_1()
                         .min_w_0()
                         .h_full()
-                        .relative()
-                        // 歌词面板：玻璃只做背景层，歌词本体叠在上面，
-                        // 原有的滚动、逐字填充与点击跳转都不受影响。
-                        .child(
-                            self.glass.panel(
-                                "now-playing-lyrics",
-                                cover,
-                                lens,
-                                reduced,
-                                p.background,
-                                self.glass.interaction("now-playing-lyrics"),
-                            ),
-                        )
+                        // 歌词本体：原有的滚动、逐字填充与点击跳转都不受影响。
                         .child(
                             div()
                                 .size_full()
@@ -6612,14 +6592,6 @@ impl Render for MusicApp {
         self.sync_player_sliders(window, cx);
         // 歌单封面要先下载到本地才能渲染（GPUI 没有 http client）。
         self.ensure_playlist_covers(cx);
-        // 后台渲染完成的玻璃面板需要再画一帧。
-        if self.glass.take_needs_redraw() {
-            window.refresh();
-        }
-        // 详情页玻璃的形状弹簧还在动就要下一帧（帧请求必须在 render 里发）。
-        if self.show_now_playing && self.glass.is_animating() {
-            window.request_animation_frame();
-        }
         // 专享模式下检测当前歌词行是否变化，必要时启动缓动滚动动画。
         if self.show_now_playing {
             self.update_lyric_scroll();
