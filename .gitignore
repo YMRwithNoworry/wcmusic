@@ -39,6 +39,12 @@ migrate_working_dir/
 /.wrangler/
 /test/failures/
 
+# 桌面端（Tauri 2 + React）
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+
 # Symbolication related
 app.*.symbols
 

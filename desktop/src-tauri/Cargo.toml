@@ -1,0 +1,33 @@
+[package]
+name = "wcmusic-desktop"
+version = "1.2.27"
+edition = "2024"
+description = "WCMusic 桌面端（Tauri 2 + React）"
+license = "MIT"
+publish = false
+
+[lib]
+name = "wcmusic_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 曲库索引、SQLite、音源 QuickJS 运行时、洛雪备份/M3U 解析都复用共享核心。
+wcmusic_core = { path = "../../native/wcmusic_core" }
+# 播放：rodio 出声，fundsp 做空间音频。
+rodio = "0.20.1"
+fundsp = { version = "0.23", default-features = false, features = ["std"] }
+# 封面缩略图：落盘前把平台给的巨图缩到显示尺寸。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# 网络：歌词、更新检查、音频/封面下载。
+ureq = "2.12.1"
+base64 = "0.22"
+regex = "1.11"
+
+[patch.crates-io]
+rquickjs-sys = { path = "../../native/vendor/rquickjs-sys" }

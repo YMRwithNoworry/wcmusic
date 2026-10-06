@@ -50,7 +50,7 @@ impl OnlineSearchChannel {
 }
 
 /// A chart exposed by one of the supported music platforms.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlatformRanking {
     pub id: String,
     pub name: String,

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口的默认能力：核心 API 与窗口控制。",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}
