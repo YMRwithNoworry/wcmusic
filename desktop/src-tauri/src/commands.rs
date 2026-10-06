@@ -276,3 +276,23 @@ pub fn select_source(
     state.with_sources(|sources| sources.select(index))?;
     Ok(state.with_sources(|sources| sources.list()))
 }
+
+/// 查询最新发布版本（GitHub Release）。
+#[tauri::command(async)]
+pub fn check_update(state: State<'_, AppState>) -> crate::update::UpdateCheck {
+    let use_proxy = state.settings().use_network_proxy;
+    crate::update::check_latest_release(env!("CARGO_PKG_VERSION"), use_proxy)
+}
+
+/// 用系统默认浏览器打开一个链接（发布页）。
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("只允许打开 http(s) 链接".to_owned());
+    }
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("打开链接失败：{error}"))
+}

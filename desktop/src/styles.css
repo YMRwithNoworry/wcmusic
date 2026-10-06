@@ -684,3 +684,31 @@ input[type="number"] {
   color: var(--muted);
   cursor: default;
 }
+
+.settings .row-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings .row-control button {
+  background: var(--primary);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings .row-control button:disabled {
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.settings .row-control button.link {
+  background: none;
+  color: var(--primary);
+  padding: 0;
+}

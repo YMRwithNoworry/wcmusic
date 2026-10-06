@@ -16,6 +16,7 @@ mod playback;
 mod settings;
 mod source;
 mod state;
+mod update;
 
 pub fn run() {
     tauri::Builder::default()
@@ -48,7 +49,9 @@ pub fn run() {
             commands::pick_source_file,
             commands::import_source_file,
             commands::remove_source,
-            commands::select_source
+            commands::select_source,
+            commands::check_update,
+            commands::open_external
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");

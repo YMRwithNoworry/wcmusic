@@ -1,7 +1,13 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
+import { app } from "../api";
 import { useSettings } from "../settings-context";
-import type { LyricsAlignment, LyricsAnimation, PlaybackMode } from "../types";
+import type {
+  LyricsAlignment,
+  LyricsAnimation,
+  PlaybackMode,
+  UpdateCheck,
+} from "../types";
 
 const PLAYBACK_MODES: { value: PlaybackMode; label: string }[] = [
   { value: "sequence", label: "顺序播放" },
@@ -50,9 +56,25 @@ function Switch({ value, onChange }: { value: boolean; onChange: (next: boolean)
 
 export default function SettingsPage() {
   const { settings, update } = useSettings();
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
   if (!settings) {
     return <p className="hint">正在读取设置…</p>;
   }
+
+  const checkUpdate = async () => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      setUpdateCheck(await app.checkUpdate());
+    } catch (problem) {
+      setCheckError(String(problem));
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <div className="settings">
@@ -185,6 +207,33 @@ export default function SettingsPage() {
             onChange={(use_network_proxy) => void update({ use_network_proxy })}
           />
         </Row>
+      </section>
+
+      <section>
+        <h2>关于</h2>
+        <Row label="版本更新">
+          <button onClick={() => void checkUpdate()} disabled={checking}>
+            {checking ? "检查中…" : "检查更新"}
+          </button>
+        </Row>
+        {checkError ? <p className="error">{checkError}</p> : null}
+        {updateCheck ? (
+          <Row label={`当前版本 ${updateCheck.current_version}`}>
+            <span className="hint">
+              {updateCheck.latest_version
+                ? `最新版本 ${updateCheck.latest_version}`
+                : "暂未发布版本"}
+            </span>
+            {updateCheck.release_url ? (
+              <button
+                className="link"
+                onClick={() => void app.openExternal(updateCheck.release_url as string)}
+              >
+                打开发布页
+              </button>
+            ) : null}
+          </Row>
+        ) : null}
       </section>
     </div>
   );

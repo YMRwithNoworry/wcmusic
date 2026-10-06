@@ -12,6 +12,7 @@ import type {
   PlaybackSnapshot,
   SourceView,
   Track,
+  UpdateCheck,
 } from "./types";
 
 export const api = {
@@ -73,4 +74,10 @@ export const sources = {
   importFile: (path: string) => invoke<SourceView>("import_source_file", { path }),
   remove: (index: number) => invoke<SourceView[]>("remove_source", { index }),
   select: (index: number | null) => invoke<SourceView[]>("select_source", { index }),
+};
+
+/// 更新检查与外部链接。
+export const app = {
+  checkUpdate: () => invoke<UpdateCheck>("check_update"),
+  openExternal: (url: string) => invoke<void>("open_external", { url }),
 };

@@ -142,3 +142,9 @@ export interface SourceView {
   active: boolean;
   capabilities: string[];
 }
+
+export interface UpdateCheck {
+  current_version: string;
+  latest_version: string | null;
+  release_url: string | null;
+}
