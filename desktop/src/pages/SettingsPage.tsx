@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { app, hotkeys, lyricsWindow } from "../api";
+import { app, hotkeys, lyrics as lyricsApi, lyricsWindow } from "../api";
 import { useSettings } from "../settings-context";
 import type {
   HotKeyIssue,
   HotKeyView,
   LyricsAlignment,
   LyricsAnimation,
+  LyricsPresets,
   PlaybackMode,
   UpdateCheck,
 } from "../types";
@@ -56,6 +57,33 @@ function Switch({ value, onChange }: { value: boolean; onChange: (next: boolean)
   );
 }
 
+/// `0xRRGGBB` → `#rrggbb`。
+function hex(rgb: number): string {
+  return `#${rgb.toString(16).padStart(6, "0")}`;
+}
+
+/// 配色下拉：候选来自后端 `lyrics_presets`，当前值不在候选里也照样能显示。
+function ColorSelect({
+  colors,
+  value,
+  onChange,
+}: {
+  colors: number[];
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const options = colors.includes(value) ? colors : [value, ...colors];
+  return (
+    <select value={value} onChange={(event) => onChange(Number(event.target.value))}>
+      {options.map((color) => (
+        <option key={color} value={color}>
+          {hex(color)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export default function SettingsPage() {
   const { settings, update } = useSettings();
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
@@ -77,6 +105,15 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadHotkeys();
   }, [loadHotkeys, settings?.hotkeys.enabled]);
+
+  // 歌词配色/字体候选值。
+  const [presets, setPresets] = useState<LyricsPresets | null>(null);
+  useEffect(() => {
+    lyricsApi
+      .presets()
+      .then(setPresets)
+      .catch(() => setPresets(null));
+  }, []);
 
   if (!settings) {
     return <p className="hint">正在读取设置…</p>;
@@ -155,6 +192,121 @@ export default function SettingsPage() {
         <Row label="桌面歌词窗口" hint="置顶透明窗口，可用快捷键「显示/隐藏桌面歌词」开关">
           <button onClick={() => void lyricsWindow.toggle()}>显示 / 隐藏</button>
         </Row>
+        {presets ? (
+          <>
+            <Row label="歌词字体">
+              <select
+                value={settings.lyrics.font_family}
+                onChange={(event) =>
+                  void update({ lyrics: { ...settings.lyrics, font_family: event.target.value } })
+                }
+              >
+                {presets.fonts.map((font) => (
+                  <option key={font} value={font}>
+                    {font}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            <Row label="字号">
+              <input
+                type="number"
+                min={12}
+                max={72}
+                value={settings.lyrics.font_size}
+                onChange={(event) =>
+                  void update({
+                    lyrics: { ...settings.lyrics, font_size: Number(event.target.value) },
+                  })
+                }
+              />
+            </Row>
+            <Row label="文字颜色">
+              <ColorSelect
+                colors={presets.text_colors}
+                value={settings.lyrics.text_color}
+                onChange={(text_color) =>
+                  void update({ lyrics: { ...settings.lyrics, text_color } })
+                }
+              />
+            </Row>
+            <Row label="高亮颜色">
+              <ColorSelect
+                colors={presets.highlight_colors}
+                value={settings.lyrics.highlight_color}
+                onChange={(highlight_color) =>
+                  void update({ lyrics: { ...settings.lyrics, highlight_color } })
+                }
+              />
+            </Row>
+            <Row label="描边颜色 / 宽度">
+              <ColorSelect
+                colors={presets.stroke_colors}
+                value={settings.lyrics.stroke_color}
+                onChange={(stroke_color) =>
+                  void update({ lyrics: { ...settings.lyrics, stroke_color } })
+                }
+              />
+              <input
+                type="number"
+                min={0}
+                max={6}
+                step={0.5}
+                value={settings.lyrics.stroke_width}
+                onChange={(event) =>
+                  void update({
+                    lyrics: { ...settings.lyrics, stroke_width: Number(event.target.value) },
+                  })
+                }
+              />
+            </Row>
+            <Row label="背景不透明度">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(settings.lyrics.background_opacity * 100)}
+                onChange={(event) =>
+                  void update({
+                    lyrics: {
+                      ...settings.lyrics,
+                      background_opacity: Number(event.target.value) / 100,
+                    },
+                  })
+                }
+              />
+            </Row>
+            <Row label="整体不透明度">
+              <input
+                type="range"
+                min={10}
+                max={100}
+                value={Math.round(settings.lyrics.opacity * 100)}
+                onChange={(event) =>
+                  void update({
+                    lyrics: { ...settings.lyrics, opacity: Number(event.target.value) / 100 },
+                  })
+                }
+              />
+            </Row>
+            <Row label="单行模式">
+              <Switch
+                value={settings.lyrics.single_line}
+                onChange={(single_line) =>
+                  void update({ lyrics: { ...settings.lyrics, single_line } })
+                }
+              />
+            </Row>
+            <Row label="歌词窗口置顶">
+              <Switch
+                value={settings.lyrics.always_on_top}
+                onChange={(always_on_top) =>
+                  void update({ lyrics: { ...settings.lyrics, always_on_top } })
+                }
+              />
+            </Row>
+          </>
+        ) : null}
         <Row label="显示翻译">
           <Switch
             value={settings.lyrics.show_translation}
