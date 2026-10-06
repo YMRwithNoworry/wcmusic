@@ -8096,7 +8096,7 @@ dependencies = [
 
 [[package]]
 name = "wcmusic_ui"
-version = "1.2.28"
+version = "1.2.29"
 dependencies = [
  "base64",
  "embed-resource",
