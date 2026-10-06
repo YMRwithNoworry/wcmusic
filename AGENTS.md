@@ -29,7 +29,7 @@ jdk在这里D:\MC\jdk
 | `native/wcmusic_ui/src/app_icon.rs` | 窗口/托盘图标的按尺寸装载（`LoadImageW` + `WM_SETICON`）与窗口标题常量 |
 | `desktop` | **新的 Windows 桌面端（Tauri 2 + React）**：`src/` 是 React 前端（Vite + TS），`src-tauri/` 是 Rust 后端（复用 `native/wcmusic_core`）。后端模块：`commands`（命令面）、`state`、`playback`、`audio`、`lyrics`、`settings`、`hotkey`、`source`、`online`、`update`、`tray` |
 | `desktop/src-tauri/tauri.conf.json` | 窗口与打包配置：无边框主窗口 + 置顶透明的桌面歌词窗口；能力清单在 `capabilities/` |
-| `build_desktop.nu` | 构建 Tauri 桌面端（先 `npm run build` 出 `dist/`，再 `cargo build --release` 把前端嵌进 exe） |
+| `build_desktop.nu` | 构建 Tauri 桌面端（先 `npm run build` 出 `dist/`，再 `cargo build --release --features custom-protocol` 把前端嵌进 exe） |
 | `native/tools/icon_gen` | 由 `assets/icons/app_icon.png` 生成多尺寸 ICO（去白底、裁边、小尺寸特写版），产物同步到 `assets/icons/` 与 `windows/runner/resources/` |
 | `native/vendor/rquickjs-sys` | `[patch.crates-io]` 里的本地 rquickjs-sys |
 | `lib/domain` | Flutter 领域模型与 Repository 接口 |
@@ -70,6 +70,8 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
 - Windows 侧只改 Flutter 代码不会影响桌面客户端；桌面端现在有**两套**实现：`native/wcmusic_ui`（旧 GPUI，功能对齐前保留，不再加新功能）与 `desktop`（新 Tauri 2 + React，后续改动都落在这里）。
 - 新桌面端的构建链：`desktop/src-tauri` 是一个独立 cargo 包（自带 `[patch.crates-io] rquickjs-sys`，路径相对它自己），必须用 MSVC 工具链；前端产物 `desktop/dist` 在 `cargo build` 时嵌入 exe，所以**改完前端要重新构建**。
+- **手工构建 release 必须带 `--features custom-protocol`**（`nu build_desktop.nu` 已经带上）：Tauri 用 `dev = !custom_protocol` 决定加载开发服务器还是内嵌前端，少了它即使 `--release` 也会去连 `http://localhost:1420`，用户看到的是「无法连接到 localhost」。`desktop/src-tauri/build.rs` 已在 release 且缺这个 feature 时直接报错拦下。完整命令：
+  `cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml`
 - 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。
 - 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.3）。
 - **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步 `Cargo.toml` / `Cargo.lock` / `pubspec.yaml`）→ 构建 Windows 包（必成）与 Android 包（尽力而为，失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。

@@ -45,7 +45,8 @@ if $frontend.exit_code != 0 {
 }
 
 let result = (do {
-    run-external $cargo ...$toolchain_arg "build" "--release" "--jobs" $jobs "--manifest-path" "desktop/src-tauri/Cargo.toml"
+    # `custom-protocol` 必须带：它决定加载内嵌前端，而不是 http://localhost:1420。
+    run-external $cargo ...$toolchain_arg "build" "--release" "--features" "custom-protocol" "--jobs" $jobs "--manifest-path" "desktop/src-tauri/Cargo.toml"
 } | complete)
 
 if $result.exit_code != 0 {

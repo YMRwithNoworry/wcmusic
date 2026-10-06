@@ -13,6 +13,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# 生产构建必须带上这个 feature：Tauri 用 `dev = !custom_protocol` 决定加载
+# 「开发服务器 URL」还是「内嵌的前端资源」。不带它时，即使是 --release 构建，
+# 程序也会去连 http://localhost:1420，表现为启动后提示「无法连接到 localhost」。
+# `npm run tauri dev` 不要带它（dev 模式要走 vite 的开发服务器）。
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 # 托盘用内置的 tray-icon；图标解码要 image-png / image-ico。
 tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }

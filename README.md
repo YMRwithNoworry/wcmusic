@@ -15,7 +15,11 @@ cd desktop && npm install                 # 首次拉前端依赖
 WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu
 ```
 
-产物在 `desktop/src-tauri/target/release/wcmusic-desktop.exe`。前端 `dist/` 是编译期嵌进 exe 的，改完前端必须重新构建。
+产物在 `desktop/src-tauri/target/release/wcmusic-desktop.exe`。前端 `dist/` 是编译期嵌进 exe 的，改完前端必须重新构建；手工构建时**必须带 `--features custom-protocol`**，否则程序会去连 `http://localhost:1420`，界面提示「无法连接到 localhost」：
+
+```text
+cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
+```
 
 **旧端：GPUI（`native/wcmusic_ui`，保留到功能对齐）**
 
