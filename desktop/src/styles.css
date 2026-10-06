@@ -733,3 +733,53 @@ input[type="number"] {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* 无边框窗口的自定义标题栏 */
+.app {
+  grid-template-rows: 34px 1fr 64px;
+  grid-template-areas:
+    "title title"
+    "sidebar content"
+    "player player";
+}
+
+.titlebar {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding-left: 12px;
+  user-select: none;
+}
+
+.titlebar-title {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.titlebar-buttons {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar-buttons button {
+  width: 44px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.titlebar-buttons button:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+.titlebar-buttons button.close:hover {
+  background: #d64545;
+  color: #fff;
+}

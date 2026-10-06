@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "./api";
 import PlayerBar from "./components/PlayerBar";
+import TitleBar from "./components/TitleBar";
 import HomePage from "./pages/HomePage";
 import NowPlayingPage from "./pages/NowPlayingPage";
 import PlaylistsPage from "./pages/PlaylistsPage";
@@ -57,6 +58,7 @@ function Shell() {
 
   return (
     <div className="app">
+      <TitleBar />
       <aside className="sidebar">
         <div className="brand">WCMusic</div>
         <nav>
