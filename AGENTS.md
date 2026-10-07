@@ -77,9 +77,9 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - **手工构建 release 必须带 `--features custom-protocol`**（`nu build_desktop.nu` 已经带上）：Tauri 用 `dev = !custom_protocol` 决定加载开发服务器还是内嵌前端，少了它即使 `--release` 也会去连 `http://localhost:1420`，用户看到的是「无法连接到 localhost」。`desktop/src-tauri/build.rs` 已在 release 且缺这个 feature 时直接报错拦下。完整命令：
   `cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml`
 - 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。
-- 版本号需同时更新 `pubspec.yaml` 的 `version` 与 `native/wcmusic_ui/Cargo.toml` 的 `package.version`（当前 1.2.3）。
-- **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步 `Cargo.toml` / `Cargo.lock` / `pubspec.yaml`）→ 构建 Windows 包（必成）与 Android 包（尽力而为，失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。
-- 安装包发布在**源码仓库** `YMRwithNoworry/wcmusic` 的 Release 里（历史版本仍留在 `YMRwithNoworry/wcmusic-releases`），资产名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`；应用内更新检测（`native/wcmusic_ui/src/update.rs`）查的就是源码仓库的 Release。
+- 版本号需同时更新 `pubspec.yaml` 的 `version`、`native/wcmusic_ui/Cargo.toml`（含 `Cargo.lock`）、`desktop/src-tauri/Cargo.toml`（含 `Cargo.lock`）与 `desktop/package.json` 的 `package.version`（当前 1.2.42）；`scripts/release/bump-version.mjs` 会一次性同步这几处。
+- **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步三个客户端的版本号）→ 构建 Windows 包（新 Tauri 桌面端，必成）与 Android 包（Flutter，尽力而为、失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。
+- 安装包发布在**源码仓库** `YMRwithNoworry/wcmusic` 的 Release 里（历史版本仍留在 `YMRwithNoworry/wcmusic-releases`），资产名固定为 `wcmusic-windows-x64.zip`（内容是 `wcmusic-desktop.exe`，即新 Tauri 桌面端）与 `wcmusic-android-arm64.apk`；应用内更新检测（`desktop/src-tauri/src/update.rs`、`native/wcmusic_ui/src/update.rs`）查的就是源码仓库的 Release。
 - Android 侧 `:app:buildRustCore` 依赖 `cargo-ndk` 与 `aarch64-linux-android` target，本机都没装（`rustup target list --installed` 只有两个 Windows target），需要先 `rustup target add aarch64-linux-android` 与 `cargo install cargo-ndk` 才能重新构建 APK。
 
 ## 代码约定

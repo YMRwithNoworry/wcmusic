@@ -276,6 +276,15 @@ export default function SettingsPage() {
               onCheckedChange={(always_on_top) => patchLyrics({ always_on_top })}
             />
           </Row>
+          <Row
+            label="锁定鼠标穿透"
+            hint="锁定时点击会落到下层窗口，不会挡住其它软件；要拖动歌词窗口先解锁"
+          >
+            <Switch
+              checked={lyrics.locked}
+              onCheckedChange={(locked) => patchLyrics({ locked })}
+            />
+          </Row>
           <Row label="对齐方式">
             <Select
               value={lyrics.alignment}

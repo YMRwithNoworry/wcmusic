@@ -104,7 +104,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 桌面端发布可执行文件：新端 `desktop/src-tauri/target/release/wcmusic-desktop.exe`（`nu build_desktop.nu`），旧端 `native/wcmusic_ui/target/release/wcmusic_ui.exe`（`nu build_gpui.nu`）。Android 发布仍使用上面的 Flutter APK 命令。
+Windows 桌面端发布可执行文件：新端 `desktop/src-tauri/target/release/wcmusic-desktop.exe`（`nu build_desktop.nu`），旧端 `native/wcmusic_ui/target/release/wcmusic_ui.exe`（`nu build_gpui.nu`）。**自动发布（推送到 `main` 触发）现在打包的是新端**：`wcmusic-windows-x64.zip` 里是 `wcmusic-desktop.exe`。Android 发布仍使用上面的 Flutter APK 命令。
 
 ## 目录
 

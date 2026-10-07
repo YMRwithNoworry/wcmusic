@@ -1,7 +1,9 @@
 import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { lyrics as lyricsApi } from "@/api";
+import KaraokeText from "@/components/KaraokeText";
+import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
 import type { LyricLine } from "@/types";
@@ -12,18 +14,6 @@ function toCss(rgb: number, alpha: number): string {
   const g = (rgb >> 8) & 0xff;
   const b = rgb & 0xff;
   return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-/// 当前行下标：最后一条 `time_ms <= position` 的歌词。
-function currentIndex(lines: LyricLine[], position: number): number {
-  let index = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].time_ms > position) {
-      break;
-    }
-    index = i;
-  }
-  return index;
 }
 
 /// 桌面歌词窗口：置顶、无边框、透明，只显示当前行（与下一行）。
@@ -67,14 +57,11 @@ export default function LyricsWindow() {
 
   const style = settings?.lyrics;
   const offset = style?.offset_ms ?? 0;
-  const position = Math.max(0, (snapshot?.position_ms ?? 0) + offset);
-  const index = useMemo(() => currentIndex(lines, position), [lines, position]);
+  const positionMs = snapshot?.position_ms ?? 0;
+  const playing = snapshot?.playing ?? false;
+  const index = useCurrentLine(lines, positionMs, playing, offset);
   const current = index >= 0 ? lines[index] : null;
   const next = index >= 0 ? lines[index + 1] : null;
-  const progress =
-    current && next && next.time_ms > current.time_ms
-      ? Math.min(1, Math.max(0, (position - current.time_ms) / (next.time_ms - current.time_ms)))
-      : 0;
 
   const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
   const highlight = toCss(style?.highlight_color ?? 0xffffff, style?.highlight_alpha ?? 1);
@@ -94,6 +81,8 @@ export default function LyricsWindow() {
     style?.alignment === "left" ? "left" : style?.alignment === "right" ? "right" : "center";
   const fontFamily = style?.font_family ? `"${style.font_family}"` : undefined;
   const karaoke = style?.karaoke ?? false;
+  const fontSize = `${style?.font_size ?? 28}px`;
+  const fontWeight = style?.font_weight ?? 600;
 
   return (
     <div
@@ -108,19 +97,27 @@ export default function LyricsWindow() {
           transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
           className="w-full truncate leading-tight"
           style={{
-            fontSize: `${style?.font_size ?? 28}px`,
-            fontWeight: style?.font_weight ?? 600,
+            fontSize,
+            fontWeight,
             fontFamily,
             textShadow,
-            color: karaoke ? "transparent" : highlight,
-            backgroundImage: karaoke
-              ? `linear-gradient(90deg, ${highlight} ${progress * 100}%, ${textColor} ${progress * 100}%)`
-              : undefined,
-            WebkitBackgroundClip: karaoke ? "text" : undefined,
-            backgroundClip: karaoke ? "text" : undefined,
+            color: karaoke ? undefined : highlight,
           }}
         >
-          {current.text || "♪"}
+          {karaoke ? (
+            <KaraokeText
+              text={current.text}
+              lineTime={current.time_ms}
+              nextTime={next?.time_ms ?? current.time_ms}
+              positionMs={positionMs}
+              playing={playing}
+              offsetMs={offset}
+              highlight={highlight}
+              textColor={textColor}
+            />
+          ) : (
+            current.text || "♪"
+          )}
         </motion.div>
       ) : (
         <div className="text-sm opacity-80" style={{ color: textColor, textShadow }}>

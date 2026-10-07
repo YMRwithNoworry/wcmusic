@@ -47,30 +47,42 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/wcmusic_ui/Cargo.toml native/wcmusic_ui/Cargo.lock pubspec.yaml
+          git add native/wcmusic_ui/Cargo.toml native/wcmusic_ui/Cargo.lock desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json pubspec.yaml
           git commit -m "chore(release): ${{ steps.bump.outputs.tag }} [skip ci]"
           git push origin main
 
   windows:
-    name: 构建 Windows 包
+    name: 构建 Windows 包（Tauri 桌面端）
     needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native/wcmusic_ui
-      - name: cargo build --release
-        run: cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+          workspaces: desktop/src-tauri
+      - name: 安装前端依赖
+        working-directory: desktop
+        run: npm ci
+      - name: 构建前端（vite → dist/）
+        working-directory: desktop
+        run: npm run build
+      - name: 构建 Tauri 桌面端
+        # 必须带 custom-protocol：它决定加载内嵌前端而不是 http://localhost:1420。
+        run: cargo build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
       - name: 打包 zip
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item native\wcmusic_ui\target\release\wcmusic_ui.exe dist\wcmusic_ui.exe
-          Compress-Archive -Path dist\wcmusic_ui.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
+          Copy-Item desktop\src-tauri\target\release\wcmusic-desktop.exe dist\wcmusic-desktop.exe
+          Compress-Archive -Path dist\wcmusic-desktop.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
           Get-Item dist\wcmusic-windows-x64.zip | Format-List Name, Length
       - uses: actions/upload-artifact@v4
         with:

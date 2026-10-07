@@ -1,10 +1,8 @@
-import { ArrowLeftIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 
 import { favorites, online } from "@/api";
+import PlaylistDetail from "@/components/PlaylistDetail";
 import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
-import TrackList from "@/components/TrackList";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -31,15 +29,15 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-/// 「此刻」页：平台热门歌单 + 我的收藏。
+/// 「此刻」页：平台热门歌单 + 我的收藏；点开歌单后切到详情视图。
 export default function HomePage() {
   const { settings, replace } = useSettings();
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
   const [hot, setHot] = useState<PlatformPlaylist[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<{ name: string; tracks: Track[] } | null>(null);
-  const [opening, setOpening] = useState(false);
+  /// 点开的歌单：`tracks` 为 `null` 表示还在载入。
+  const [detail, setDetail] = useState<{ name: string; tracks: Track[] | null } | null>(null);
 
   const loadHot = useCallback(async (next: OnlineSearchChannel) => {
     setLoading(true);
@@ -59,14 +57,13 @@ export default function HomePage() {
   }, [channel, loadHot]);
 
   const openPlaylist = async (playlist: PlatformPlaylist) => {
-    setOpening(true);
+    setDetail({ name: playlist.name, tracks: null });
     setError(null);
     try {
-      setOpened({ name: playlist.name, tracks: await online.playlistTracks(playlist) });
+      setDetail({ name: playlist.name, tracks: await online.playlistTracks(playlist) });
     } catch (problem) {
       setError(String(problem));
-    } finally {
-      setOpening(false);
+      setDetail(null);
     }
   };
 
@@ -81,6 +78,21 @@ export default function HomePage() {
         item.track.id === track.id &&
         item.track.source === track.source,
     );
+  const toggleTrack = (track: Track) => {
+    void favorites.toggleTrack(track, "我的收藏").then(replace);
+  };
+
+  if (detail) {
+    return (
+      <PlaylistDetail
+        name={detail.name}
+        tracks={detail.tracks}
+        onBack={() => setDetail(null)}
+        onToggleSave={toggleTrack}
+        saved={isTrackSaved}
+      />
+    );
+  }
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
@@ -148,29 +160,6 @@ export default function HomePage() {
           empty="还没有收藏的歌单，把鼠标移到热门歌单卡片上点星标。"
         />
       </section>
-
-      {opened ? (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon-sm" onClick={() => setOpened(null)}>
-              <ArrowLeftIcon />
-            </Button>
-            <h2 className="text-sm font-semibold">{opened.name}</h2>
-            <span className="text-xs text-muted-foreground">
-              {opened.tracks.length} 首
-            </span>
-          </div>
-          <TrackList
-            tracks={opened.tracks}
-            onToggleSave={(track) => {
-              void favorites.toggleTrack(track, "我的收藏").then(replace);
-            }}
-            saved={isTrackSaved}
-          />
-        </section>
-      ) : opening ? (
-        <p className="text-sm text-muted-foreground">正在打开歌单…</p>
-      ) : null}
     </div>
   );
 }

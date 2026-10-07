@@ -220,6 +220,35 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const toggle = useCallback(async () => {
+    await player.toggle();
+    await refresh();
+  }, [refresh]);
+
+  const seek = useCallback(
+    async (positionMs: number) => {
+      await player.seek(positionMs);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const setVolume = useCallback(
+    async (volume: number) => {
+      await player.setVolume(volume);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const setSpatial = useCallback(
+    async (enabled: boolean) => {
+      await player.setSpatial(enabled);
+      await refresh();
+    },
+    [refresh],
+  );
+
   const value = useMemo<PlayerContextValue>(
     () => ({
       snapshot,
@@ -228,22 +257,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       next,
       previous,
-      toggle: async () => {
-        await player.toggle();
-        await refresh();
-      },
-      seek: async (positionMs) => {
-        await player.seek(positionMs);
-        await refresh();
-      },
-      setVolume: async (volume) => {
-        await player.setVolume(volume);
-        await refresh();
-      },
-      setSpatial: async (enabled) => {
-        await player.setSpatial(enabled);
-        await refresh();
-      },
+      toggle,
+      seek,
+      setVolume,
+      setSpatial,
       queueLength: queue.length,
       queueIndex,
     }),
@@ -254,7 +271,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       next,
       previous,
-      refresh,
+      toggle,
+      seek,
+      setVolume,
+      setSpatial,
       queue.length,
       queueIndex,
     ],

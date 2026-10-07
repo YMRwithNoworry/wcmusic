@@ -41,10 +41,16 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 
 /// 整份覆盖保存设置（前端把改完的整份设置传回来）。
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: AppSettings) -> AppSettings {
+pub fn save_settings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> AppSettings {
     let saved = state.update_settings(|current| *current = settings);
     // 快捷键可能被改了：按新设置重新注册一次。
     state.apply_hotkeys();
+    // 歌词窗口的「锁定鼠标穿透 / 置顶」也可能被改了，立刻生效。
+    apply_lyrics_window_style(&app, &saved.lyrics);
     saved
 }
 
@@ -427,7 +433,22 @@ fn create_lyrics_window(
     .skip_taskbar(true)
     .build()
     .map_err(|error| error.to_string())?;
-    let _ = window.set_focus();
+    // 锁定（默认）时鼠标穿透：置顶歌词窗口不能挡住其它软件的点击与拖拽。
+    let _ = window.set_ignore_cursor_events(style.locked);
     eprintln!("桌面歌词窗口已创建");
     Ok(())
+}
+
+/// 把歌词外观里影响窗口本身的部分应用到已存在的歌词窗口。
+///
+/// 主要是「锁定鼠标穿透」：不开穿透时置顶窗口会吞掉落在它身上的点击。
+pub fn apply_lyrics_window_style(
+    app: &tauri::AppHandle,
+    style: &crate::lyrics::LyricsStyle,
+) {
+    let Some(window) = app.get_webview_window("lyrics") else {
+        return;
+    };
+    let _ = window.set_ignore_cursor_events(style.locked);
+    let _ = window.set_always_on_top(style.always_on_top);
 }
