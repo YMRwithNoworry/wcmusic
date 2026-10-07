@@ -29,6 +29,8 @@ interface LyricRowProps {
   textColor: string;
   highlight: string;
   showTranslation: boolean;
+  /// 放大时的变换原点（跟随对齐方式，居中时不会左右偏移）。
+  origin: string;
   positionMs: number;
   playing: boolean;
   offsetMs: number;
@@ -47,6 +49,7 @@ const LyricRow = memo(function LyricRow({
   textColor,
   highlight,
   showTranslation,
+  origin,
   positionMs,
   playing,
   offsetMs,
@@ -54,12 +57,11 @@ const LyricRow = memo(function LyricRow({
 }: LyricRowProps) {
   return (
     <motion.div
-      animate={{ opacity: isCurrent ? 1 : 0.42, scale: isCurrent ? 1 : 0.985 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      // 当前行放大、变亮；其它行缩小、变暗。用缓动而不是直接跳变。
+      animate={{ opacity: isCurrent ? 1 : 0.36, scale: isCurrent ? 1.08 : 0.9 }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => onSeek(line.time_ms)}
-      className={
-        isCurrent ? "lyric-line-current cursor-pointer origin-left py-1.5" : "cursor-pointer origin-left py-1.5"
-      }
+      className={`cursor-pointer py-1.5 ${origin} ${isCurrent ? "lyric-line-current" : ""}`}
       style={{ fontSize: `${fontSize}px` }}
     >
       {isCurrent && karaoke ? (
@@ -156,6 +158,13 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const fontSize = style?.font_size ?? 28;
   const fontWeight = style?.font_weight ?? 500;
   const showTranslation = style?.show_translation ?? true;
+  // 放大时围绕对齐方向缩放，居中歌词不会左右偏移。
+  const origin =
+    style?.alignment === "left"
+      ? "origin-left"
+      : style?.alignment === "right"
+        ? "origin-right"
+        : "origin-center";
 
   const onSeek = useCallback((timeMs: number) => void seek(Math.max(0, timeMs - offset)), [seek, offset]);
 
@@ -270,6 +279,7 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
                 textColor={textColor}
                 highlight={highlight}
                 showTranslation={showTranslation}
+                origin={origin}
                 // 非当前行传固定值，memo 才能跳过它们的重渲染。
                 positionMs={isCurrent ? position : 0}
                 playing={isCurrent ? playing : false}

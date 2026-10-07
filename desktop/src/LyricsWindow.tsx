@@ -83,6 +83,14 @@ export default function LyricsWindow() {
   const karaoke = style?.karaoke ?? false;
   const fontSize = `${style?.font_size ?? 28}px`;
   const fontWeight = style?.font_weight ?? 600;
+  const animation = style?.animation ?? "slide";
+  // 换行入场：off 直接出现，slide 从下往上淡入，scale 由小放大淡入。
+  const enterFrom =
+    animation === "scale"
+      ? { opacity: 0, scale: 0.88 }
+      : animation === "slide"
+        ? { opacity: 0, y: 12 }
+        : { opacity: 1 };
 
   return (
     <div
@@ -92,9 +100,9 @@ export default function LyricsWindow() {
       {current ? (
         <motion.div
           key={current.time_ms}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          initial={enterFrom}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
           className="w-full truncate leading-tight"
           style={{
             fontSize,
