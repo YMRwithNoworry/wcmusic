@@ -1,6 +1,6 @@
 [package]
 name = "wcmusic_ui"
-version = "1.2.42"
+version = "1.2.43"
 edition = "2024"
 description = "WCMusic desktop interface built with GPUI"
 license = "MIT"
