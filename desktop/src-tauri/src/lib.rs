@@ -74,7 +74,7 @@ pub fn run() {
             commands::load_lyrics,
             commands::lyrics_presets,
             commands::list_sources,
-            commands::pick_source_file,
+            commands::import_source_script,
             commands::import_source_file,
             commands::remove_source,
             commands::select_source,

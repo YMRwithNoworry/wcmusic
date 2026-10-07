@@ -72,7 +72,9 @@ export const lyrics = {
 /// 音源。
 export const sources = {
   list: () => invoke<SourceView[]>("list_sources"),
-  pickFile: () => invoke<string | null>("pick_source_file"),
+  /// 直接导入脚本文本（前端用 `<input type="file">` 读到内容后传进来）。
+  importScript: (name: string, script: string) =>
+    invoke<SourceView>("import_source_script", { name, script }),
   importFile: (path: string) => invoke<SourceView>("import_source_file", { path }),
   remove: (index: number) => invoke<SourceView[]>("remove_source", { index }),
   select: (index: number | null) => invoke<SourceView[]>("select_source", { index }),

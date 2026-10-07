@@ -36,8 +36,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ureq = "2.12.1"
 base64 = "0.22"
 regex = "1.11"
-# 导入音源时的原生文件选择框（与旧桌面端同一套 rfd）。
-rfd = "0.15.4"
+# 导入音源时的文件选择：由前端的 `<input type="file">` 负责，
+# 不引入 rfd / tauri-plugin-dialog——它们在这个 Tauri 进程里创建不出对话框。
 
 # 全局快捷键用 Win32 的 RegisterHotKey + 消息窗口。
 [target.'cfg(windows)'.dependencies]

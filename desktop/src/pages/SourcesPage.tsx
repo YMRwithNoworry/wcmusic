@@ -1,5 +1,5 @@
 import { PlugsConnectedIcon, TrashIcon, UploadSimpleIcon } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { sources } from "@/api";
@@ -13,6 +13,7 @@ import type { SourceView } from "@/types";
 export default function SourcesPage() {
   const [list, setList] = useState<SourceView[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -27,14 +28,19 @@ export default function SourcesPage() {
     void refresh();
   }, [refresh]);
 
-  const importFile = async () => {
+  /// 用隐藏的 file input 选文件：WebView2 自带的文件选择器可靠，
+  /// 后端原生对话框（rfd）在这个进程里根本弹不出来。
+  const onPickFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // 清空 value，才能重复选同一个文件。
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setBusy(true);
     try {
-      const path = await sources.pickFile();
-      if (!path) {
-        return;
-      }
-      setBusy(true);
-      const imported = await sources.importFile(path);
+      const script = await file.text();
+      const imported = await sources.importScript(file.name, script);
       toast.success(`已导入并启用：${imported.name}`);
       await refresh();
     } catch (problem) {
@@ -70,10 +76,17 @@ export default function SourcesPage() {
             音源脚本是第三方代码：运行时限制 32 MB 内存、单次请求 15 秒超时；导入的音源只在本次运行内有效。
           </p>
         </div>
-        <Button onClick={() => void importFile()} disabled={busy}>
+        <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           <UploadSimpleIcon weight="bold" />
           {busy ? "正在校验" : "导入音源文件"}
         </Button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".js,text/javascript,application/javascript"
+          className="hidden"
+          onChange={(event) => void onPickFile(event)}
+        />
       </header>
 
       {list === null ? (

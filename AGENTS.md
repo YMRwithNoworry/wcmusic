@@ -74,6 +74,7 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - Windows 侧只改 Flutter 代码不会影响桌面客户端；桌面端现在有**两套**实现：`native/wcmusic_ui`（旧 GPUI，功能对齐前保留，不再加新功能）与 `desktop`（新 Tauri 2 + React，后续改动都落在这里）。
 - 新桌面端的构建链：`desktop/src-tauri` 是一个独立 cargo 包（自带 `[patch.crates-io] rquickjs-sys`，路径相对它自己），必须用 MSVC 工具链；前端产物 `desktop/dist` 在 `cargo build` 时嵌入 exe，所以**改完前端要重新构建**。
 - 新桌面端前端是 **Tailwind v4 + shadcn/ui + motion（Framer Motion）**：`src/components/ui/*` 是 shadcn 组件，页面与业务组件在 `src/pages`、`src/components`。动效统一用 `motion/react`（页面切换、侧栏选中胶囊、列表入场、播放竖条），并在 `App.tsx` 用 `MotionConfig reducedMotion="user"` 尊重系统「减少动效」。
+- **不要在 Tauri 后端弹原生文件对话框**（`rfd` / `tauri-plugin-dialog`）：`rfd` 在这个进程里创建不出窗口，命令会一直挂起，用户看到的就是「点导入没反应」。需要选文件就用前端隐藏的 `<input type="file">`，读内容后传给后端命令（如 `import_source_script`）。
 - **手工构建 release 必须带 `--features custom-protocol`**（`nu build_desktop.nu` 已经带上）：Tauri 用 `dev = !custom_protocol` 决定加载开发服务器还是内嵌前端，少了它即使 `--release` 也会去连 `http://localhost:1420`，用户看到的是「无法连接到 localhost」。`desktop/src-tauri/build.rs` 已在 release 且缺这个 feature 时直接报错拦下。完整命令：
   `cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml`
 - 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。

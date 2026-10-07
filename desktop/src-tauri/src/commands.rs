@@ -252,15 +252,18 @@ pub fn list_sources(state: State<'_, AppState>) -> Vec<SourceView> {
     state.with_sources(|sources| sources.list())
 }
 
-/// 弹出原生文件选择框挑一个音源脚本；取消返回 `None`。
+/// 直接导入一份音源脚本文本。
 ///
-/// 同步命令跑在主线程，弹的是模态框，与旧桌面端行为一致。
-#[tauri::command]
-pub fn pick_source_file() -> Option<String> {
-    rfd::FileDialog::new()
-        .add_filter("音源脚本", &["js"])
-        .pick_file()
-        .map(|path| path.display().to_string())
+/// 前端用隐藏的 `<input type="file">` 读文件内容再传过来，而不是走后端原生文件
+/// 选择框：`rfd` 在这个 Tauri 进程里创建不出对话框，命令会一直挂着，
+/// 表现就是「点导入音源文件没任何反应」。WebView2 自带的文件选择器是可靠的。
+#[tauri::command(async)]
+pub fn import_source_script(
+    name: String,
+    script: String,
+    state: State<'_, AppState>,
+) -> Result<SourceView, String> {
+    state.with_sources(|sources| sources.import(name, script))
 }
 
 /// 导入并校验一个音源脚本文件；校验通过就设为当前音源。
