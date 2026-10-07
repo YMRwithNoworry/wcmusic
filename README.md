@@ -8,7 +8,7 @@ Windows 桌面端有两套实现，功能对齐前并存：
 
 **新端：Tauri 2 + React（`desktop/`，后续改动都落在这里）**
 
-Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript。已迁移：在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
+Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript，界面用 **Tailwind v4 + shadcn/ui** 搭建，动效由 **motion**（Framer Motion）驱动：侧栏选中胶囊、页面切换淡入、列表逐条入场、播放中的跳动竖条，并随系统「减少动效」设置自动收敛。已迁移：在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
 
 ```text
 cd desktop && npm install                 # 首次拉前端依赖

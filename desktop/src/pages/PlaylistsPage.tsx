@@ -1,10 +1,13 @@
+import { ArrowLeftIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
-import { favorites, online } from "../api";
-import PlaylistGrid, { playlistKey } from "../components/PlaylistGrid";
-import TrackList from "../components/TrackList";
-import { useSettings } from "../settings-context";
-import type { PlatformPlaylist, Track } from "../types";
+import { favorites, online } from "@/api";
+import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
+import TrackList from "@/components/TrackList";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSettings } from "@/settings-context";
+import type { PlatformPlaylist, Track } from "@/types";
 
 /// 歌单页：收藏的歌单 + 「爱听的」四个文件夹。
 export default function PlaylistsPage() {
@@ -20,23 +23,18 @@ export default function PlaylistsPage() {
       .folders()
       .then((next) => {
         setFolders(next);
-        if (next.length > 0 && !next.includes(folder)) {
-          setFolder(next[1] ?? next[0]);
+        if (next.length > 1) {
+          setFolder(next[1]);
         }
       })
       .catch(() => setFolders([]));
-    // 只在挂载时取一次文件夹列表。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openPlaylist = async (playlist: PlatformPlaylist) => {
     setLoading(true);
     setError(null);
     try {
-      setOpened({
-        name: playlist.name,
-        tracks: await online.playlistTracks(playlist),
-      });
+      setOpened({ name: playlist.name, tracks: await online.playlistTracks(playlist) });
     } catch (problem) {
       setError(String(problem));
     } finally {
@@ -60,17 +58,21 @@ export default function PlaylistsPage() {
     .map((item) => item.track);
 
   return (
-    <div className="playlists">
-      <h1>歌单</h1>
-      {error ? <p className="error">{error}</p> : null}
+    <div className="h-full overflow-y-auto px-7 py-6">
+      <h1 className="mb-5 text-[22px] font-semibold">歌单</h1>
 
-      <section>
-        <div className="section-head">
-          <h2>收藏的歌单</h2>
+      {error ? (
+        <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
         </div>
+      ) : null}
+
+      <section className="mb-8 flex flex-col gap-3">
+        <h2 className="text-[13px] font-semibold tracking-wide text-muted-foreground">
+          收藏的歌单
+        </h2>
         <PlaylistGrid
           playlists={savedPlaylists.map((item) => item.playlist)}
-          activeKey={null}
           onOpen={(playlist) => void openPlaylist(playlist)}
           onToggleSave={(playlist) => {
             void favorites.togglePlaylist(playlist).then(replace);
@@ -80,14 +82,14 @@ export default function PlaylistsPage() {
         />
       </section>
 
-      {loading ? <p className="hint">正在打开歌单…</p> : null}
       {opened ? (
-        <section>
-          <div className="section-head">
-            <h2>{opened.name}</h2>
-            <button className="link" onClick={() => setOpened(null)}>
-              收起
-            </button>
+        <section className="mb-8 flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon-sm" onClick={() => setOpened(null)}>
+              <ArrowLeftIcon />
+            </Button>
+            <h2 className="text-sm font-semibold">{opened.name}</h2>
+            <span className="text-xs text-muted-foreground">{opened.tracks.length} 首</span>
           </div>
           <TrackList
             tracks={opened.tracks}
@@ -97,21 +99,24 @@ export default function PlaylistsPage() {
             saved={isTrackSaved}
           />
         </section>
+      ) : loading ? (
+        <Skeleton className="mb-8 h-40 rounded-xl" />
       ) : null}
 
-      <section>
-        <div className="section-head">
-          <h2>爱听的</h2>
-        </div>
-        <div className="chip-row">
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[13px] font-semibold tracking-wide text-muted-foreground">
+          爱听的
+        </h2>
+        <div className="flex flex-wrap gap-1.5">
           {folders.map((name) => (
-            <button
+            <Button
               key={name}
-              className={name === folder ? "chip active" : "chip"}
+              size="sm"
+              variant={name === folder ? "default" : "outline"}
               onClick={() => setFolder(name)}
             >
               {name}
-            </button>
+            </Button>
           ))}
         </div>
         <TrackList
@@ -120,7 +125,7 @@ export default function PlaylistsPage() {
             void favorites.toggleTrack(track, folder).then(replace);
           }}
           saved={isTrackSaved}
-          empty={`「${folder}」还没有歌曲，在榜单/歌单里点行尾的「收藏」加进来。`}
+          empty={`「${folder}」还没有歌曲，在榜单或歌单里点行尾的星标加进来。`}
         />
       </section>
     </div>

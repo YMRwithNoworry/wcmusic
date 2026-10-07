@@ -1,9 +1,20 @@
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 
-import { favorites, online } from "../api";
-import TrackList from "../components/TrackList";
-import { useSettings } from "../settings-context";
-import type { OnlineSearchChannel, Track } from "../types";
+import { favorites, online } from "@/api";
+import TrackList from "@/components/TrackList";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSettings } from "@/settings-context";
+import type { OnlineSearchChannel, Track } from "@/types";
 
 const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
   { value: "Kuwo", label: "酷我音乐" },
@@ -47,48 +58,66 @@ export default function SearchPage() {
     );
 
   return (
-    <div className="search">
-      <div className="search-bar">
-        <select
+    <div className="flex h-full min-h-0 flex-col px-7 py-6">
+      <div className="mb-5 flex items-center gap-2">
+        <Select
           value={channel}
-          onChange={(event) => setChannel(event.target.value as OnlineSearchChannel)}
+          onValueChange={(value) => setChannel(value as OnlineSearchChannel)}
         >
-          {CHANNELS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <input
-          className="query"
-          value={query}
-          placeholder="搜索歌曲 / 歌手"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              void run();
-            }
-          }}
-        />
-        <button onClick={() => void run()} disabled={loading}>
-          {loading ? "搜索中…" : "搜索"}
-        </button>
+          <SelectTrigger className="w-[132px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CHANNELS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="relative flex-1">
+          <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            placeholder="搜索歌曲、歌手"
+            className="pl-9"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                void run();
+              }
+            }}
+          />
+        </div>
+        <Button onClick={() => void run()} disabled={loading}>
+          {loading ? "搜索中" : "搜索"}
+        </Button>
       </div>
 
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      ) : null}
 
-      {loading ? (
-        <p className="hint">搜索中…</p>
-      ) : (
-        <TrackList
-          tracks={results}
-          onToggleSave={(track) => {
-            void favorites.toggleTrack(track, "我的收藏").then(replace);
-          }}
-          saved={isTrackSaved}
-          empty="输入关键字后回车即可搜索，点结果行开始播放。"
-        />
-      )}
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        {loading ? (
+          <div className="flex flex-col gap-1.5">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <Skeleton key={index} className="h-9 rounded-[10px]" />
+            ))}
+          </div>
+        ) : (
+          <TrackList
+            tracks={results}
+            onToggleSave={(track) => {
+              void favorites.toggleTrack(track, "我的收藏").then(replace);
+            }}
+            saved={isTrackSaved}
+            empty="输入关键字回车即可搜索，点结果行开始播放。"
+          />
+        )}
+      </div>
     </div>
   );
 }

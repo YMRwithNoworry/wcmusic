@@ -28,6 +28,7 @@ jdk在这里D:\MC\jdk
 | `native/wcmusic_ui` | Windows 桌面端（gpui-kit 0.6）。`main.rs` 是 7000+ 行的视图层单文件；`lyrics.rs`/`lyrics_window.rs` 桌面歌词；`settings.rs` 设置持久化；`audio_player.rs`、`tray.rs`、`hotkey.rs`、`smooth_scroll.rs`、`picker.rs` |
 | `native/wcmusic_ui/src/app_icon.rs` | 窗口/托盘图标的按尺寸装载（`LoadImageW` + `WM_SETICON`）与窗口标题常量 |
 | `desktop` | **新的 Windows 桌面端（Tauri 2 + React）**：`src/` 是 React 前端（Vite + TS），`src-tauri/` 是 Rust 后端（复用 `native/wcmusic_core`）。后端模块：`commands`（命令面）、`state`、`playback`、`audio`、`lyrics`、`settings`、`hotkey`、`source`、`online`、`update`、`tray` |
+| `desktop/src/components/ui` | **shadcn/ui 组件**（Tailwind v4 + radix-ui 统一包 + phosphor 图标）。样式底座在 `src/index.css`（主题变量）与 `src/shadcn-base.css`（registry 的 `cn-*` 工具类）；用 `desktop/scripts/fetch-shadcn.mjs` 拉新组件、`fix-shadcn.mjs` 把占位符换成项目实际导入 |
 | `desktop/src-tauri/tauri.conf.json` | 窗口与打包配置：无边框主窗口 + 置顶透明的桌面歌词窗口；能力清单在 `capabilities/` |
 | `build_desktop.nu` | 构建 Tauri 桌面端（先 `npm run build` 出 `dist/`，再 `cargo build --release --features custom-protocol` 把前端嵌进 exe） |
 | `native/tools/icon_gen` | 由 `assets/icons/app_icon.png` 生成多尺寸 ICO（去白底、裁边、小尺寸特写版），产物同步到 `assets/icons/` 与 `windows/runner/resources/` |
@@ -60,6 +61,8 @@ WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu   # �
 cd desktop && npm install && cd ..         # 首次拉前端依赖
 cd desktop && npm run build && cd ..       # 只出前端 dist/（改完前端必须重跑构建，dist 是编译期嵌进 exe 的）
 C:/Users/Administrator/.cargo/bin/cargo.exe +stable-x86_64-pc-windows-msvc test --manifest-path desktop/src-tauri/Cargo.toml --lib   # Tauri 后端单测
+cd desktop && npx vite preview --port 4173 --strictPort   # 预览 dist（另一个终端）
+cd desktop && node scripts/shots.mjs                       # 用 Playwright 给各页面截图到 desktop/shots/（已 gitignore），肉眼验收排版与配色
 nu build_android.nu                        # Flutter APK + cargo ndk 产物
 cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/icon_gen/Cargo.toml -- --preview native/tools/icon_gen/target/preview   # 重新生成多尺寸 ICO
 ```
@@ -70,6 +73,7 @@ cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/
 - `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
 - Windows 侧只改 Flutter 代码不会影响桌面客户端；桌面端现在有**两套**实现：`native/wcmusic_ui`（旧 GPUI，功能对齐前保留，不再加新功能）与 `desktop`（新 Tauri 2 + React，后续改动都落在这里）。
 - 新桌面端的构建链：`desktop/src-tauri` 是一个独立 cargo 包（自带 `[patch.crates-io] rquickjs-sys`，路径相对它自己），必须用 MSVC 工具链；前端产物 `desktop/dist` 在 `cargo build` 时嵌入 exe，所以**改完前端要重新构建**。
+- 新桌面端前端是 **Tailwind v4 + shadcn/ui + motion（Framer Motion）**：`src/components/ui/*` 是 shadcn 组件，页面与业务组件在 `src/pages`、`src/components`。动效统一用 `motion/react`（页面切换、侧栏选中胶囊、列表入场、播放竖条），并在 `App.tsx` 用 `MotionConfig reducedMotion="user"` 尊重系统「减少动效」。
 - **手工构建 release 必须带 `--features custom-protocol`**（`nu build_desktop.nu` 已经带上）：Tauri 用 `dev = !custom_protocol` 决定加载开发服务器还是内嵌前端，少了它即使 `--release` 也会去连 `http://localhost:1420`，用户看到的是「无法连接到 localhost」。`desktop/src-tauri/build.rs` 已在 release 且缺这个 feature 时直接报错拦下。完整命令：
   `cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml`
 - 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。

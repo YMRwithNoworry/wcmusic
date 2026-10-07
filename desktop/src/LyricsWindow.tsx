@@ -1,9 +1,10 @@
+import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 
-import { lyrics as lyricsApi } from "./api";
-import { usePlayer } from "./player-context";
-import { useSettings } from "./settings-context";
-import type { LyricLine } from "./types";
+import { lyrics as lyricsApi } from "@/api";
+import { usePlayer } from "@/player-context";
+import { useSettings } from "@/settings-context";
+import type { LyricLine } from "@/types";
 
 /// `0xRRGGBB` + 透明度 → CSS 颜色。
 function toCss(rgb: number, alpha: number): string {
@@ -87,45 +88,50 @@ export default function LyricsWindow() {
     style?.background_color ?? 0x000000,
     style?.background_opacity ?? 0,
   );
+  const alignment =
+    style?.alignment === "left" ? "items-start" : style?.alignment === "right" ? "items-end" : "items-center";
+  const textAlign =
+    style?.alignment === "left" ? "left" : style?.alignment === "right" ? "right" : "center";
+  const fontFamily = style?.font_family ? `"${style.font_family}"` : undefined;
+  const karaoke = style?.karaoke ?? false;
 
   return (
     <div
-      className="lyrics-window"
-      style={{
-        background,
-        opacity: style?.opacity ?? 1,
-        justifyContent: style?.alignment === "left" ? "flex-start" : style?.alignment === "right" ? "flex-end" : "center",
-        textAlign: (style?.alignment ?? "center") as "left" | "center" | "right",
-      }}
+      className={`flex h-full w-full flex-col justify-center gap-1.5 overflow-hidden px-4 py-3 ${alignment}`}
+      style={{ background, opacity: style?.opacity ?? 1, textAlign }}
     >
       {current ? (
-        <div
-          className="lw-current"
+        <motion.div
+          key={current.time_ms}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full truncate leading-tight"
           style={{
             fontSize: `${style?.font_size ?? 28}px`,
             fontWeight: style?.font_weight ?? 600,
-            fontFamily: style?.font_family ? `"${style.font_family}"` : undefined,
+            fontFamily,
             textShadow,
-            color: style?.karaoke ? "transparent" : highlight,
-            backgroundImage: style?.karaoke
+            color: karaoke ? "transparent" : highlight,
+            backgroundImage: karaoke
               ? `linear-gradient(90deg, ${highlight} ${progress * 100}%, ${textColor} ${progress * 100}%)`
               : undefined,
-            WebkitBackgroundClip: style?.karaoke ? "text" : undefined,
-            backgroundClip: style?.karaoke ? "text" : undefined,
+            WebkitBackgroundClip: karaoke ? "text" : undefined,
+            backgroundClip: karaoke ? "text" : undefined,
           }}
         >
           {current.text || "♪"}
-        </div>
+        </motion.div>
       ) : (
-        <div className="lw-idle" style={{ color: textColor, textShadow }}>
+        <div className="text-sm opacity-80" style={{ color: textColor, textShadow }}>
           {track ? "这首歌没有找到歌词" : "未在播放"}
         </div>
       )}
 
       {style?.show_translation && current?.translation ? (
         <div
-          className="lw-translation"
-          style={{ color: textColor, textShadow, fontFamily: style?.font_family ? `"${style.font_family}"` : undefined }}
+          className="w-full truncate"
+          style={{ fontSize: "0.6em", color: textColor, textShadow, fontFamily, opacity: 0.8 }}
         >
           {current.translation}
         </div>
@@ -133,12 +139,8 @@ export default function LyricsWindow() {
 
       {!style?.single_line && next ? (
         <div
-          className="lw-next"
-          style={{
-            color: textColor,
-            textShadow,
-            fontFamily: style?.font_family ? `"${style.font_family}"` : undefined,
-          }}
+          className="w-full truncate opacity-70"
+          style={{ fontSize: "0.62em", color: textColor, textShadow, fontFamily }}
         >
           {next.text}
         </div>

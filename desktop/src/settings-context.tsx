@@ -33,10 +33,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     void reload();
   }, [reload]);
 
-  // 深浅主题跟着设置走：CSS 里用 :root[data-theme="light"] 覆盖变量。
+  // 深浅主题：Tailwind v4 的 dark 变体看 <html class="dark">。
   useEffect(() => {
-    document.documentElement.dataset.theme =
-      settings?.dark_theme === false ? "light" : "dark";
+    const dark = settings?.dark_theme !== false;
+    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
   }, [settings?.dark_theme]);
 
   const update = useCallback(

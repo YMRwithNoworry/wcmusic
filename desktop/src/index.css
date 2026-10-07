@@ -1,0 +1,220 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./shadcn-base.css";
+
+/* 品牌字体：MiSans（仓库根 assets/fonts 已有，这里直接用，避免在 desktop/public 再存一份）。 */
+@font-face {
+  font-family: "MiSans";
+  src: url("../../assets/fonts/MiSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "MiSans";
+  src: url("../../assets/fonts/MiSans-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "MiSans";
+  src: url("../../assets/fonts/MiSans-Semibold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+
+/* 深浅主题：靠 <html class="dark"> 切换（见 settings-context）。 */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * 配色取自应用图标：板岩蓝的中性底 + 琥珀主色。
+ * 只用这一个强调色，深色为默认（播放器场景大多在暗环境里用）。
+ */
+:root {
+  --radius: 0.75rem;
+
+  --background: oklch(0.985 0.002 258);
+  --foreground: oklch(0.215 0.015 258);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.215 0.015 258);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.215 0.015 258);
+  --primary: oklch(0.66 0.14 70);
+  --primary-foreground: oklch(0.22 0.03 70);
+  --secondary: oklch(0.955 0.004 258);
+  --secondary-foreground: oklch(0.28 0.015 258);
+  --muted: oklch(0.955 0.004 258);
+  --muted-foreground: oklch(0.5 0.012 258);
+  --accent: oklch(0.94 0.006 258);
+  --accent-foreground: oklch(0.24 0.015 258);
+  --destructive: oklch(0.58 0.19 25);
+  --border: oklch(0.215 0.015 258 / 12%);
+  --input: oklch(0.215 0.015 258 / 16%);
+  --ring: oklch(0.66 0.14 70 / 45%);
+  --chart-1: oklch(0.66 0.14 70);
+  --chart-2: oklch(0.6 0.09 200);
+  --chart-3: oklch(0.55 0.08 258);
+  --chart-4: oklch(0.72 0.12 130);
+  --chart-5: oklch(0.62 0.13 25);
+  --sidebar: oklch(0.97 0.003 258);
+  --sidebar-foreground: oklch(0.215 0.015 258);
+  --sidebar-primary: oklch(0.66 0.14 70);
+  --sidebar-primary-foreground: oklch(0.22 0.03 70);
+  --sidebar-accent: oklch(0.93 0.005 258);
+  --sidebar-accent-foreground: oklch(0.24 0.015 258);
+  --sidebar-border: oklch(0.215 0.015 258 / 10%);
+  --sidebar-ring: oklch(0.66 0.14 70 / 45%);
+}
+
+.dark {
+  --background: oklch(0.165 0.012 258);
+  --foreground: oklch(0.965 0.004 258);
+  --card: oklch(0.205 0.014 258);
+  --card-foreground: oklch(0.965 0.004 258);
+  --popover: oklch(0.215 0.014 258);
+  --popover-foreground: oklch(0.965 0.004 258);
+  --primary: oklch(0.79 0.13 78);
+  --primary-foreground: oklch(0.2 0.03 78);
+  --secondary: oklch(0.26 0.014 258);
+  --secondary-foreground: oklch(0.96 0.004 258);
+  --muted: oklch(0.245 0.012 258);
+  --muted-foreground: oklch(0.72 0.012 258);
+  --accent: oklch(0.285 0.016 258);
+  --accent-foreground: oklch(0.97 0.004 258);
+  --destructive: oklch(0.66 0.18 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.79 0.13 78 / 55%);
+  --chart-1: oklch(0.79 0.13 78);
+  --chart-2: oklch(0.7 0.1 200);
+  --chart-3: oklch(0.65 0.08 258);
+  --chart-4: oklch(0.78 0.13 130);
+  --chart-5: oklch(0.7 0.14 25);
+  --sidebar: oklch(0.185 0.013 258);
+  --sidebar-foreground: oklch(0.965 0.004 258);
+  --sidebar-primary: oklch(0.79 0.13 78);
+  --sidebar-primary-foreground: oklch(0.2 0.03 78);
+  --sidebar-accent: oklch(0.26 0.014 258);
+  --sidebar-accent-foreground: oklch(0.97 0.004 258);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.79 0.13 78 / 55%);
+}
+
+@theme inline {
+  --font-sans: "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* 圆角锁：容器 12px，控件 10px，胶囊只用于开关/徽标。 */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    /* 桌面应用：默认不允许选中文字，输入框里再打开。 */
+    user-select: none;
+    overflow: hidden;
+  }
+
+  input,
+  textarea {
+    user-select: text;
+  }
+
+  ::selection {
+    @apply bg-primary/30;
+  }
+
+  /* 细滚动条，跟随主题。 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /* 时间/数字用等宽字形，进度跳字不会抖动。 */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+  }
+}
+
+/* 桌面歌词窗口：整页透明，背景由设置里的「背景不透明度」决定。 */
+body.lyrics-mode,
+body.lyrics-mode #root {
+  background: transparent;
+}
+
+/* 系统开了「减少动效」时，CSS 动画/过渡也一起收敛（JS 动效由 MotionConfig 处理）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
