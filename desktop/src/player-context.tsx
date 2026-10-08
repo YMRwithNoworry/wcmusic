@@ -157,6 +157,36 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     void step(1, true);
   }, [snapshot?.finished, snapshot?.current, step]);
 
+  // 最新的快照与队列：`togglePlayback` 要保持稳定引用，只能通过 ref 读它们。
+  const snapshotRef = useRef<PlaybackSnapshot | null>(null);
+  snapshotRef.current = snapshot;
+  const queueRef = useRef<Track[]>([]);
+  queueRef.current = queue;
+
+  /// 播放 / 暂停。
+  ///
+  /// 已经播完时（顺序播放到队列末尾就会停在这里）要「重播当前这首」，
+  /// 而不是 resume 一个已经空了的 sink：那样点播放不会出声，
+  /// 而且 `refresh` 看到 finished 又会把 playing 改回 false，看着就像没反应。
+  const togglePlayback = useCallback(async () => {
+    const current = snapshotRef.current;
+    const track = current?.current ?? null;
+    if (current?.finished && track) {
+      const index = queueRef.current.findIndex(
+        (item) => trackKey(item) === trackKey(track),
+      );
+      if (index >= 0) {
+        await playAt(queueRef.current, index);
+      } else {
+        await player.play(track);
+        await refresh();
+      }
+      return;
+    }
+    await player.toggle();
+    await refresh();
+  }, [playAt, refresh]);
+
   // 全局快捷键：后端用 Win32 注册，动作以事件发到前端，由这里执行。
   const lastVolume = useRef(0.8);
   if ((snapshot?.volume ?? 0) > 0) {
@@ -174,7 +204,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         void step(1, false);
         break;
       case "toggle_play":
-        void player.toggle().then(refresh);
+        void togglePlayback();
         break;
       case "volume_up":
         void player.setVolume(Math.min(1, volume + 0.05)).then(refresh);
@@ -220,11 +250,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const toggle = useCallback(async () => {
-    await player.toggle();
-    await refresh();
-  }, [refresh]);
-
   const seek = useCallback(
     async (positionMs: number) => {
       await player.seek(positionMs);
@@ -257,7 +282,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       next,
       previous,
-      toggle,
+      toggle: togglePlayback,
       seek,
       setVolume,
       setSpatial,
@@ -271,7 +296,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       next,
       previous,
-      toggle,
+      togglePlayback,
       seek,
       setVolume,
       setSpatial,

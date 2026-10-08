@@ -220,10 +220,16 @@ fn handle(command: Command, player: &mut Option<AudioPlayer>, shared: &Arc<Mutex
             set(shared, |state| state.playing = false);
         }
         Command::Resume => {
-            if let Some(player) = player.as_ref() {
-                let _ = player.resume();
+            // 已经播完的 sink 没有内容可 resume：保持暂停，由前端决定是否重播
+            // （否则 `playing` 先被置 true，下一次 refresh 又因 finished 改回 false，看着像没反应）。
+            match player.as_ref() {
+                Some(active) if active.has_finished() => {}
+                Some(active) => {
+                    let _ = active.resume();
+                    set(shared, |state| state.playing = true);
+                }
+                None => {}
             }
-            set(shared, |state| state.playing = true);
         }
         Command::Stop => {
             if let Some(player) = player.as_mut() {
