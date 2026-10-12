@@ -120,13 +120,12 @@ flutter doctor -v
 
 ---
 
-## 构建 WCMusic
-
-### 自动构建（推荐）
+## 构建 Flutter 客户端
 
 ```powershell
 cd d:\code\wcmusic
-nu build.nu
+flutter pub get
+flutter build windows --release
 ```
 
 ### 手动构建
@@ -197,10 +196,11 @@ flutter devices
 
 # 测试构建
 cd d:\code\wcmusic
-nu build.nu
+flutter pub get
+flutter build windows --release
 ```
 
-如果看到 `✅ 构建成功！`，说明环境配置完成！
+如果命令成功完成，Flutter Windows 产物位于 `build\windows\x64\runner\Release\wcmusic.exe`。
 
 ---
 

@@ -34,9 +34,9 @@ jdk在这里D:\MC\jdk
 ## Repository Structure
 - `desktop/`: Tauri 2 + React/Vite frontend and Rust backend.
 - `lib/`, `android/`, `windows/`, `assets/`, `test/`: Flutter code, platform runners, assets, and Dart tests.
-- `native/`: shared Rust core, legacy GPUI client, vendored dependencies, and native tools.
+- `native/`: shared Rust core, vendored dependencies, and native tools.
 - `scripts/`: release/version/site scripts; `site/`: static Cloudflare Pages site; `tool/`: project tools.
-- `build*.nu`: NuShell build scripts for desktop, Android, and legacy desktop targets.
+- `build*.nu`: NuShell build scripts for the Tauri desktop client and Flutter/Android targets.
 
 ## CI
 - Provider: GitHub Actions (`.github/workflows/release.yml`).

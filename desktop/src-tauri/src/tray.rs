@@ -1,6 +1,6 @@
 //! 系统托盘：左键点图标回到主界面，右键菜单可以显示主界面或退出。
 //!
-//! 关闭按钮不退出程序，只是把窗口收进托盘（与旧 GPUI 端一致）。
+//! 关闭按钮不退出程序，只是把窗口收进托盘。
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};

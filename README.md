@@ -1,14 +1,14 @@
 # WCMusic
 
-WCMusic 是面向 Windows 与 Android 的音乐播放器。Windows 桌面端正在从 GPUI 迁移到 **Tauri 2 + React**，Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验；Android 继续使用 Flutter 客户端。
+WCMusic 是面向 Windows 与 Android 的音乐播放器。Windows 桌面端使用 **Tauri 2 + React**，Android 使用 Flutter；Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验。
 
 ## 桌面客户端
 
-Windows 桌面端有两套实现，功能对齐前并存：
+Windows 桌面端统一使用 **Tauri 2 + React**，后续改动都落在 `desktop/`。
 
-**新端：Tauri 2 + React（`desktop/`，后续改动都落在这里）**
+**Tauri 2 + React（`desktop/`）**
 
-Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript，界面用 **Tailwind v4 + shadcn/ui** 搭建，动效由 **motion**（Framer Motion）驱动：侧栏选中胶囊、页面切换淡入、列表逐条入场、播放中的跳动竖条，并随系统「减少动效」设置自动收敛。已迁移：在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
+Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript，界面用 **Tailwind v4 + shadcn/ui** 搭建，动效由 **motion**（Framer Motion）驱动：侧栏选中胶囊、页面切换淡入、列表逐条入场、播放中的跳动竖条，并随系统「减少动效」设置自动收敛。支持在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
 
 ```text
 cd desktop && npm install                 # 首次拉前端依赖
@@ -21,19 +21,9 @@ WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu
 cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
-**旧端：GPUI（`native/wcmusic_ui`，保留到功能对齐）**
-
-使用 `gpui-kit 0.6`（GPUI + GPUI Component）构建。启动桌面界面：
-
-```text
-cargo run --manifest-path native/wcmusic_ui/Cargo.toml
-```
-
-生成发布版本可运行 `build_gpui.nu`，输出位于 `native/wcmusic_ui/target/release/wcmusic_ui.exe`。如果本机并行编译时内存紧张，可通过 `WCMUSIC_BUILD_JOBS=1` 控制 Cargo 并行任务数。它使用 GPUI Kit 的语义主题、Lucide 图标、Input/Button 等组件实现统一侧边导航、搜索、榜单、歌单、音源设置以及底部播放控制栏。Android 构建仍使用 `flutter run` 或 `flutter build apk`。
-
 ## 桌面歌词
 
-桌面歌词位于 `native/wcmusic_ui/src/lyrics.rs`，窗口的原生行为（鼠标穿透、置顶、移动）在 `lyrics_window.rs`。它按 LX Music 的交互重写：
+桌面歌词由 Tauri 前端 `desktop/src/LyricsWindow.tsx` 绘制，歌词解析与排版计算在 `desktop/src-tauri/src/lyrics.rs`，窗口保持置顶、无边框和透明，并按 LX Music 的交互实现：
 
 - 无边框透明窗口只画歌词：当前行居中放大，已播放部分逐字填充高亮色，上一行与下一行以更小字号淡出，靠近窗口边缘继续减弱
 - 文字描边保证在浅色壁纸上同样清晰，可选上下滚动、缩放或直接切换三种歌词动画
@@ -48,7 +38,7 @@ cargo run --manifest-path native/wcmusic_ui/Cargo.toml
 - 本地音频托管导入、持久化曲库、播放、暂停、进度跳转、音量控制与队列
 - 顺序播放、列表循环、随机循环、单曲循环四种播放方式，点击图标即可切换
 - 播放音质可选标准 128k、高品 320k 与无损 flac，整曲解析时按所选音质请求
-- GPUI 空间音效：播放栏的「空间音效」按钮开关一套双耳空间化处理——分频拓宽立体声（低频不动、高频拉宽）、对侧耳串扰（头部遮蔽，把声像推出颅腔）、左右交替到达的早期反射（方位感）与约 2 秒衰减的房间混响（距离感）；播放中平滑切换、不重启歌曲，开关状态保存在本机；默认关闭，关闭时是逐样本的精确旁路
+- 空间音效：播放栏的「空间音效」按钮开关一套双耳空间化处理——分频拓宽立体声（低频不动、高频拉宽）、对侧耳串扰（头部遮蔽，把声像推出颅腔）、左右交替到达的早期反射（方位感）与约 2 秒衰减的房间混响（距离感）；播放中平滑切换、不重启歌曲，开关状态保存在本机；默认关闭，关闭时是逐样本的精确旁路
 - 在线整曲可下载到本地，桌面端自选保存位置，Android 保存到下载目录
 - 获取歌曲（解析整曲地址与下载音频）时，列表行、播放栏与侧栏状态行都会显示「获取中」
 - 酷我、酷狗、QQ、网易云四个独立搜索渠道，搜索结果通过洛雪音源解析整曲
@@ -92,7 +82,7 @@ $env.ANDROID_HOME = "D:/tools/android-sdk"
 flutter analyze
 flutter test
 cargo test --manifest-path native/wcmusic_core/Cargo.toml
-cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
+nu build_desktop.nu
 
 # Android arm64 首次构建需安装 cargo-ndk 与 Rust target。
 cargo install cargo-ndk --locked
@@ -104,7 +94,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 桌面端发布可执行文件：新端 `desktop/src-tauri/target/release/wcmusic-desktop.exe`（`nu build_desktop.nu`），旧端 `native/wcmusic_ui/target/release/wcmusic_ui.exe`（`nu build_gpui.nu`）。**自动发布（推送到 `main` 触发）现在打包的是新端**：`wcmusic-windows-x64.zip` 里是 `wcmusic-desktop.exe`。Android 发布仍使用上面的 Flutter APK 命令。
+Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。自动发布（推送到 `main` 触发）打包 `wcmusic-windows-x64.zip`，Android 发布仍使用上面的 Flutter APK 命令。
 
 ## 目录
 

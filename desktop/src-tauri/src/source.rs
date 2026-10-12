@@ -1,12 +1,12 @@
 //! 音源脚本：内置音源、导入的音源库、整曲地址解析。
 //!
-//! 与旧 GPUI 端一致：只带内置音源，导入的音源放在内存里（重启即失）。
+//! 内置音源与导入的音源库：导入的音源放在内存里（重启即失）。
 
 use wcmusic_core::{
     SourceEnvironment, TrackSource, resolve_source_url_with_proxy, validate_source_script,
 };
 
-/// 内置音源（与旧桌面端同一份脚本）。
+/// 内置音源（应用内置的同一份脚本）。
 pub fn built_in_script() -> &'static str {
     include_str!("../../../assets/sources/yuxi_final_source.js")
 }
@@ -22,7 +22,7 @@ pub fn source_key(source: TrackSource) -> Option<&'static str> {
     }
 }
 
-/// 三档音质对应的解析参数（与旧端 `["128k", "320k", "flac"]` 一致）。
+/// 三档音质对应的解析参数。
 pub const QUALITIES: [&str; 3] = ["128k", "320k", "flac"];
 
 /// 用音源脚本解析整曲地址。
@@ -66,7 +66,7 @@ pub struct SourceView {
 
 /// 音源库：内置音源 + 导入的音源，记录当前生效的那一个。
 ///
-/// 与旧 GPUI 端一致：导入的音源只放内存，重启即失。
+/// 音源库：导入的音源只放内存，重启即失。
 #[derive(Default)]
 pub struct SourceStore {
     imported: Vec<ImportedSource>,

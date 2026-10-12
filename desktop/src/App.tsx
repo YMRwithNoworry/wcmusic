@@ -28,7 +28,7 @@ import type { AppInfo } from "@/types";
 // 侧栏图标直接用仓库根 assets/ 里的应用图标，Vite 打包时会带进来。
 import appIcon from "../../assets/icons/app_icon.png";
 
-/// 侧栏导航：与旧 GPUI 客户端的 Tab 一一对应。
+/// 侧栏导航：对应当前 Tauri 客户端的页面。
 const NAV = [
   { key: "home", label: "主页", icon: HouseIcon },
   { key: "search", label: "搜索", icon: MagnifyingGlassIcon },

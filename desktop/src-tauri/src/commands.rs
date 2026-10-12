@@ -13,7 +13,7 @@ use crate::settings::{AppSettings, SavedPlaylist, SavedTrack};
 use crate::source::{self, SourceView};
 use crate::state::AppState;
 
-/// 收藏歌曲的四个文件夹，与旧 GPUI 端的 `PLAYLIST_FOLDERS` 一致。
+/// 收藏歌曲的四个文件夹，保持与 Flutter 客户端的数据约定一致。
 const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 
 #[derive(Serialize)]

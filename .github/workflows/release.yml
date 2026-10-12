@@ -47,7 +47,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/wcmusic_ui/Cargo.toml native/wcmusic_ui/Cargo.lock desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json pubspec.yaml
+          git add desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json pubspec.yaml
           git commit -m "chore(release): ${{ steps.bump.outputs.tag }} [skip ci]"
           git push origin main
 

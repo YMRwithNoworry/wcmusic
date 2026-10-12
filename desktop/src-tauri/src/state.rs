@@ -17,7 +17,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// 启动时从 `%APPDATA%\wcmusic\settings.json` 读一次（旧 GPUI 端写的那份）。
+    /// 启动时从 `%APPDATA%\wcmusic\settings.json` 读一次。
     pub fn load() -> Self {
         let settings = AppSettings::load();
         let playback = Playback::new(1.0, settings.spatial_audio_enabled);

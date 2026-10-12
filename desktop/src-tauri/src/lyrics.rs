@@ -95,7 +95,7 @@ const STROKE_DIRECTIONS: [(f32, f32); 8] = [
 
 /// 将 `0xRRGGBB` 与透明度组合成 `0xRRGGBBAA`。
 ///
-/// 旧版把结果再包成 GPUI 的 `Hsla`，这里只保留纯计算：把 32 位色值交给前端即可。
+/// 这里只保留纯计算：把 32 位色值交给前端即可。
 pub fn tint(rgb: u32, alpha: f32) -> u32 {
     let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     ((rgb & 0x00FF_FFFF) << 8) | alpha
@@ -108,7 +108,7 @@ fn hex_label(rgb: u32) -> String {
 /// 把绘制用的字号量化到 0.5px 档位。
 ///
 /// 逐帧重绘时字号随强调度连续变化（`size * (0.86 + 0.14 * emphasis) * scale`），
-/// 未量化时几乎每帧都是新字号，GPUI 的文字排版缓存每帧都会 miss，于是每一帧
+/// 未量化时几乎每帧都是新字号，文字排版缓存每帧都会 miss，于是每一帧
 /// 都要对屏幕上每一行重新做一次 shaping。量化到 0.5px 后相邻帧落在同一档位，
 /// 排版缓存能命中；0.5px 的档位在视觉上看不出差别。
 fn quantize_font_size(size: f32) -> f32 {

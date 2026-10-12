@@ -1,21 +1,17 @@
 #!/usr/bin/env node
-// 递增版本号：三个客户端的版本号必须同步（旧 GPUI 桌面端 / 新 Tauri 桌面端 /
-// Flutter Android），否则安装包版本、关于页版本和更新检测会互相打架。
+// 递增版本号：两个客户端的版本号必须同步（Tauri 2 Windows 桌面端 / Flutter Android），
+// 否则安装包版本、关于页版本和更新检测会互相打架。
 //
 // 用法：node scripts/release/bump-version.mjs [patch|minor|major|none]
 // 输出（写入 $GITHUB_OUTPUT）：version=1.2.4 / tag=v1.2.4 / previous=1.2.3
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
-/// 版本号的事实来源：旧 GPUI 桌面端。
-const SOURCE = "native/wcmusic_ui/Cargo.toml";
-
-/// 跟着一起改的其它 Cargo.toml（都是 `[package]` 段顶部的 `version`）。
-const CARGO_TOMLS = ["desktop/src-tauri/Cargo.toml"];
+/// 版本号的事实来源：Tauri 2 桌面端。
+const SOURCE = "desktop/src-tauri/Cargo.toml";
 
 /// Cargo.lock 里也记着包自己的版本，漏改会让 `--locked` 的构建直接失败。
 const CARGO_LOCKS = [
-  { path: "native/wcmusic_ui/Cargo.lock", package: "wcmusic_ui" },
   { path: "desktop/src-tauri/Cargo.lock", package: "wcmusic-desktop" },
 ];
 
@@ -48,19 +44,6 @@ function nextVersion(current, kind) {
   return major + "." + minor + "." + patch;
 }
 
-/// 替换 `[package]` 段里的第一处 `version = "x.y.z"`。
-function bumpCargoToml(path, version) {
-  const source = readFileSync(path, "utf8");
-  if (!/^version = "\d+\.\d+\.\d+"/m.test(source)) {
-    throw new Error(path + " 里找不到版本号");
-  }
-  writeFileSync(
-    path,
-    source.replace(/^version = "\d+\.\d+\.\d+"/m, 'version = "' + version + '"'),
-  );
-}
-
-/// 替换 Cargo.lock 里某个包的版本。
 function bumpCargoLock(path, packageName, version) {
   const source = readFileSync(path, "utf8");
   const pattern = new RegExp(
@@ -91,7 +74,6 @@ const version = nextVersion(previous, kind);
 
 if (version !== previous) {
   writeFileSync(SOURCE, sourceToml.replace(/^version = "\d+\.\d+\.\d+"/m, 'version = "' + version + '"'));
-  for (const path of CARGO_TOMLS) bumpCargoToml(path, version);
   for (const { path, package: packageName } of CARGO_LOCKS) {
     bumpCargoLock(path, packageName, version);
   }

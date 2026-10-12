@@ -29,11 +29,8 @@ use image::{Rgba, RgbaImage};
 
 /// 源图（相对本 crate 的 CARGO_MANIFEST_DIR）。
 const SOURCE_PNG: &str = "../../../assets/icons/app_icon.png";
-/// 生成目标：GPUI 桌面端（build.rs 嵌入 exe）与 Flutter Windows 运行器各一份。
-const OUTPUT_ICOS: &[&str] = &[
-    "../../../assets/icons/app_icon.ico",
-    "../../../windows/runner/resources/app_icon.ico",
-];
+/// 生成目标：Flutter Windows 运行器。
+const OUTPUT_ICOS: &[&str] = &["../../../windows/runner/resources/app_icon.ico"];
 
 /// BMP 条目尺寸：覆盖 100%~200% 缩放下的任务栏（16~32）、标题栏（16~24）、
 /// Alt+Tab（32~64）与托盘（16~24），以及托盘在 175% 缩放下的 56。

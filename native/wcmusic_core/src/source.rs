@@ -612,8 +612,7 @@ new Promise((resolve) => {{
         );
     }
 
-    /// GPUI 的点击回调跑在很小的主线程栈上（Windows 主线程默认约 1 MB），
-    /// 校验必须能在这种调用环境里存活。
+    /// Windows 主线程默认栈空间较小，校验必须能在这种调用环境里存活。
     #[test]
     fn validation_survives_a_tight_caller_stack() {
         let handle = std::thread::Builder::new()
