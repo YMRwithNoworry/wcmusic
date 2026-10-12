@@ -15,91 +15,36 @@ jdk在这里D:\MC\jdk
 
 <!-- END dsh-global-system-prompt -->
 
-# WCMusic 项目说明（Agent 上下文）
+## Project Name + Purpose
+**WCMusic** — a Flutter/Rust music player for Windows and Android, with a Tauri desktop client.
 
-面向 Windows 与 Android 的音乐播放器。两个客户端共用同一套 Rust 核心：Windows 桌面端正在从 Rust + GPUI 迁移到 **Tauri 2 + React**（新端在 `desktop/`，旧的 `native/wcmusic_ui` 在功能对齐前保留），Android 端继续用 Flutter。
+## Tech Stack
+- Dart and Flutter for the mobile app and Flutter Windows runner.
+- Rust 2024 with Cargo for the shared core and Tauri 2 backend.
+- TypeScript, React 19, Vite, Tailwind CSS 4, and Tauri 2 in `desktop/`.
+- SQLite and QuickJS integration are provided by the Rust core.
 
-## 架构与目录
+## Package Manager + Common Commands
+- Package managers: Flutter Pub, npm (`desktop/package-lock.json`), and Cargo.
+- Install: `flutter pub get`; `npm --prefix desktop ci`.
+- Build: `nu build_desktop.nu`; `npm --prefix desktop run build`; `flutter build apk --release --target-platform android-arm64`.
+- Test: `flutter test`; `cargo test --manifest-path native/wcmusic_core/Cargo.toml`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib`.
+- Lint: `flutter analyze`; desktop npm and Rust lint commands are not configured.
 
-| 路径 | 作用 |
-| --- | --- |
-| `native/wcmusic_core` | 共享核心 crate（`crate-type = ["cdylib", "rlib"]`）：曲库索引与检索、SQLite 持久化、M3U/洛雪备份解析、洛雪自定义音源 QuickJS 运行时；公开 API 从 `lib.rs` re-export |
-| `native/wcmusic_core/src/ffi.rs` | 给 Dart/Android 的 C ABI（`wcmusic_*` 前缀，返回 JSON 字符串，Dart 侧用 `wcmusic_string_free` 释放） |
-| `native/wcmusic_ui` | Windows 桌面端（gpui-kit 0.6）。`main.rs` 是 7000+ 行的视图层单文件；`lyrics.rs`/`lyrics_window.rs` 桌面歌词；`settings.rs` 设置持久化；`audio_player.rs`、`tray.rs`、`hotkey.rs`、`smooth_scroll.rs`、`picker.rs` |
-| `native/wcmusic_ui/src/app_icon.rs` | 窗口/托盘图标的按尺寸装载（`LoadImageW` + `WM_SETICON`）与窗口标题常量 |
-| `desktop` | **新的 Windows 桌面端（Tauri 2 + React）**：`src/` 是 React 前端（Vite + TS），`src-tauri/` 是 Rust 后端（复用 `native/wcmusic_core`）。后端模块：`commands`（命令面）、`state`、`playback`、`audio`、`lyrics`、`settings`、`hotkey`、`source`、`online`、`update`、`tray` |
-| `desktop/src/components/ui` | **shadcn/ui 组件**（Tailwind v4 + radix-ui 统一包 + phosphor 图标）。样式底座在 `src/index.css`（主题变量）与 `src/shadcn-base.css`（registry 的 `cn-*` 工具类）；用 `desktop/scripts/fetch-shadcn.mjs` 拉新组件、`fix-shadcn.mjs` 把占位符换成项目实际导入 |
-| `desktop/src-tauri/tauri.conf.json` | 窗口与打包配置：无边框主窗口 + 置顶透明的桌面歌词窗口；能力清单在 `capabilities/` |
-| `build_desktop.nu` | 构建 Tauri 桌面端（先 `npm run build` 出 `dist/`，再 `cargo build --release --features custom-protocol` 把前端嵌进 exe） |
-| `native/tools/icon_gen` | 由 `assets/icons/app_icon.png` 生成多尺寸 ICO（去白底、裁边、小尺寸特写版），产物同步到 `assets/icons/` 与 `windows/runner/resources/` |
-| `native/vendor/rquickjs-sys` | `[patch.crates-io]` 里的本地 rquickjs-sys |
-| `lib/domain` | Flutter 领域模型与 Repository 接口 |
-| `lib/data` | Flutter 平台服务与 Repository 实现（原生桥、音源、搜索、下载、歌词、窗口） |
-| `lib/ui` | 主题、ViewModel（`ui/features/player/player_view_model.dart` 为状态中心）、页面与组件；跨页复用组件放 `lib/ui/core/` |
-| `test` | Dart 测试，含 `golden_test.dart` 与 `test/goldens/*.png` 金图 |
-| `site` | Cloudflare Pages 静态站（`wrangler.toml` 指向 `./site`） |
-| `windows/runner` | Flutter Windows 运行器（含 `lyrics_overlay.cpp` 悬浮歌词原生窗口） |
+## Repository Structure
+- `desktop/`: Tauri 2 + React/Vite frontend and Rust backend.
+- `lib/`, `android/`, `windows/`, `assets/`, `test/`: Flutter code, platform runners, assets, and Dart tests.
+- `native/`: shared Rust core, legacy GPUI client, vendored dependencies, and native tools.
+- `scripts/`: release/version/site scripts; `site/`: static Cloudflare Pages site; `tool/`: project tools.
+- `build*.nu`: NuShell build scripts for desktop, Android, and legacy desktop targets.
 
-## 工具链（本机实际路径）
+## CI
+- Provider: GitHub Actions (`.github/workflows/release.yml`).
+- Push: runs on `main`, bumps versions, builds the Windows Tauri package, attempts the Android APK, publishes a GitHub Release, and syncs the site.
+- Pull requests: not configured. Manual dispatch is supported.
 
-- Flutter 3.44.8：`D:/tools/flutter/bin/flutter.bat`（**不在 PATH**，必须写全路径）
-- Rust 1.98：`C:/Users/Administrator/.cargo/bin/cargo.exe`（同样不在 PATH），默认 host 为 `x86_64-pc-windows-gnu`
-- Node 26 / npm 11：`C:/Program Files/nodejs`（桌面端前端依赖装在 `desktop/`，先 `npm install`）
-- JDK 在 `D:/MC/jdk`：默认 `graalvm-25.2.4+7.1`，Android 打包必须切到 `jdk-21.0.2`
-- Android SDK `D:/tools/android-sdk`，NDK `28.2.13676358`
-- 国内镜像：`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`、`PUB_HOSTED_URL=https://pub.flutter-io.cn`
-- Shell 一律用 Niubash（Bash 语法），`nu` 在 `C:/Users/Administrator/scoop/shims/nu.exe`
-
-### 常用命令
-
-```bash
-D:/tools/flutter/bin/flutter.bat analyze   # 当前 No issues found
-D:/tools/flutter/bin/flutter.bat test
-C:/Users/Administrator/.cargo/bin/cargo.exe test --manifest-path native/wcmusic_core/Cargo.toml
-nu build_gpui.nu                           # 旧 GPUI 桌面端：cargo build --release --manifest-path native/wcmusic_ui/Cargo.toml
-WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu   # 新 Tauri 桌面端：先 vite build 出 dist/，再 cargo build --release（把前端嵌进 exe）
-cd desktop && npm install && cd ..         # 首次拉前端依赖
-cd desktop && npm run build && cd ..       # 只出前端 dist/（改完前端必须重跑构建，dist 是编译期嵌进 exe 的）
-C:/Users/Administrator/.cargo/bin/cargo.exe +stable-x86_64-pc-windows-msvc test --manifest-path desktop/src-tauri/Cargo.toml --lib   # Tauri 后端单测
-cd desktop && npx vite preview --port 4173 --strictPort   # 预览 dist（另一个终端）
-cd desktop && node scripts/shots.mjs                       # 用 Playwright 给各页面截图到 desktop/shots/（已 gitignore），肉眼验收排版与配色
-nu build_android.nu                        # Flutter APK + cargo ndk 产物
-cargo +stable-x86_64-pc-windows-msvc run --release --manifest-path native/tools/icon_gen/Cargo.toml -- --preview native/tools/icon_gen/target/preview   # 重新生成多尺寸 ICO
-```
-
-注意：
-
-- `rquickjs-sys` 的构建脚本要调用 C 编译器（MSVC + Windows SDK）。`native/wcmusic_core/target` 和 `native/wcmusic_ui/target` 里的既有产物由 `stable-x86_64-pc-windows-msvc` 工具链生成；本机目前只有 gnu 工具链且没有 gcc/cl.exe，`cargo check` 会停在 `cc-rs: failed to find tool "gcc.exe"` —— 属环境缺工具链，不是代码问题，不要为此改代码。
-- `build_android.nu` 里的 `C:\flutter`、`D:\tools\android-sdk\ndk\28.2.13012046` 已过时，按上面的实际路径修正后再用。
-- Windows 侧只改 Flutter 代码不会影响桌面客户端；桌面端现在有**两套**实现：`native/wcmusic_ui`（旧 GPUI，功能对齐前保留，不再加新功能）与 `desktop`（新 Tauri 2 + React，后续改动都落在这里）。
-- 新桌面端的构建链：`desktop/src-tauri` 是一个独立 cargo 包（自带 `[patch.crates-io] rquickjs-sys`，路径相对它自己），必须用 MSVC 工具链；前端产物 `desktop/dist` 在 `cargo build` 时嵌入 exe，所以**改完前端要重新构建**。
-- 新桌面端前端是 **Tailwind v4 + shadcn/ui + motion（Framer Motion）**：`src/components/ui/*` 是 shadcn 组件，页面与业务组件在 `src/pages`、`src/components`。动效统一用 `motion/react`（页面切换、侧栏选中胶囊、列表入场、播放竖条），并在 `App.tsx` 用 `MotionConfig reducedMotion="user"` 尊重系统「减少动效」。
-- **不要在 Tauri 后端弹原生文件对话框**（`rfd` / `tauri-plugin-dialog`）：`rfd` 在这个进程里创建不出窗口，命令会一直挂起，用户看到的就是「点导入没反应」。需要选文件就用前端隐藏的 `<input type="file">`，读内容后传给后端命令（如 `import_source_script`）。
-- **手工构建 release 必须带 `--features custom-protocol`**（`nu build_desktop.nu` 已经带上）：Tauri 用 `dev = !custom_protocol` 决定加载开发服务器还是内嵌前端，少了它即使 `--release` 也会去连 `http://localhost:1420`，用户看到的是「无法连接到 localhost」。`desktop/src-tauri/build.rs` 已在 release 且缺这个 feature 时直接报错拦下。完整命令：
-  `cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml`
-- 新桌面端是托盘应用：点关闭只是收进托盘，冒烟测试收尾必须 `taskkill /IM wcmusic-desktop.exe /F`，否则残留进程会让下一次 `cargo build` 报 `failed to remove file ...exe`。
-- 版本号需同时更新 `pubspec.yaml` 的 `version`、`native/wcmusic_ui/Cargo.toml`（含 `Cargo.lock`）、`desktop/src-tauri/Cargo.toml`（含 `Cargo.lock`）与 `desktop/package.json` 的 `package.version`（当前 1.2.42）；`scripts/release/bump-version.mjs` 会一次性同步这几处。
-- **发布是全自动的**：`.github/workflows/release.yml` 在每次推送到 `main` 时递增版本号（`scripts/release/bump-version.mjs`，同步三个客户端的版本号）→ 构建 Windows 包（新 Tauri 桌面端，必成）与 Android 包（Flutter，尽力而为、失败不阻塞）→ 创建 GitHub Release → 用 `scripts/release/sync-site.mjs` 同步官网版本号、下载链接、发布日期与更新日志。版本号提交与官网提交都带 `[skip ci]`，不会递归触发。手动补发：`gh workflow run release.yml -f bump=patch`（`bump=none` 只重发当前版本）。
-- 安装包发布在**源码仓库** `YMRwithNoworry/wcmusic` 的 Release 里（历史版本仍留在 `YMRwithNoworry/wcmusic-releases`），资产名固定为 `wcmusic-windows-x64.zip`（内容是 `wcmusic-desktop.exe`，即新 Tauri 桌面端）与 `wcmusic-android-arm64.apk`；应用内更新检测（`desktop/src-tauri/src/update.rs`、`native/wcmusic_ui/src/update.rs`）查的就是源码仓库的 Release。
-- Android 侧 `:app:buildRustCore` 依赖 `cargo-ndk` 与 `aarch64-linux-android` target，本机都没装（`rustup target list --installed` 只有两个 Windows target），需要先 `rustup target add aarch64-linux-android` 与 `cargo install cargo-ndk` 才能重新构建 APK。
-
-## 代码约定
-
-- 沿用现有文件的中文注释与中文用户可见文案，不额外引入英文注释。
-- Flutter 依赖注入沿用 `main.dart` 的 `ChangeNotifierProvider` + 构造注入（服务都支持传入 provider/依赖以便测试）。
-- Rust 公开 API 只从 `wcmusic_core::lib.rs` re-export；对 Dart 暴露新能力时同步改 `ffi.rs` 与 `lib/data/services/native_core_bridge.dart`。
-- 音源脚本是第三方代码：Rust 运行时限制 32 MB 内存，单次网络请求 15 秒超时；解析失败要明确回退而不是崩溃。
-- 应用数据：桌面端 `%APPDATA%\wcmusic\{settings.json,sources.json}`；Flutter 端写 `getApplicationSupportDirectory()`。
-
-## 测试与发布
-
-- Dart 测试在 `test/`；Rust 单元测试写在源文件内的 `#[cfg(test)] mod tests`（`native/wcmusic_core/tests` 是空目录）。
-- 本机 `flutter test` 的基线是 74 passed / 9 failed：`golden_test.dart` 的金图差异（渲染与字体环境不同，diff 图输出到 `test/failures/`）、`widget_test.dart` 的 pointer 异常、`source_repository_test.dart` 依赖 Rust 运行时导致 10 分钟超时。这些是既存环境问题，不要为了它们改代码；新增测试后先看失败是否落在基线之外。
-- 站点：`site/` 静态文件，`wrangler.toml` 配置 Cloudflare Pages。
-- 安装包走 GitHub Release，文件名固定为 `wcmusic-windows-x64.zip` 与 `wcmusic-android-arm64.apk`（见 `site/downloads/README.md`）。
-- 不要把 `build/`、`native/**/target/`、`android/app/src/main/jniLibs/` 提交进仓库（已在 `.gitignore`）。
-- 远程仓库 `origin` = https://github.com/YMRwithNoworry/wcmusic ，分支 `main`；改动完成并验证后提交推送。
-
-## 其他文档
-
-`README.md`（能力与桌面歌词说明）、`ANIMATION_TEST_GUIDE.md`、`DEBUG_ARTWORK.md`、`FLUTTER_INSTALL.md`、`PROXY_BYPASS.md`。
+## Conventions
+- Dart tests live in `test/`; Rust unit tests use inline `#[cfg(test)]` modules.
+- Dart analysis extends `package:flutter_lints/flutter.yaml`; desktop TypeScript uses React `.tsx` components.
+- Desktop pages live in `desktop/src/pages`, shared UI components in `desktop/src/components/ui`, and Rust core APIs are re-exported from `lib.rs`.
+- Keep existing Chinese comments and user-facing text when modifying localized code.
