@@ -138,7 +138,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           {formatTime(position)}
         </span>
         <Slider
-          className="w-[clamp(180px,26vw,420px)]"
+          className="w-[clamp(200px,28vw,460px)]"
           value={[Math.min(position, Math.max(duration, 1))]}
           max={Math.max(duration, 1)}
           step={1000}
@@ -181,7 +181,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           {volume > 0 ? <SpeakerHighIcon /> : <SpeakerSlashIcon />}
         </Button>
         <Slider
-          className="w-24"
+          className="w-28"
           value={[Math.round(volume * 100)]}
           max={100}
           step={1}

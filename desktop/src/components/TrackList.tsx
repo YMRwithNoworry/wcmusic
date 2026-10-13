@@ -67,7 +67,7 @@ const TrackRow = memo(function TrackRow({
       }}
       onClick={() => onPlay(index)}
       className={cn(
-        "group grid cursor-pointer grid-cols-[24px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_64px_28px] items-center gap-3 rounded-[10px] px-2.5 py-2 text-sm transition-colors",
+        "group grid cursor-pointer grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_64px_28px] items-center gap-3 rounded-[10px] px-2.5 py-2 text-sm transition-colors",
         playing ? "bg-accent/70" : "hover:bg-accent/45",
       )}
     >
@@ -79,6 +79,16 @@ const TrackRow = memo(function TrackRow({
             {index + 1}
           </span>
         )}
+      </span>
+      <span className="size-10 overflow-hidden rounded-[7px] bg-muted">
+        {track.artworkUri ? (
+          <img
+            src={track.artworkUri}
+            alt=""
+            loading="lazy"
+            className="size-full object-cover"
+          />
+        ) : null}
       </span>
       <span className={cn("truncate font-medium", playing && "text-primary")}>
         {track.title}

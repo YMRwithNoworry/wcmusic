@@ -349,7 +349,7 @@ export default function SettingsPage() {
           </Row>
           <Row label="字号">
             <Slider
-              className="w-[160px]"
+              className="w-[190px]"
               value={[lyrics.font_size]}
               min={14}
               max={72}
@@ -381,7 +381,7 @@ export default function SettingsPage() {
               onChange={(stroke_color) => patchLyrics({ stroke_color })}
             />
             <Slider
-              className="w-[120px]"
+              className="w-[160px]"
               value={[lyrics.stroke_width]}
               min={0}
               max={6}
@@ -391,7 +391,7 @@ export default function SettingsPage() {
           </Row>
           <Row label="背景不透明度">
             <Slider
-              className="w-[160px]"
+              className="w-[190px]"
               value={[Math.round(lyrics.background_opacity * 100)]}
               max={100}
               step={1}
@@ -400,7 +400,7 @@ export default function SettingsPage() {
           </Row>
           <Row label="整体不透明度">
             <Slider
-              className="w-[160px]"
+              className="w-[190px]"
               value={[Math.round(lyrics.opacity * 100)]}
               min={10}
               max={100}

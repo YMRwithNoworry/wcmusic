@@ -25,9 +25,9 @@ const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 /// 每张固定 320×320×4 ≈ 0.4 MB。
 const ARTWORK_MAX_EDGE: u32 = 320;
 
-/// 允许解码的原图像素数上限（12 MP）：解码一张巨图本身就是几十上百 MB 的瞬时占用，
+/// 允许解码的原图像素数上限（20 MP）：解码一张巨图本身就是几十上百 MB 的瞬时占用，
 /// 超过上限的图直接放弃，让界面回退到占位图。
-const ARTWORK_MAX_SOURCE_PIXELS: u64 = 12_000_000;
+const ARTWORK_MAX_SOURCE_PIXELS: u64 = 20_000_000;
 
 /// 封面重新编码为 JPEG 的质量：85 在肉眼无差别的范围内体积最小。
 const ARTWORK_JPEG_QUALITY: u8 = 85;
@@ -662,24 +662,6 @@ pub fn download_audio(url: &str) -> Result<Vec<u8>, String> {
 }
 
 pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, String> {
-    let response = http_agent(use_proxy)
-        .get(url)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WCMusic/1.0",
-        )
-        .call()
-        .map_err(|error| format!("下载封面失败: {error}"))?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(8 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("读取封面失败: {error}"))?;
-    if bytes.is_empty() {
-        return Err("封面为空".into());
-    }
-    let bytes = normalize_artwork(&bytes)?;
     let dir = std::env::temp_dir().join("wcmusic-artwork");
     std::fs::create_dir_all(&dir).map_err(|error| format!("创建封面缓存失败: {error}"))?;
     let safe_id: String = id
@@ -694,8 +676,49 @@ pub fn download_artwork(url: &str, id: &str, use_proxy: bool) -> Result<String, 
         .collect();
     // 文件名带上目标边长：旧版本存的是原图，换名后不会再被复用。
     let path = dir.join(format!("{safe_id}-{ARTWORK_MAX_EDGE}.jpg"));
-    std::fs::write(&path, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
+    if path.is_file() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    let bytes = download_artwork_bytes(url, use_proxy)?;
+    let bytes = normalize_artwork(&bytes)?;
+    let temporary = path.with_extension("jpg.tmp");
+    std::fs::write(&temporary, bytes).map_err(|error| format!("保存封面失败: {error}"))?;
+    std::fs::rename(&temporary, &path).map_err(|error| format!("提交封面缓存失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+fn download_artwork_bytes(url: &str, use_proxy: bool) -> Result<Vec<u8>, String> {
+    let request = |proxy| {
+        http_agent(proxy)
+            .get(url)
+            .set(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WCMusic/1.0",
+            )
+            .set("Referer", "https://music.163.com/")
+            .call()
+    };
+    let response = match request(use_proxy) {
+        Ok(response) => response,
+        Err(proxy_error) if use_proxy => request(false).map_err(|direct_error| {
+            format!("代理请求失败: {proxy_error}; 直连失败: {direct_error}")
+        })?,
+        Err(error) => return Err(format!("下载封面失败: {error}")),
+    };
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("读取封面失败: {error}"))?;
+    if bytes.is_empty() {
+        return Err("封面为空".into());
+    }
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("封面文件超过 8 MB 限制".into());
+    }
+    Ok(bytes)
 }
 
 /// 把平台封面统一成「最长边不超过 [`ARTWORK_MAX_EDGE`] 的 JPEG」。
@@ -1044,7 +1067,7 @@ mod tests {
 
     #[test]
     fn oversized_artwork_is_rejected_before_decoding() {
-        assert!(!artwork_pixels_allowed(4000, 4000));
+        assert!(!artwork_pixels_allowed(5000, 5000));
         assert!(artwork_pixels_allowed(1500, 1500));
     }
 

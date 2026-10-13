@@ -79,7 +79,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setArtwork(url);
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error("[artwork]", error);
         if (alive) {
           setArtwork(null);
         }

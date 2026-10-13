@@ -29,8 +29,21 @@ export const api = {
 
 /// 在线搜索 / 榜单 / 歌单。
 export const online = {
-  search: (query: string, channel: OnlineSearchChannel, limit = 30) =>
-    invoke<Track[]>("search_online", { query, channel, limit }),
+  search: async (query: string, channel: OnlineSearchChannel, limit = 30) => {
+    const request = invoke<Track[]>("search_online", { query, channel, limit });
+    let timer: number | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new Error("搜索超时，请检查网络或代理设置")),
+        20_000,
+      );
+    });
+    return Promise.race([request, timeout]).finally(() => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    });
+  },
   rankings: () => invoke<PlatformRanking[]>("load_rankings"),
   rankingTracks: (ranking: PlatformRanking) =>
     invoke<Track[]>("load_ranking_tracks", { ranking }),

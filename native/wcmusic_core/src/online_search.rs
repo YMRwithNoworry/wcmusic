@@ -8,6 +8,8 @@ use thiserror::Error;
 
 use crate::{Track, TrackSource};
 
+const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OnlineSearchChannel {
     Kuwo,
@@ -134,19 +136,13 @@ pub fn search_online_with_proxy(
         ],
     };
 
-    let agent = shared_agent(use_proxy);
-    let mut request = agent.get(channel.endpoint());
-    for (key, value) in &params {
-        request = request.query(key, value);
-    }
-    let body = request
-        .set("Accept", "application/json")
-        .set("User-Agent", "WCMusic/1.0")
-        .set("Referer", channel.referer())
-        .call()
-        .map_err(|error| OnlineSearchError::Network(error.to_string()))?
-        .into_string()
-        .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    let body = search_request(&params, channel, use_proxy).or_else(|error| {
+        if use_proxy {
+            search_request(&params, channel, false)
+        } else {
+            Err(error)
+        }
+    })?;
     let body = body.trim_start_matches('\u{feff}');
     let value: Value = if channel == OnlineSearchChannel::Kuwo {
         json5::from_str(body).map_err(|_| OnlineSearchError::InvalidResponse(channel.label()))?
@@ -156,6 +152,41 @@ pub fn search_online_with_proxy(
     };
 
     parse_response(channel, &value)
+}
+
+fn search_request(
+    params: &[(impl AsRef<str>, String)],
+    channel: OnlineSearchChannel,
+    use_proxy: bool,
+) -> Result<String, OnlineSearchError> {
+    let agent = shared_agent(use_proxy);
+    let mut request = agent.get(channel.endpoint());
+    for (key, value) in params {
+        request = request.query(key.as_ref(), value);
+    }
+    let response = request
+        .set("Accept", "application/json")
+        .set("User-Agent", "WCMusic/1.0")
+        .set("Referer", channel.referer())
+        .call()
+        .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    read_response_text(response, channel.label())
+}
+
+fn read_response_text(response: ureq::Response, label: &str) -> Result<String, OnlineSearchError> {
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| OnlineSearchError::Network(format!("{label}响应读取失败: {error}")))?;
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(OnlineSearchError::Network(format!(
+            "{label}响应超过 {} MB 限制",
+            MAX_RESPONSE_BYTES / 1024 / 1024
+        )));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Load the current chart directory from Kuwo, Kugou, QQ Music and NetEase.
@@ -574,9 +605,9 @@ fn shared_agent(use_proxy: bool) -> ureq::Agent {
     cached
         .get_or_init(|| {
             ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(10))
-                .timeout_read(Duration::from_secs(15))
-                .timeout_write(Duration::from_secs(15))
+                .timeout_connect(Duration::from_secs(5))
+                .timeout_read(Duration::from_secs(8))
+                .timeout_write(Duration::from_secs(8))
                 .try_proxy_from_env(use_proxy)
                 .build()
         })
@@ -595,14 +626,13 @@ fn request_json(
     for (key, value) in params {
         request = request.query(key.as_ref(), value);
     }
-    let body = request
+    let response = request
         .set("Accept", "application/json")
         .set("User-Agent", "WCMusic/1.0")
         .set("Referer", referer)
         .call()
-        .map_err(|error| OnlineSearchError::Network(error.to_string()))?
-        .into_string()
         .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    let body = read_response_text(response, referer)?;
     let body = body.trim_start_matches('\u{feff}');
     if json5_response {
         json5::from_str(body).map_err(|_| {
@@ -641,9 +671,15 @@ fn request_text(
     let mut bytes = Vec::new();
     response
         .into_reader()
-        .take(8 * 1024 * 1024)
+        .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(OnlineSearchError::Network(format!(
+            "歌单响应超过 {} MB 限制",
+            MAX_RESPONSE_BYTES / 1024 / 1024
+        )));
+    }
     Ok(decode_charset(&bytes, content_type.as_deref()))
 }
 

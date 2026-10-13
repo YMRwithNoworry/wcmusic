@@ -438,6 +438,8 @@ fn create_lyrics_window(
     .map_err(|error| error.to_string())?;
     // 锁定（默认）时鼠标穿透：置顶歌词窗口不能挡住其它软件的点击与拖拽。
     let _ = window.set_ignore_cursor_events(style.locked);
+    let _ = window.show();
+    let _ = window.set_focus();
     eprintln!("桌面歌词窗口已创建");
     Ok(())
 }
