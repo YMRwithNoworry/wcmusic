@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { favorites, online } from "@/api";
 import TrackList from "@/components/TrackList";
@@ -24,39 +24,53 @@ const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 /// 排行榜页：先选平台，再选榜单，最后出曲目。
 export default function RankingsPage() {
   const { settings, replace } = useSettings();
+  const requestIdRef = useRef(0);
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
   const [rankings, setRankings] = useState<PlatformRanking[]>([]);
   const [active, setActive] = useState<PlatformRanking | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const requestId = ++requestIdRef.current;
+    setDirectoryLoading(true);
     setError(null);
     try {
       const all = await online.rankings();
+      if (requestId !== requestIdRef.current) return;
       setRankings(all);
-      setActive(all.find((item) => item.channel === channel) ?? null);
     } catch (problem) {
+      if (requestId !== requestIdRef.current) return;
       setError(String(problem));
       setRankings([]);
       setActive(null);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        setDirectoryLoading(false);
+      }
     }
-  }, [channel]);
+  }, []);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    return () => { ++requestIdRef.current; };
+  }, [load, settings?.use_network_proxy]);
+
+  useEffect(() => {
+    setActive(rankings.find((item) => item.channel === channel) ?? null);
+  }, [channel, rankings]);
 
   useEffect(() => {
     if (!active) {
       setTracks([]);
+      setLoading(false);
       return;
     }
     let alive = true;
+    setTracks([]);
+    setError(null);
     setLoading(true);
     online
       .rankingTracks(active)
@@ -119,13 +133,14 @@ export default function RankingsPage() {
       {error ? (
         <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
+          <Button className="ml-3" variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
         </div>
       ) : null}
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         {visible.map((ranking) => (
           <Button
-            key={ranking.id}
+            key={`${ranking.channel}-${ranking.id}`}
             size="sm"
             variant={ranking.id === active?.id ? "default" : "outline"}
             onClick={() => setActive(ranking)}
@@ -133,13 +148,13 @@ export default function RankingsPage() {
             {ranking.name}
           </Button>
         ))}
-        {!loading && visible.length === 0 ? (
+        {!directoryLoading && visible.length === 0 ? (
           <span className="text-sm text-muted-foreground">没有取到榜单。</span>
         ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {loading ? (
+        {directoryLoading || loading ? (
           <div className="flex flex-col gap-1.5">
             {Array.from({ length: 10 }).map((_, index) => (
               <Skeleton key={index} className="h-9 rounded-[10px]" />

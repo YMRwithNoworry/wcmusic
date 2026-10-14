@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use regex::Regex;
@@ -218,7 +218,14 @@ pub fn load_rankings_with_proxy(
     for (channel, result) in results {
         match result {
             Ok(mut values) => rankings.append(&mut values),
-            Err(error) => failures.push(format!("{}: {error}", channel.label())),
+            Err(error) => {
+                let fallback = fallback_rankings(channel);
+                if fallback.is_empty() {
+                    failures.push(format!("{}: {error}", channel.label()));
+                } else {
+                    rankings.extend(fallback);
+                }
+            }
         }
     }
     if rankings.is_empty() {
@@ -231,6 +238,43 @@ pub fn load_rankings_with_proxy(
     } else {
         Ok(rankings)
     }
+}
+
+fn fallback_rankings(channel: OnlineSearchChannel) -> Vec<PlatformRanking> {
+    let entries: &[(&str, &str, Option<&str>)] = match channel {
+        OnlineSearchChannel::Kuwo => &[
+            ("93", "酷我飙升榜", None),
+            ("17", "酷我新歌榜", None),
+            ("16", "酷我热歌榜", None),
+            ("158", "抖音热歌榜", None),
+        ],
+        OnlineSearchChannel::Kugou => &[
+            ("8888", "TOP500", None),
+            ("6666", "酷狗热歌榜", None),
+            ("527", "网络红歌榜", None),
+        ],
+        OnlineSearchChannel::QqMusic => &[
+            ("4", "巅峰榜·流行指数", None),
+            ("26", "巅峰榜·热歌", None),
+            ("27", "巅峰榜·新歌", None),
+            ("5", "巅峰榜·内地", None),
+        ],
+        OnlineSearchChannel::Netease => &[
+            ("19723756", "飙升榜", None),
+            ("3779629", "新歌榜", None),
+            ("3778678", "热歌榜", None),
+            ("2884035", "原创榜", None),
+        ],
+    };
+    entries
+        .iter()
+        .map(|(id, name, artwork_uri)| PlatformRanking {
+            id: (*id).to_owned(),
+            name: (*name).to_owned(),
+            channel,
+            artwork_uri: artwork_uri.map(str::to_owned),
+        })
+        .collect()
 }
 
 /// Load up to 100 songs from a chart.
@@ -621,6 +665,25 @@ fn request_json(
     use_proxy: bool,
     json5_response: bool,
 ) -> Result<Value, OnlineSearchError> {
+    let request = |proxy| request_json_once(endpoint, params, referer, proxy, json5_response);
+    match request(use_proxy) {
+        Ok(value) => Ok(value),
+        Err(proxy_error) if use_proxy => request(false).map_err(|direct_error| {
+            OnlineSearchError::Network(format!(
+                "代理请求失败: {proxy_error}; 直连失败: {direct_error}"
+            ))
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+fn request_json_once(
+    endpoint: &str,
+    params: &[(impl AsRef<str>, String)],
+    referer: &str,
+    use_proxy: bool,
+    json5_response: bool,
+) -> Result<Value, OnlineSearchError> {
     let agent = shared_agent(use_proxy);
     let mut request = agent.get(endpoint);
     for (key, value) in params {
@@ -770,16 +833,15 @@ fn kuwo_api_json(
         .query("httpsStatus", "1")
         .query("reqId", &req_id)
         .query("plat", "web_www");
-    let body = request
+    let response = request
         .set("Accept", "application/json")
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .set("Referer", referer)
         .set("Cookie", &cookie_header)
         .set("Secret", &session.secret)
         .call()
-        .map_err(|error| OnlineSearchError::Network(error.to_string()))?
-        .into_string()
         .map_err(|error| OnlineSearchError::Network(error.to_string()))?;
+    let body = read_response_text(response, referer)?;
     serde_json::from_str(body.trim_start_matches('\u{feff}'))
         .map_err(|_| OnlineSearchError::InvalidResponse(OnlineSearchChannel::Kuwo.label()))
 }
@@ -791,6 +853,25 @@ fn load_kuwo_json(
     params: &[(impl AsRef<str>, String)],
     use_proxy: bool,
 ) -> Result<Value, OnlineSearchError> {
+    match load_kuwo_json_once(endpoint, params, use_proxy) {
+        Ok(value) => Ok(value),
+        Err(proxy_error) if use_proxy => load_kuwo_json_once(endpoint, params, false).map_err(|direct_error| {
+            OnlineSearchError::Network(format!(
+                "代理请求失败: {proxy_error}; 直连失败: {direct_error}"
+            ))
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+fn load_kuwo_json_once(
+    endpoint: &str,
+    params: &[(impl AsRef<str>, String)],
+    use_proxy: bool,
+) -> Result<Value, OnlineSearchError> {
+    // 同一 IP 的新 cookie 会使旧令牌失效，串行执行完整会话以免刷新请求互相作废。
+    static SESSION: Mutex<()> = Mutex::new(());
+    let _session_guard = SESSION.lock().unwrap_or_else(|error| error.into_inner());
     let referer = OnlineSearchChannel::Kuwo.referer();
     let mut last_error = None;
     for _ in 0..2 {

@@ -2,7 +2,7 @@ import { ArrowLeftIcon } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
-import { lyrics as lyricsApi } from "@/api";
+import { useTrackLyrics, pageLyricColor } from "@/lib/use-track-lyrics";
 import KaraokeText from "@/components/KaraokeText";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,14 +10,6 @@ import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
 import type { LyricLine } from "@/types";
-
-/// `0xRRGGBB` + 透明度 → CSS 颜色。
-function toCss(rgb: number, alpha: number): string {
-  const r = (rgb >> 16) & 0xff;
-  const g = (rgb >> 8) & 0xff;
-  const b = rgb & 0xff;
-  return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
 
 interface LyricRowProps {
   line: LyricLine;
@@ -102,49 +94,13 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const { settings } = useSettings();
   const { snapshot, artwork, seek } = usePlayer();
   const track = snapshot?.current ?? null;
-  const [lines, setLines] = useState<LyricLine[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { lines, loading, error, retry } = useTrackLyrics(
+    track, settings?.lyrics.show_translation ?? true, settings?.use_network_proxy ?? false,
+  );
   /// 是否跟随当前行自动滚动；用户手动滚动后暂停，过几秒再恢复。
   const [following, setFollowing] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const resumeTimer = useRef<number | null>(null);
-
-  const trackKey = track ? `${track.source}-${track.id}` : null;
-
-  useEffect(() => {
-    if (!track) {
-      setLines([]);
-      setError(null);
-      return;
-    }
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    lyricsApi
-      .load(track)
-      .then((next) => {
-        if (alive) {
-          setLines(next);
-        }
-      })
-      .catch((problem) => {
-        if (alive) {
-          setError(String(problem));
-          setLines([]);
-        }
-      })
-      .finally(() => {
-        if (alive) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-    // 只在换歌时重新抓歌词。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackKey]);
 
   const style = settings?.lyrics;
   const offset = style?.offset_ms ?? 0;
@@ -152,8 +108,9 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const playing = snapshot?.playing ?? false;
   const index = useCurrentLine(lines, position, playing, offset);
 
-  const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
-  const highlight = toCss(style?.highlight_color ?? 0xffffff, style?.highlight_alpha ?? 1);
+  const dark = settings?.dark_theme ?? true;
+  const textColor = pageLyricColor(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1, dark);
+  const highlight = pageLyricColor(style?.highlight_color ?? 0xffffff, style?.highlight_alpha ?? 1, dark);
   const karaoke = style?.karaoke ?? false;
   const fontSize = style?.font_size ?? 28;
   const fontWeight = style?.font_weight ?? 500;
@@ -259,7 +216,10 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
             ))}
           </div>
         ) : error ? (
-          <p className="pt-6 text-sm text-destructive">{error}</p>
+          <div className="pt-6 text-sm text-destructive">
+            <p>{error}</p>
+            <Button variant="secondary" size="sm" onClick={retry}>重新加载歌词</Button>
+          </div>
         ) : lines.length === 0 ? (
           <p className="pt-6 text-sm text-muted-foreground">
             {track ? "这首歌没有找到歌词。" : "先播放一首歌。"}

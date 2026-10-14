@@ -9,6 +9,7 @@
 //! * 另外保留一套纯粹的排版计算（行强调度、行距、淡出曲线、窗口保护范围），
 //!   前端按同一套公式绘制即可得到与旧客户端一致的观感。
 
+use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,9 @@ use serde_json::Value;
 
 use wcmusic_core::{Track, TrackSource};
 
-const PANEL_WIDTH: f32 = 392.0;
+const LYRICS_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+
+
 const PANEL_TOP: f32 = 42.0;
 const PANEL_LEFT: f32 = 14.0;
 const PANEL_HEIGHT: f32 = 208.0;
@@ -249,7 +252,7 @@ fn finite_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LyricLine {
     pub time_ms: u64,
     pub text: String,
@@ -391,11 +394,18 @@ fn parse_lrc_lines(content: &str) -> Vec<LyricLine> {
 }
 
 pub fn fetch_lyrics(track: &Track, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
-    let source_id = track
-        .source_id
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "歌曲缺少平台 ID，无法获取歌词".to_owned())?;
+    if matches!(track.source, TrackSource::Local | TrackSource::Mg | TrackSource::Custom) {
+        return Ok(Vec::new());
+    }
+    let source_id = track.source_id.as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&track.id);
+    let source_id = source_id.trim()
+        .trim_start_matches("kw-")
+        .trim_start_matches("kg-")
+        .trim_start_matches("tx-")
+        .trim_start_matches("wy-")
+        .trim_start_matches("MUSIC_");
 
     let lines = match track.source {
         TrackSource::Kw => load_kuwo(source_id, use_proxy)?,
@@ -410,16 +420,8 @@ pub fn fetch_lyrics(track: &Track, use_proxy: bool) -> Result<Vec<LyricLine>, St
     Ok(lines)
 }
 
-/// 抓取歌词，并在平台没有提供翻译时自动补全翻译。
-///
-/// 酷我、酷狗的歌词接口只返回正文，所以「显示翻译」在这两个平台上一直是空的；
-/// 正文解析完之后，这里再用在线翻译接口（微软 → 谷歌 → MyMemory）逐行补齐。
-/// 自动翻译失败只影响翻译，正文照常返回。
-pub fn fetch_lyrics_with_translation(
-    track: &Track,
-    use_proxy: bool,
-) -> Result<Vec<LyricLine>, String> {
-    let mut lines = fetch_lyrics(track, use_proxy)?;
+/// 在正文已经加载后补充翻译；翻译失败不影响正文。
+pub fn translate_lyrics(mut lines: Vec<LyricLine>, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
     if needs_auto_translation(&lines) {
         let _ = translate_lines(&mut lines, use_proxy);
     }
@@ -897,9 +899,9 @@ fn load_netease(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, Stri
 /// 歌词与翻译请求共用的 HTTP 客户端（含连接/读写超时与可选代理）。
 fn http_agent(use_proxy: bool) -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(15))
-        .timeout_write(Duration::from_secs(15))
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(8))
+        .timeout_write(Duration::from_secs(8))
         .try_proxy_from_env(use_proxy)
         .build()
 }
@@ -910,21 +912,49 @@ fn get_json(
     referer: &str,
     use_proxy: bool,
 ) -> Result<Value, String> {
+    let request = |proxy| get_json_once(endpoint, params, referer, proxy);
+    let body = match request(use_proxy) {
+        Ok(body) => body,
+        Err(proxy_error) if use_proxy => request(false).map_err(|direct_error| {
+            format!("代理请求失败：{proxy_error}；直连失败：{direct_error}")
+        })?,
+        Err(error) => return Err(error),
+    };
+    serde_json::from_str(body.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("歌词数据解析失败：{error}"))
+}
+
+fn get_json_once(
+    endpoint: &str,
+    params: &[(&str, &str)],
+    referer: &str,
+    use_proxy: bool,
+) -> Result<String, String> {
     let agent = http_agent(use_proxy);
     let mut request = agent.get(endpoint);
     for (key, value) in params {
         request = request.query(key, value);
     }
-    let body = request
+    let response = request
         .set("Accept", "application/json")
         .set("User-Agent", "WCMusic/1.0")
         .set("Referer", referer)
         .call()
-        .map_err(|error| format!("歌词请求失败：{error}"))?
-        .into_string()
+        .map_err(|error| format!("歌词请求失败：{error}"))?;
+    read_lyrics_response(response)
+}
+
+fn read_lyrics_response(response: ureq::Response) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(LYRICS_MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("歌词读取失败：{error}"))?;
-    let body = body.trim_start_matches('\u{feff}');
-    serde_json::from_str(body).map_err(|error| format!("歌词数据解析失败：{error}"))
+    if bytes.len() as u64 > LYRICS_MAX_RESPONSE_BYTES {
+        return Err("歌词响应超过 8 MB 限制".to_owned());
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn post_json(
@@ -933,21 +963,36 @@ fn post_json(
     referer: &str,
     use_proxy: bool,
 ) -> Result<Value, String> {
+    let request = |proxy| post_json_once(endpoint, payload, referer, proxy);
+    let body = match request(use_proxy) {
+        Ok(body) => body,
+        Err(proxy_error) if use_proxy => request(false).map_err(|direct_error| {
+            format!("代理请求失败：{proxy_error}；直连失败：{direct_error}")
+        })?,
+        Err(error) => return Err(error),
+    };
+    serde_json::from_str(body.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("歌词数据解析失败：{error}"))
+}
+
+fn post_json_once(
+    endpoint: &str,
+    payload: &Value,
+    referer: &str,
+    use_proxy: bool,
+) -> Result<String, String> {
     let agent = http_agent(use_proxy);
     let payload =
         serde_json::to_string(payload).map_err(|error| format!("歌词请求编码失败：{error}"))?;
-    let body = agent
+    let response = agent
         .post(endpoint)
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .set("User-Agent", "WCMusic/1.0")
         .set("Referer", referer)
         .send_string(&payload)
-        .map_err(|error| format!("歌词请求失败：{error}"))?
-        .into_string()
-        .map_err(|error| format!("歌词读取失败：{error}"))?;
-    let body = body.trim_start_matches('\u{feff}');
-    serde_json::from_str(body).map_err(|error| format!("歌词数据解析失败：{error}"))
+        .map_err(|error| format!("歌词请求失败：{error}"))?;
+    read_lyrics_response(response)
 }
 
 fn text(value: Option<&Value>) -> Option<String> {

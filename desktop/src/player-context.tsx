@@ -39,7 +39,7 @@ function trackKey(track: Track): string {
   return `${track.source}-${track.id}`;
 }
 
-export function PlayerProvider({ children }: { children: ReactNode }) {
+export function PlayerProvider({ children, controls = true }: { children: ReactNode; controls?: boolean }) {
   const { settings } = useSettings();
   const [snapshot, setSnapshot] = useState<PlaybackSnapshot | null>(null);
   const [artwork, setArtwork] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // 换歌时取封面（后端有落盘缓存）。
   useEffect(() => {
     const track = snapshot?.current;
-    if (!track) {
+    if (!track || !controls) {
       setArtwork(null);
       return;
     }
@@ -90,7 +90,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
     // 只在换歌时重取封面。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId]);
+  }, [currentId, controls]);
 
   const playAt = useCallback(
     async (tracks: Track[], index: number) => {
@@ -234,6 +234,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    if (!controls) return;
     let unlisten: (() => void) | null = null;
     let disposed = false;
     void listen<string>("wcmusic://hotkey", (event) => {
@@ -249,7 +250,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [controls]);
 
   const seek = useCallback(
     async (positionMs: number) => {

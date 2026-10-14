@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { api } from "./api";
 import type { AppSettings } from "./types";
 
@@ -30,7 +32,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void reload();
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen<AppSettings>("wcmusic://settings-changed", (event) => setSettings(event.payload))
+      .then((unlisten) => { if (disposed) unlisten(); else stop = unlisten; })
+      .catch((problem) => console.error("[settings events]", problem));
+    void reload().catch((problem) => toast.error(`读取设置失败：${problem}`));
+    return () => { disposed = true; stop?.(); };
   }, [reload]);
 
   // 深浅主题：Tailwind v4 的 dark 变体看 <html class="dark">。
@@ -46,8 +54,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         return;
       }
       const next = { ...settings, ...patch };
-      setSettings(next);
-      setSettings(await api.saveSettings(next));
+      try {
+        setSettings(await api.saveSettings(next));
+      } catch (problem) {
+        toast.error(`保存设置失败：${problem}`);
+      }
     },
     [settings],
   );

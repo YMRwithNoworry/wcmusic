@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { favorites, online } from "@/api";
+import { Button } from "@/components/ui/button";
 import PlaylistDetail from "@/components/PlaylistDetail";
 import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
 import {
@@ -29,32 +30,56 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+function cachedPlaylists(channel: OnlineSearchChannel): PlatformPlaylist[] {
+  try {
+    const cached: unknown = JSON.parse(localStorage.getItem(`wcmusic-hot-${channel}`) ?? "[]");
+    if (!Array.isArray(cached)) return [];
+    return cached.filter((item): item is PlatformPlaylist =>
+      item && item.channel === channel && typeof item.id === "string" && typeof item.name === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
 /// 「此刻」页：平台热门歌单 + 我的收藏；点开歌单后切到详情视图。
 export default function HomePage() {
   const { settings, replace } = useSettings();
+  const requestIdRef = useRef(0);
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
-  const [hot, setHot] = useState<PlatformPlaylist[]>([]);
+  const [hot, setHot] = useState<PlatformPlaylist[]>(() => cachedPlaylists("Kuwo"));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /// 点开的歌单：`tracks` 为 `null` 表示还在载入。
   const [detail, setDetail] = useState<{ name: string; tracks: Track[] | null } | null>(null);
 
   const loadHot = useCallback(async (next: OnlineSearchChannel) => {
+    const requestId = ++requestIdRef.current;
+    setHot(cachedPlaylists(next));
     setLoading(true);
     setError(null);
     try {
-      setHot(await online.playlists(next));
+      const playlists = await online.playlists(next);
+      if (requestId !== requestIdRef.current) return;
+      setHot(playlists);
+      try {
+        localStorage.setItem(`wcmusic-hot-${next}`, JSON.stringify(playlists));
+      } catch {
+        // 本地缓存不可用不影响实时歌单。
+      }
     } catch (problem) {
+      if (requestId !== requestIdRef.current) return;
       setError(String(problem));
-      setHot([]);
+      setHot((current) => current.length ? current : cachedPlaylists(next));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadHot(channel);
-  }, [channel, loadHot]);
+    return () => { ++requestIdRef.current; };
+  }, [channel, loadHot, settings?.use_network_proxy]);
 
   const openPlaylist = async (playlist: PlatformPlaylist) => {
     setDetail({ name: playlist.name, tracks: null });
@@ -125,12 +150,13 @@ export default function HomePage() {
       {error ? (
         <div className="mb-5 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
+          <Button className="ml-3" size="sm" variant="secondary" onClick={() => void loadHot(channel)}>重试</Button>
         </div>
       ) : null}
 
       <section className="mb-8 flex flex-col gap-3">
         <SectionTitle>平台热门歌单</SectionTitle>
-        {loading ? (
+        {loading && hot.length === 0 ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(142px,1fr))] gap-3">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="h-[212px] rounded-xl" />

@@ -1,4 +1,5 @@
 /// 后端命令的类型化包装：前端只通过这里与 Rust 通信。
+import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
@@ -28,6 +29,17 @@ export const api = {
 };
 
 /// 在线搜索 / 榜单 / 歌单。
+function withTimeout<T>(request: Promise<T>, message: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), 20_000);
+  });
+  return Promise.race([request, timeout]).finally(() => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  });
+}
+
+const playlistRequests = new Map<OnlineSearchChannel, Promise<PlatformPlaylist[]>>();
 export const online = {
   search: async (query: string, channel: OnlineSearchChannel, limit = 30) => {
     const request = invoke<Track[]>("search_online", { query, channel, limit });
@@ -44,13 +56,27 @@ export const online = {
       }
     });
   },
-  rankings: () => invoke<PlatformRanking[]>("load_rankings"),
+  rankings: () => withTimeout(invoke<PlatformRanking[]>("load_rankings"), "排行榜加载超时，请检查网络或代理设置"),
   rankingTracks: (ranking: PlatformRanking) =>
-    invoke<Track[]>("load_ranking_tracks", { ranking }),
-  playlists: (channel: OnlineSearchChannel) =>
-    invoke<PlatformPlaylist[]>("load_playlists", { channel }),
+    withTimeout(
+      invoke<Track[]>("load_ranking_tracks", { ranking }),
+      "榜单歌曲加载超时，请检查网络或代理设置",
+    ),
+  playlists: (channel: OnlineSearchChannel) => {
+    const pending = playlistRequests.get(channel);
+    if (pending) return pending;
+    const request = withTimeout(
+      invoke<PlatformPlaylist[]>("load_playlists", { channel }),
+      "歌单加载超时，请检查网络或代理设置",
+    ).finally(() => playlistRequests.delete(channel));
+    playlistRequests.set(channel, request);
+    return request;
+  },
   playlistTracks: (playlist: PlatformPlaylist) =>
-    invoke<Track[]>("load_playlist_tracks", { playlist }),
+    withTimeout(
+      invoke<Track[]>("load_playlist_tracks", { playlist }),
+      "歌单歌曲加载超时，请检查网络或代理设置",
+    ),
 };
 
 /// 播放控制。
@@ -78,7 +104,8 @@ export const favorites = {
 
 /// 歌词。
 export const lyrics = {
-  load: (track: Track) => invoke<LyricLine[]>("load_lyrics", { track }),
+  load: (track: Track) => withTimeout(invoke<LyricLine[]>("load_lyrics", { track }), "歌词加载超时，请重试"),
+  translate: (lines: LyricLine[]) => withTimeout(invoke<LyricLine[]>("translate_lyrics", { lines }), "歌词翻译暂时不可用"),
   presets: () => invoke<LyricsPresets>("lyrics_presets"),
 };
 
@@ -112,5 +139,12 @@ export const desktopWindow = {
 
 /// 桌面歌词窗口。
 export const lyricsWindow = {
-  toggle: () => invoke<boolean>("toggle_lyrics_window"),
+  toggle: async () => {
+    try {
+      return await withTimeout(invoke<boolean>("toggle_lyrics_window"), "桌面歌词窗口打开超时");
+    } catch (problem) {
+      toast.error(`桌面歌词打开失败：${problem}`);
+      return false;
+    }
+  },
 };

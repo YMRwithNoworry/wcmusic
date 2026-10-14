@@ -369,7 +369,8 @@ pub fn artwork_data_url(track: &Track, use_proxy: bool) -> Result<Option<String>
     let Some(uri) = track.artwork_uri.clone() else {
         return Ok(None);
     };
-    let path = download_artwork(&uri, &track.id, use_proxy)?;
+    let cache_id = format!("{:?}-{}", track.source, track.id);
+    let path = download_artwork(&uri, &cache_id, use_proxy)?;
     let bytes = std::fs::read(&path).map_err(|error| format!("读取封面失败：{error}"))?;
     Ok(Some(format!(
         "data:image/jpeg;base64,{}",

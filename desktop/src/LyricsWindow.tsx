@@ -1,12 +1,14 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { toast } from "sonner";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
-import { lyrics as lyricsApi } from "@/api";
+import { useTrackLyrics } from "@/lib/use-track-lyrics";
 import KaraokeText from "@/components/KaraokeText";
 import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
-import type { LyricLine } from "@/types";
+
 
 /// `0xRRGGBB` + 透明度 → CSS 颜色。
 function toCss(rgb: number, alpha: number): string {
@@ -21,39 +23,15 @@ export default function LyricsWindow() {
   const { settings } = useSettings();
   const { snapshot } = usePlayer();
   const track = snapshot?.current ?? null;
-  const [lines, setLines] = useState<LyricLine[]>([]);
-  const trackKey = track ? `${track.source}-${track.id}` : null;
+  const { lines, loading, error } = useTrackLyrics(
+    track, settings?.lyrics.show_translation ?? true, settings?.use_network_proxy ?? false,
+  );
 
   // 桌面歌词窗口要透明：给 body 加个类，CSS 里把背景清掉。
   useEffect(() => {
     document.body.classList.add("lyrics-mode");
     return () => document.body.classList.remove("lyrics-mode");
   }, []);
-
-  useEffect(() => {
-    if (!track) {
-      setLines([]);
-      return;
-    }
-    let alive = true;
-    lyricsApi
-      .load(track)
-      .then((next) => {
-        if (alive) {
-          setLines(next);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setLines([]);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-    // 只在换歌时重新抓歌词。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackKey]);
 
   const style = settings?.lyrics;
   const offset = style?.offset_ms ?? 0;
@@ -94,9 +72,18 @@ export default function LyricsWindow() {
 
   return (
     <div
-      className={`flex h-full w-full flex-col justify-center gap-1.5 overflow-hidden px-4 py-3 ${alignment}`}
+      className={`relative flex h-full w-full flex-col justify-center gap-1.5 overflow-hidden px-4 py-3 ${alignment}`}
       style={{ background, opacity: style?.opacity ?? 1, textAlign }}
     >
+      {!style?.locked ? (
+        <button
+          type="button"
+          aria-label="关闭桌面歌词"
+          title="关闭桌面歌词"
+          className="absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded bg-black/60 text-lg text-white hover:bg-black/80"
+          onClick={() => void getCurrentWindow().close().catch((problem) => toast.error(`关闭桌面歌词失败：${problem}`))}
+        >×</button>
+      ) : null}
       {current ? (
         <motion.div
           key={current.time_ms}
@@ -129,7 +116,7 @@ export default function LyricsWindow() {
         </motion.div>
       ) : (
         <div className="text-sm opacity-80" style={{ color: textColor, textShadow }}>
-          {track ? "这首歌没有找到歌词" : "未在播放"}
+          {error ?? (loading ? "正在加载歌词…" : lines.length > 0 ? track?.title : track ? "这首歌没有找到歌词" : "未在播放")}
         </div>
       )}
 

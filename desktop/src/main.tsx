@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
@@ -7,14 +8,13 @@ import { PlayerProvider } from "./player-context";
 import { SettingsProvider } from "./settings-context";
 import "./index.css";
 
-/// 桌面歌词是独立的置顶窗口：同一个页面，URL 带 `#lyrics`。
-const isLyricsWindow = window.location.hash === "#lyrics";
+const isLyricsWindow = getCurrentWindow().label === "lyrics";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {isLyricsWindow ? (
       <SettingsProvider>
-        <PlayerProvider>
+        <PlayerProvider controls={false}>
           <LyricsWindow />
         </PlayerProvider>
       </SettingsProvider>

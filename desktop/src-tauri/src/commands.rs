@@ -4,7 +4,7 @@
 //! Tauri 会把它们放到工作线程，不卡住窗口。
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use wcmusic_core::{OnlineSearchChannel, PlatformPlaylist, PlatformRanking, Track};
 
 use crate::online;
@@ -41,62 +41,77 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 
 /// 整份覆盖保存设置（前端把改完的整份设置传回来）。
 #[tauri::command]
-pub fn save_settings(
+pub async fn save_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: AppSettings,
-) -> AppSettings {
+) -> Result<AppSettings, String> {
+    if settings.lyrics_enabled {
+        show_lyrics_window(&app, &settings.lyrics)?;
+    } else {
+        destroy_lyrics_window(&app)?;
+    }
     let saved = state.update_settings(|current| *current = settings);
-    // 快捷键可能被改了：按新设置重新注册一次。
     state.apply_hotkeys();
-    // 歌词窗口的「锁定鼠标穿透 / 置顶」也可能被改了，立刻生效。
     apply_lyrics_window_style(&app, &saved.lyrics);
-    saved
+    let _ = app.emit("wcmusic://settings-changed", &saved);
+    Ok(saved)
 }
 
 /// 关键字搜索（每个平台最多 `limit` 条）。
-#[tauri::command(async)]
-pub fn search_online(
+#[tauri::command]
+pub async fn search_online(
     query: String,
     channel: OnlineSearchChannel,
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Track>, String> {
     let use_proxy = state.settings().use_network_proxy;
-    online::search(&query, channel, limit.unwrap_or(30), use_proxy)
+    tauri::async_runtime::spawn_blocking(move || online::search(&query, channel, limit.unwrap_or(30), use_proxy))
+        .await.map_err(|error| error.to_string())?
 }
 
 /// 榜单目录。
-#[tauri::command(async)]
-pub fn load_rankings(state: State<'_, AppState>) -> Result<Vec<PlatformRanking>, String> {
-    online::rankings(state.settings().use_network_proxy)
+#[tauri::command]
+pub async fn load_rankings(state: State<'_, AppState>) -> Result<Vec<PlatformRanking>, String> {
+    let use_proxy = state.settings().use_network_proxy;
+    tauri::async_runtime::spawn_blocking(move || online::rankings(use_proxy))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// 某个榜单的曲目。
-#[tauri::command(async)]
-pub fn load_ranking_tracks(
+#[tauri::command]
+pub async fn load_ranking_tracks(
     ranking: PlatformRanking,
     state: State<'_, AppState>,
 ) -> Result<Vec<Track>, String> {
-    online::ranking_tracks(&ranking, state.settings().use_network_proxy)
+    let use_proxy = state.settings().use_network_proxy;
+    tauri::async_runtime::spawn_blocking(move || online::ranking_tracks(&ranking, use_proxy))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// 某平台的推荐歌单。
-#[tauri::command(async)]
-pub fn load_playlists(
+#[tauri::command]
+pub async fn load_playlists(
     channel: OnlineSearchChannel,
     state: State<'_, AppState>,
 ) -> Result<Vec<PlatformPlaylist>, String> {
-    online::playlists(channel, state.settings().use_network_proxy)
+    let use_proxy = state.settings().use_network_proxy;
+    tauri::async_runtime::spawn_blocking(move || online::playlists(channel, use_proxy))
+        .await.map_err(|error| error.to_string())?
 }
 
 /// 某个歌单的曲目。
-#[tauri::command(async)]
-pub fn load_playlist_tracks(
+#[tauri::command]
+pub async fn load_playlist_tracks(
     playlist: PlatformPlaylist,
     state: State<'_, AppState>,
 ) -> Result<Vec<Track>, String> {
-    online::playlist_tracks(&playlist, state.settings().use_network_proxy)
+    let use_proxy = state.settings().use_network_proxy;
+    tauri::async_runtime::spawn_blocking(move || online::playlist_tracks(&playlist, use_proxy))
+        .await.map_err(|error| error.to_string())?
 }
 
 /// 播放一首在线歌曲（解析地址 → 边下边播）。
@@ -217,14 +232,27 @@ pub fn toggle_saved_track(
     })
 }
 
-/// 抓取歌词（酷我/酷狗/QQ/网易云），平台没给翻译时自动补全。
-#[tauri::command(async)]
-pub fn load_lyrics(
+/// 抓取歌词正文，自动翻译由前端在正文显示后单独请求。
+#[tauri::command]
+pub async fn load_lyrics(
     track: Track,
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::lyrics::LyricLine>, String> {
     let use_proxy = state.settings().use_network_proxy;
-    crate::lyrics::fetch_lyrics_with_translation(&track, use_proxy)
+    tauri::async_runtime::spawn_blocking(move || crate::lyrics::fetch_lyrics(&track, use_proxy))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn translate_lyrics(
+    lines: Vec<crate::lyrics::LyricLine>,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::lyrics::LyricLine>, String> {
+    let use_proxy = state.settings().use_network_proxy;
+    tauri::async_runtime::spawn_blocking(move || crate::lyrics::translate_lyrics(lines, use_proxy))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// 歌词设置页要用的候选值（字体、配色、描边）。
@@ -333,9 +361,11 @@ pub fn hotkey_issues(state: State<'_, AppState>) -> Vec<HotKeyIssue> {
 
 /// 显示 / 隐藏主界面（快捷键「显示/隐藏主界面」用）。
 #[tauri::command]
-pub fn toggle_main_window(window: tauri::WebviewWindow) -> Result<bool, String> {
+pub fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
+    let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
     let visible = window.is_visible().map_err(|error| error.to_string())?;
     if visible {
+        close_lyrics_window(&app)?;
         window.hide().map_err(|error| error.to_string())?;
     } else {
         let _ = window.show();
@@ -377,12 +407,15 @@ pub fn hotkey_list(state: State<'_, AppState>) -> Vec<HotKeyView> {
 ///
 /// 窗口第一次显示时按设置里的尺寸与位置创建；已经存在就直接显隐。
 #[tauri::command]
-pub fn toggle_lyrics_window(
+pub async fn toggle_lyrics_window(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let style = state.settings().lyrics;
-    toggle_lyrics_window_inner(&app, &style)
+    let visible = toggle_lyrics_window_inner(&app, &style)?;
+    let saved = state.update_settings(|settings| settings.lyrics_enabled = visible);
+    let _ = app.emit("wcmusic://settings-changed", &saved);
+    Ok(visible)
 }
 
 /// 命令与启动流程共用的实现。
@@ -393,10 +426,12 @@ pub fn toggle_lyrics_window_inner(
     if let Some(window) = app.get_webview_window("lyrics") {
         let visible = window.is_visible().unwrap_or(false);
         if visible {
-            window.hide().map_err(|error| error.to_string())?;
+            destroy_lyrics_window(app)?;
             return Ok(false);
         }
+        window.set_ignore_cursor_events(style.locked).map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
         return Ok(true);
     }
     create_lyrics_window(app, style)?;
@@ -408,7 +443,8 @@ pub fn show_lyrics_window(
     app: &tauri::AppHandle,
     style: &crate::lyrics::LyricsStyle,
 ) -> Result<(), String> {
-    if app.get_webview_window("lyrics").is_some() {
+    if let Some(window) = app.get_webview_window("lyrics") {
+        window.show().map_err(|error| error.to_string())?;
         return Ok(());
     }
     create_lyrics_window(app, style)
@@ -418,11 +454,19 @@ fn create_lyrics_window(
     app: &tauri::AppHandle,
     style: &crate::lyrics::LyricsStyle,
 ) -> Result<(), String> {
-    let window = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         "lyrics",
-        tauri::WebviewUrl::App("index.html#lyrics".into()),
-    )
+        tauri::WebviewUrl::App("index.html".into()),
+    );
+    // WebView2 复用同一用户数据目录时，环境参数必须与主窗口保持一致。
+    #[cfg(target_os = "windows")]
+    let builder = match app.config().app.windows.iter().find(|window| window.label == "main")
+        .and_then(|window| window.additional_browser_args.as_deref()) {
+        Some(args) => builder.additional_browser_args(args),
+        None => builder,
+    };
+    let window = builder
     .title("WCMusic 桌面歌词")
     .inner_size(style.window_width as f64, style.window_height as f64)
     .position(
@@ -436,11 +480,35 @@ fn create_lyrics_window(
     .skip_taskbar(true)
     .build()
     .map_err(|error| error.to_string())?;
+    // 页面按窗口 label 选择入口，不依赖加载完成后修改 URL 的时序。
     // 锁定（默认）时鼠标穿透：置顶歌词窗口不能挡住其它软件的点击与拖拽。
-    let _ = window.set_ignore_cursor_events(style.locked);
-    let _ = window.show();
-    let _ = window.set_focus();
+    window
+        .set_ignore_cursor_events(style.locked)
+        .map_err(|error| format!("设置桌面歌词鼠标行为失败：{error}"))?;
+    window
+        .show()
+        .map_err(|error| format!("显示桌面歌词窗口失败：{error}"))?;
+    if !style.locked {
+        window.set_focus().map_err(|error| format!("聚焦桌面歌词窗口失败：{error}"))?;
+    }
     eprintln!("桌面歌词窗口已创建");
+    Ok(())
+}
+
+/// 销毁原生窗口，释放置顶透明窗口的鼠标命中区域。
+fn destroy_lyrics_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("lyrics") {
+        window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
+        window.set_always_on_top(false).map_err(|error| error.to_string())?;
+        window.destroy().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn close_lyrics_window(app: &tauri::AppHandle) -> Result<(), String> {
+    destroy_lyrics_window(app)?;
+    let saved = app.state::<AppState>().update_settings(|settings| settings.lyrics_enabled = false);
+    let _ = app.emit("wcmusic://settings-changed", &saved);
     Ok(())
 }
 

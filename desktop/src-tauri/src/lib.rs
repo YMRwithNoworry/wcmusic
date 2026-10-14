@@ -35,18 +35,31 @@ pub fn run() {
             }
             // 设置里开着桌面歌词就把窗口建出来（与旧桌面端一致）。
             let settings = app.state::<state::AppState>().settings();
-            if settings.lyrics_enabled
-                && let Err(error) = commands::show_lyrics_window(app.handle(), &settings.lyrics)
-            {
-                eprintln!("创建桌面歌词窗口失败：{error}");
+            if settings.lyrics_enabled {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = commands::show_lyrics_window(&handle, &settings.lyrics) {
+                        eprintln!("创建桌面歌词窗口失败：{error}");
+                    }
+                });
             }
             Ok(())
         })
         .on_window_event(|window, event| {
             // 点关闭按钮收进托盘而不是退出：退出走托盘菜单。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "main" {
+                    api.prevent_close();
+                    if let Err(error) = commands::close_lyrics_window(window.app_handle()) {
+                        eprintln!("关闭桌面歌词失败：{error}");
+                    }
+                    let _ = window.hide();
+                } else if window.label() == "lyrics" {
+                    // 歌词窗口真正关闭；不能保留透明置顶窗口拦截鼠标。
+                    if let Err(error) = commands::close_lyrics_window(window.app_handle()) {
+                        eprintln!("关闭桌面歌词失败：{error}");
+                    }
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -72,6 +85,7 @@ pub fn run() {
             commands::toggle_saved_playlist,
             commands::toggle_saved_track,
             commands::load_lyrics,
+            commands::translate_lyrics,
             commands::lyrics_presets,
             commands::list_sources,
             commands::import_source_script,
