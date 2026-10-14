@@ -264,11 +264,22 @@ export default function SettingsPage() {
               onCheckedChange={(karaoke) => patchLyrics({ karaoke })}
             />
           </Row>
-          <Row label="单行模式">
+          <Row label="单行模式" hint="关闭后显示多行上下文，当前歌词居中滚动">
             <Switch
               checked={lyrics.single_line}
               onCheckedChange={(single_line) => patchLyrics({ single_line })}
             />
+          </Row>
+          <Row label="歌词窗口高度" hint="增加高度可同时显示更多行歌词">
+            <Slider
+              className="w-[190px]"
+              value={[lyrics.window_height]}
+              min={120}
+              max={720}
+              step={20}
+              onValueChange={([window_height]) => patchLyrics({ window_height })}
+            />
+            <span className="tabular text-xs">{Math.round(lyrics.window_height)}</span>
           </Row>
           <Row label="窗口置顶">
             <Switch

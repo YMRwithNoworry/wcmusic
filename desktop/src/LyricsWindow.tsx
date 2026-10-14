@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
-import { motion } from "motion/react";
-import { useEffect } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useTrackLyrics } from "@/lib/use-track-lyrics";
 import KaraokeText from "@/components/KaraokeText";
@@ -18,7 +18,7 @@ function toCss(rgb: number, alpha: number): string {
   return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/// 桌面歌词窗口：置顶、无边框、透明，只显示当前行（与下一行）。
+/// 桌面歌词窗口：置顶、无边框、透明，当前行居中并带上下文滚动。
 export default function LyricsWindow() {
   const { settings } = useSettings();
   const { snapshot } = usePlayer();
@@ -33,15 +33,33 @@ export default function LyricsWindow() {
     return () => document.body.classList.remove("lyrics-mode");
   }, []);
 
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const style = settings?.lyrics;
+  const singleLine = style?.single_line ?? false;
   const offset = style?.offset_ms ?? 0;
   const positionMs = snapshot?.position_ms ?? 0;
   const playing = snapshot?.playing ?? false;
   const index = useCurrentLine(lines, positionMs, playing, offset);
   const current = index >= 0 ? lines[index] : null;
-  const next = index >= 0 ? lines[index + 1] : null;
+  const fontSize = style?.font_size ?? 28;
+  const fontSizeCss = `${fontSize}px`;
+  const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 1.9 : 1.38);
+  const reducedMotion = useReducedMotion();
+  const activeIndex = index >= 0 ? index : 0;
+  const listOffset = viewportHeight > 0
+    ? viewportHeight / 2 - (activeIndex * rowHeight + rowHeight / 2)
+    : 0;
 
-  const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
+  useLayoutEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return;
+    const update = () => setViewportHeight(element.clientHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const highlight = toCss(style?.highlight_color ?? 0xffffff, style?.highlight_alpha ?? 1);
   const strokeWidth = style?.stroke_width ?? 0;
   const strokeColor = toCss(style?.stroke_color ?? 0x000000, style?.stroke_alpha ?? 1);
@@ -59,10 +77,9 @@ export default function LyricsWindow() {
     style?.alignment === "left" ? "left" : style?.alignment === "right" ? "right" : "center";
   const fontFamily = style?.font_family ? `"${style.font_family}"` : undefined;
   const karaoke = style?.karaoke ?? false;
-  const fontSize = `${style?.font_size ?? 28}px`;
+  const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
   const fontWeight = style?.font_weight ?? 600;
   const animation = style?.animation ?? "slide";
-  // 换行入场：off 直接出现，slide 从下往上淡入，scale 由小放大淡入。
   const enterFrom =
     animation === "scale"
       ? { opacity: 0, scale: 0.88 }
@@ -84,59 +101,83 @@ export default function LyricsWindow() {
           onClick={() => void getCurrentWindow().close().catch((problem) => toast.error(`关闭桌面歌词失败：${problem}`))}
         >×</button>
       ) : null}
-      {current ? (
-        <motion.div
-          key={current.time_ms}
-          initial={enterFrom}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full truncate leading-tight"
-          style={{
-            fontSize,
-            fontWeight,
-            fontFamily,
-            textShadow,
-            color: karaoke ? undefined : highlight,
-          }}
-        >
-          {karaoke ? (
-            <KaraokeText
-              text={current.text}
-              lineTime={current.time_ms}
-              nextTime={next?.time_ms ?? current.time_ms}
-              positionMs={positionMs}
-              playing={playing}
-              offsetMs={offset}
-              highlight={highlight}
-              textColor={textColor}
-            />
-          ) : (
-            current.text || "♪"
-          )}
-        </motion.div>
-      ) : (
-        <div className="text-sm opacity-80" style={{ color: textColor, textShadow }}>
-          {error ?? (loading ? "正在加载歌词…" : lines.length > 0 ? track?.title : track ? "这首歌没有找到歌词" : "未在播放")}
-        </div>
-      )}
-
-      {style?.show_translation && current?.translation ? (
-        <div
-          className="w-full truncate"
-          style={{ fontSize: "0.6em", color: textColor, textShadow, fontFamily, opacity: 0.8 }}
-        >
-          {current.translation}
-        </div>
-      ) : null}
-
-      {!style?.single_line && next ? (
-        <div
-          className="w-full truncate opacity-70"
-          style={{ fontSize: "0.62em", color: textColor, textShadow, fontFamily }}
-        >
-          {next.text}
-        </div>
-      ) : null}
+      <div ref={viewportRef} className="relative h-full w-full overflow-hidden">
+        {!singleLine && lines.length > 0 ? (
+          <motion.div
+            className="absolute left-0 top-0 w-full"
+            initial={false}
+            data-lyrics-list
+            animate={{ y: listOffset }}
+            transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.55, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {lines.map((line, lineIndex) => {
+              const distance = index >= 0 ? Math.abs(lineIndex - index) : lineIndex;
+              const isCurrent = lineIndex === index;
+              const nextLine = lines[lineIndex + 1];
+              const lineColor = lineIndex <= index ? highlight : textColor;
+              const lineOpacity = isCurrent ? 1 : Math.max(0.2, 0.78 - distance * 0.12);
+              return (
+                <div
+                  key={`${line.time_ms}-${lineIndex}`}
+                  data-lyric-index={lineIndex}
+                  aria-current={isCurrent ? "true" : undefined}
+                  className="flex w-full flex-col justify-center overflow-hidden px-1"
+                  style={{ height: rowHeight, textAlign, opacity: lineOpacity }}
+                >
+                  <div
+                    className="w-full truncate leading-tight"
+                    style={{ fontSize: fontSizeCss, fontWeight, fontFamily, textShadow, color: karaoke && isCurrent ? undefined : lineColor }}
+                  >
+                    {karaoke && isCurrent ? (
+                      <KaraokeText
+                        text={line.text}
+                        lineTime={line.time_ms}
+                        nextTime={nextLine?.time_ms ?? line.time_ms}
+                        positionMs={positionMs}
+                        playing={playing}
+                        offsetMs={offset}
+                        highlight={highlight}
+                        textColor={textColor}
+                      />
+                    ) : line.text || "♪"}
+                  </div>
+                  {style?.show_translation && line.translation ? (
+                    <div
+                      className="w-full truncate leading-tight"
+                      style={{ fontSize: `${fontSize * 0.52}px`, color: textColor, textShadow, fontFamily, opacity: isCurrent ? 0.86 : 0.68 }}
+                    >
+                      {line.translation}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </motion.div>
+        ) : current ? (
+          <motion.div
+            key={current.time_ms}
+            initial={enterFrom}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1"
+          >
+            <div className="w-full truncate leading-tight" style={{ fontSize: fontSizeCss, fontWeight, fontFamily, textShadow, color: karaoke ? undefined : highlight, textAlign }}>
+              {karaoke ? (
+                <KaraokeText text={current.text} lineTime={current.time_ms} nextTime={lines[index + 1]?.time_ms ?? current.time_ms} positionMs={positionMs} playing={playing} offsetMs={offset} highlight={highlight} textColor={textColor} />
+              ) : current.text || "♪"}
+            </div>
+            {style?.show_translation && current.translation ? (
+              <div className="w-full truncate" style={{ fontSize: `${fontSize * 0.6}px`, color: textColor, textShadow, fontFamily, opacity: 0.8, textAlign }}>
+                {current.translation}
+              </div>
+            ) : null}
+          </motion.div>
+        ) : (
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1 text-sm" style={{ color: textColor, textShadow, textAlign }}>
+            {error ?? (loading ? "正在加载歌词…" : track ? "这首歌没有找到歌词" : "未在播放")}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

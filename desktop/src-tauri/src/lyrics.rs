@@ -1143,7 +1143,7 @@ impl Default for LyricsStyle {
             window_x: None,
             window_y: None,
             window_width: 980.0,
-            window_height: 260.0,
+            window_height: 420.0,
         }
     }
 }
@@ -1164,7 +1164,7 @@ impl LyricsStyle {
         self.background_opacity = finite_or(self.background_opacity, 0.0, 1.0, 0.0);
         self.offset_ms = self.offset_ms.clamp(-30_000, 30_000);
         self.window_width = finite_or(self.window_width, 360.0, 4000.0, 980.0);
-        self.window_height = finite_or(self.window_height, 120.0, 720.0, 260.0);
+        self.window_height = finite_or(self.window_height, 120.0, 720.0, 420.0);
         if self.window_x.is_some_and(|value| !value.is_finite()) {
             self.window_x = None;
         }

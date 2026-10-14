@@ -529,4 +529,5 @@ pub fn apply_lyrics_window_style(
     };
     let _ = window.set_ignore_cursor_events(style.locked);
     let _ = window.set_always_on_top(style.always_on_top);
+    let _ = window.set_size(tauri::LogicalSize::new(style.window_width as f64, style.window_height as f64));
 }
