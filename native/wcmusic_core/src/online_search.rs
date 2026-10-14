@@ -34,7 +34,8 @@ impl OnlineSearchChannel {
         match self {
             Self::Kuwo => "https://search.kuwo.cn/r.s",
             Self::Kugou => "https://songsearch.kugou.com/song_search_v2",
-            Self::QqMusic => "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
+            // client_search_cp 当前返回 HTTP 500；search_for_qq_cp 返回相同的 data.song.list 结构。
+            Self::QqMusic => "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp",
             // 旧的 /api/search/get 只回 album.picId，没有封面地址（结果里封面一直是占位图）；
             // /api/cloudsearch/pc 返回 al.picUrl，响应结构（result.songs）与旧接口一致。
             Self::Netease => "https://music.163.com/api/cloudsearch/pc",

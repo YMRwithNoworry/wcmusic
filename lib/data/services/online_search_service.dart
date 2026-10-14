@@ -83,7 +83,7 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
            Uri.https('songsearch.kugou.com', '/song_search_v2'),
        _qqSearchEndpoint =
            qqSearchEndpoint ??
-           Uri.https('c.y.qq.com', '/soso/fcgi-bin/client_search_cp'),
+           Uri.https('c.y.qq.com', '/soso/fcgi-bin/search_for_qq_cp'),
        _neteaseSearchEndpoint =
            neteaseSearchEndpoint ??
            Uri.https('music.163.com', '/api/search/get'),
