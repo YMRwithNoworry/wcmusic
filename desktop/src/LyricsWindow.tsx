@@ -44,7 +44,7 @@ export default function LyricsWindow() {
   const current = index >= 0 ? lines[index] : null;
   const fontSize = style?.font_size ?? 28;
   const fontSizeCss = `${fontSize}px`;
-  const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 1.9 : 1.38);
+  const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 2.65 : 2.05);
   const reducedMotion = useReducedMotion();
   const activeIndex = index >= 0 ? index : 0;
   const listOffset = viewportHeight > 0
@@ -108,7 +108,7 @@ export default function LyricsWindow() {
             initial={false}
             data-lyrics-list
             animate={{ y: listOffset }}
-            transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.55, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.85, ease: [0.22, 1, 0.36, 1] }}
           >
             {lines.map((line, lineIndex) => {
               const distance = index >= 0 ? Math.abs(lineIndex - index) : lineIndex;
@@ -117,12 +117,14 @@ export default function LyricsWindow() {
               const lineColor = lineIndex <= index ? highlight : textColor;
               const lineOpacity = isCurrent ? 1 : Math.max(0.2, 0.78 - distance * 0.12);
               return (
-                <div
+                <motion.div
                   key={`${line.time_ms}-${lineIndex}`}
                   data-lyric-index={lineIndex}
                   aria-current={isCurrent ? "true" : undefined}
                   className="flex w-full flex-col justify-center overflow-hidden px-1"
-                  style={{ height: rowHeight, textAlign, opacity: lineOpacity }}
+                  animate={{ opacity: lineOpacity }}
+                  transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ height: rowHeight, textAlign }}
                 >
                   <div
                     className="w-full truncate leading-tight"
@@ -149,7 +151,7 @@ export default function LyricsWindow() {
                       {line.translation}
                     </div>
                   ) : null}
-                </div>
+                </motion.div>
               );
             })}
           </motion.div>

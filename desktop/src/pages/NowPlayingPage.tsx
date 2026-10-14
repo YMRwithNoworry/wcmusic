@@ -1,5 +1,5 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react";
-import { motion } from "motion/react";
+import { animate, motion, useReducedMotion } from "motion/react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { useTrackLyrics, pageLyricColor } from "@/lib/use-track-lyrics";
@@ -47,13 +47,14 @@ const LyricRow = memo(function LyricRow({
   offsetMs,
   onSeek,
 }: LyricRowProps) {
+  const reducedMotion = useReducedMotion();
   return (
     <motion.div
       // 当前行放大、变亮；其它行缩小、变暗。用缓动而不是直接跳变。
       animate={{ opacity: isCurrent ? 1 : 0.36, scale: isCurrent ? 1.08 : 0.9 }}
-      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: reducedMotion ? 0 : 0.75, ease: [0.22, 1, 0.36, 1] }}
       onClick={() => onSeek(line.time_ms)}
-      className={`cursor-pointer py-1.5 ${origin} ${isCurrent ? "lyric-line-current" : ""}`}
+      className={`cursor-pointer py-4 ${origin} ${isCurrent ? "lyric-line-current" : ""}`}
       style={{ fontSize: `${fontSize}px` }}
     >
       {isCurrent && karaoke ? (
@@ -92,6 +93,7 @@ const LyricRow = memo(function LyricRow({
 /// 歌曲详情页：大封面 + 歌曲信息 + 逐字歌词（点歌词跳转）。
 export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const { settings } = useSettings();
+  const reducedMotion = useReducedMotion();
   const { snapshot, artwork, seek } = usePlayer();
   const track = snapshot?.current ?? null;
   const { lines, loading, error, retry } = useTrackLyrics(
@@ -150,25 +152,33 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
     [],
   );
 
-  // 当前行居中：只在自己跟随时滚，且已经在中间就不重复发起平滑滚动。
+  // 首尾歌词也能停在中线；尺寸变化时更新留白。
   useEffect(() => {
-    if (!following) {
-      return;
-    }
+    const container = listRef.current;
+    if (!container) return;
+    const resize = () => {
+      container.style.paddingBlock = `${container.clientHeight / 2}px`;
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // 使用明确的缓动曲线；换行、跳转或用户滚动时中止上一段动画。
+  useEffect(() => {
+    if (!following) return;
     const container = listRef.current;
     const line = container?.querySelector<HTMLElement>(".lyric-line-current");
-    if (!container || !line) {
-      return;
-    }
-    const containerRect = container.getBoundingClientRect();
-    const lineRect = line.getBoundingClientRect();
-    const delta =
-      lineRect.top + lineRect.height / 2 - (containerRect.top + containerRect.height / 2);
-    if (Math.abs(delta) < 4) {
-      return;
-    }
-    container.scrollTo({ top: container.scrollTop + delta, behavior: "smooth" });
-  }, [index, following]);
+    if (!container || !line) return;
+    const target = line.offsetTop + line.offsetHeight / 2 - container.clientHeight / 2;
+    const controls = animate(container.scrollTop, target, {
+      duration: reducedMotion || style?.animation === "off" ? 0 : 0.85,
+      ease: [0.22, 1, 0.36, 1],
+      onUpdate: (value) => { container.scrollTop = value; },
+    });
+    return () => controls.stop();
+  }, [index, following, fontSize, showTranslation, reducedMotion, style?.animation]);
 
   return (
     <div className="grid h-full grid-cols-[300px_minmax(0,1fr)] gap-8 px-7 py-6">
@@ -200,12 +210,12 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
       <div className="relative min-h-0">
         <div
           ref={listRef}
-          className="h-full overflow-y-auto pr-2"
+          className="relative h-full overflow-y-auto pr-2"
           onWheel={pauseFollow}
           onTouchStart={pauseFollow}
           onPointerDown={pauseFollow}
           style={{
-            paddingBottom: "38vh",
+            fontFamily: style?.font_family ? `"${style.font_family}"` : undefined,
             textAlign: style?.alignment ?? "center",
           }}
         >

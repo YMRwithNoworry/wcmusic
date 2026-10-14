@@ -1155,7 +1155,7 @@ impl LyricsStyle {
             self.font_family = FONT_FAMILIES[0].to_owned();
         }
         self.font_size = finite_or(self.font_size, 16.0, 96.0, 36.0);
-        self.font_weight = finite_or(self.font_weight, 300.0, 900.0, 700.0);
+        self.font_weight = finite_or(self.font_weight, 100.0, 900.0, 700.0);
         self.text_alpha = finite_or(self.text_alpha, 0.0, 1.0, 1.0);
         self.highlight_alpha = finite_or(self.highlight_alpha, 0.0, 1.0, 1.0);
         self.stroke_alpha = finite_or(self.stroke_alpha, 0.0, 1.0, 1.0);

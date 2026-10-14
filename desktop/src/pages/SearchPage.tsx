@@ -1,7 +1,7 @@
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useSearchSession } from "@/lib/search-session";
 
-import { favorites, online } from "@/api";
+import { favorites } from "@/api";
 import TrackList from "@/components/TrackList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,28 +25,7 @@ const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 
 export default function SearchPage() {
   const { settings, replace } = useSettings();
-  const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Track[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async () => {
-    const keyword = query.trim();
-    if (!keyword || loading) {
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      setResults(await online.search(keyword, channel));
-    } catch (problem) {
-      setError(String(problem));
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { channel, setChannel, query, setQuery, results, loading, error, run } = useSearchSession();
 
   const savedTracks = settings?.saved_tracks ?? [];
   const isTrackSaved = (track: Track) =>

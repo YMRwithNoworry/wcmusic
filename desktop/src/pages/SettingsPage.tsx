@@ -358,6 +358,27 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
           </Row>
+          <Row label="字重 / 字体形式" hint="同一字体的 Thin、Regular、Bold 等形式；系统字体以已安装的字重为准">
+            <Select
+              value={String(lyrics.font_weight)}
+              onValueChange={(weight) => patchLyrics({ font_weight: Number(weight) })}
+            >
+              <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[
+                  [100, "Thin · 纤细"],
+                  [400, "Regular · 常规"],
+                  [500, "Medium · 中等"],
+                  [600, "Semibold · 半粗"],
+                  [700, "Bold · 粗体"],
+                ].map(([weight, label]) => (
+                  <SelectItem key={weight} value={String(weight)}>
+                    <span style={{ fontFamily: `"${lyrics.font_family}"`, fontWeight: Number(weight) }}>{label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Row>
           <Row label="字号">
             <Slider
               className="w-[190px]"
