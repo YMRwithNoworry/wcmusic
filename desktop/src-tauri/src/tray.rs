@@ -1,6 +1,6 @@
 //! 系统托盘：左键点图标回到主界面，右键菜单可以显示主界面或退出。
 //!
-//! 关闭按钮不退出程序，只是把窗口收进托盘。
+//! 主窗口关闭按钮退出程序；通过快捷键隐藏后可从托盘恢复。
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -43,6 +43,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
 /// 把主窗口显示出来并聚焦。
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_ignore_cursor_events(false);
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();

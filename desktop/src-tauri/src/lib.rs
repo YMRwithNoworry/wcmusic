@@ -46,14 +46,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 点关闭按钮收进托盘而不是退出：退出走托盘菜单。
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // 主窗口关闭即退出，释放所有原生窗口和透明覆盖层。
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
-                    api.prevent_close();
-                    if let Err(error) = commands::close_lyrics_window(window.app_handle()) {
-                        eprintln!("关闭桌面歌词失败：{error}");
-                    }
-                    let _ = window.hide();
+                    window.app_handle().exit(0);
                 } else if window.label() == "lyrics" {
                     // 歌词窗口真正关闭；不能保留透明置顶窗口拦截鼠标。
                     if let Err(error) = commands::close_lyrics_window(window.app_handle()) {

@@ -366,11 +366,16 @@ pub fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     let visible = window.is_visible().map_err(|error| error.to_string())?;
     if visible {
         close_lyrics_window(&app)?;
-        window.hide().map_err(|error| error.to_string())?;
+        window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
+        if let Err(error) = window.hide() {
+            let _ = window.set_ignore_cursor_events(false);
+            return Err(error.to_string());
+        }
     } else {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        window.set_ignore_cursor_events(false).map_err(|error| error.to_string())?;
+        window.show().map_err(|error| error.to_string())?;
+        window.unminimize().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
     }
     Ok(!visible)
 }
