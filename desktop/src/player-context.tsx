@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 
 import { desktopWindow, lyricsWindow, player } from "./api";
+import { loadTrackArtwork } from "./lib/track-artwork";
 import { useSettings } from "./settings-context";
 import type { PlaybackSnapshot, Track } from "./types";
 
@@ -73,8 +74,7 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
       return;
     }
     let alive = true;
-    player
-      .artwork(track)
+    loadTrackArtwork(track)
       .then((url) => {
         if (alive) {
           setArtwork(url);

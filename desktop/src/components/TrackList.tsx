@@ -1,7 +1,8 @@
-import { MusicNotesIcon, StarIcon } from "@phosphor-icons/react";
+import { StarIcon } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { memo, useCallback, useRef } from "react";
 
+import TrackArtwork from "@/components/TrackArtwork";
 import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -84,16 +85,7 @@ const TrackRow = memo(function TrackRow({
           </span>
         )}
       </span>
-      <span className="flex size-10 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
-        {track.artworkUri ? (
-          <img
-            src={track.artworkUri}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover"
-          />
-        ) : <MusicNotesIcon size={18} weight="duotone" />}
-      </span>
+      <TrackArtwork key={`${track.source}-${track.id}-${track.artworkUri ?? ""}`} track={track} />
       <span className={cn("truncate font-medium", playing && "text-primary")}>
         {track.title}
       </span>

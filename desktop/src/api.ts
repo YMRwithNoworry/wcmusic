@@ -91,7 +91,7 @@ export const player = {
   seek: (positionMs: number) => invoke<void>("seek_playback", { positionMs }),
   setVolume: (volume: number) => invoke<void>("set_playback_volume", { volume }),
   setSpatial: (enabled: boolean) => invoke<AppSettings>("set_spatial_audio", { enabled }),
-  artwork: (track: Track) => invoke<string | null>("track_artwork", { track }),
+  artwork: (track: Track, refreshUri = false) => invoke<string | null>("track_artwork", { track, refreshUri }),
 };
 
 /// 收藏：歌单与歌曲（都写回 settings.json）。

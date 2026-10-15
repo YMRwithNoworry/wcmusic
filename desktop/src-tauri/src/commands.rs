@@ -180,13 +180,47 @@ pub fn set_spatial_audio(enabled: bool, app: tauri::AppHandle, state: State<'_, 
 }
 
 /// 下载（并缓存）封面，返回可直接放进 `<img src>` 的 data URL。
-#[tauri::command(async)]
-pub fn track_artwork(
+#[tauri::command]
+pub async fn track_artwork(
     track: Track,
+    refresh_uri: Option<bool>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     let use_proxy = state.settings().use_network_proxy;
-    playback::artwork_data_url(&track, use_proxy)
+    let original = track.clone();
+    let (data, repaired_uri) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        if !refresh_uri.unwrap_or(false) {
+            if let Ok(Some(data)) = playback::artwork_data_url(&track, use_proxy) {
+                return Ok((Some(data), None));
+            }
+        }
+        let Some(uri) = online::track_artwork_uri(&track, use_proxy)? else {
+            return Ok((None, None));
+        };
+        let mut repaired = track;
+        repaired.artwork_uri = Some(uri.clone());
+        let data = playback::artwork_data_url(&repaired, use_proxy)?;
+        Ok((data, Some(uri)))
+    }).await.map_err(|error| error.to_string())??;
+
+    if let Some(uri) = repaired_uri {
+        let needs_update = state.settings().saved_tracks.iter().any(|saved| {
+            saved.track.id == original.id && saved.track.source == original.source
+                && saved.track.artwork_uri.as_deref() != Some(uri.as_str())
+        });
+        if needs_update {
+            let saved = state.update_settings(|settings| {
+                for saved in &mut settings.saved_tracks {
+                    if saved.track.id == original.id && saved.track.source == original.source {
+                        saved.track.artwork_uri = Some(uri.clone());
+                    }
+                }
+            });
+            let _ = app.emit("wcmusic://settings-changed", &saved);
+        }
+    }
+    Ok(data)
 }
 
 /// 收藏歌曲的四个文件夹名（前端用它渲染「爱听的」分组）。
