@@ -381,9 +381,8 @@ pub fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(!visible)
 }
 
-/// 所有收进托盘入口共用：释放歌词覆盖层，隐藏主窗口并禁用鼠标命中。
+/// 所有收进托盘入口共用：仅隐藏主窗口并禁用其鼠标命中，保留独立的桌面歌词窗口。
 pub fn hide_main_window(app: &tauri::AppHandle) -> Result<(), String> {
-    close_lyrics_window(app)?;
     let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
     window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
     if let Err(error) = window.hide() {
