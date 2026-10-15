@@ -5,7 +5,7 @@
 
 use wcmusic_core::{
     OnlineSearchChannel, OnlineSearchError, PlatformPlaylist, PlatformRanking, Track,
-    load_playlist_tracks_with_proxy, load_playlists_with_proxy, load_ranking_tracks_with_proxy,
+    load_playlist_tracks_with_proxy, load_playlists_page_with_proxy, load_ranking_tracks_with_proxy,
     load_rankings_with_proxy, search_online_with_proxy,
 };
 
@@ -41,8 +41,9 @@ pub fn ranking_tracks(
 pub fn playlists(
     channel: OnlineSearchChannel,
     use_proxy: bool,
+    page: usize,
 ) -> Result<Vec<PlatformPlaylist>, String> {
-    flatten(load_playlists_with_proxy(channel, use_proxy))
+    flatten(load_playlists_page_with_proxy(channel, use_proxy, page))
 }
 
 /// 某个歌单里的曲目。

@@ -39,7 +39,7 @@ function withTimeout<T>(request: Promise<T>, message: string): Promise<T> {
   });
 }
 
-const playlistRequests = new Map<OnlineSearchChannel, Promise<PlatformPlaylist[]>>();
+const playlistRequests = new Map<string, Promise<PlatformPlaylist[]>>();
 export const online = {
   search: async (query: string, channel: OnlineSearchChannel, limit = 30) => {
     const request = invoke<Track[]>("search_online", { query, channel, limit });
@@ -62,14 +62,15 @@ export const online = {
       invoke<Track[]>("load_ranking_tracks", { ranking }),
       "榜单歌曲加载超时，请检查网络或代理设置",
     ),
-  playlists: (channel: OnlineSearchChannel) => {
-    const pending = playlistRequests.get(channel);
+  playlists: (channel: OnlineSearchChannel, page = 1) => {
+    const key = `${channel}-${page}`;
+    const pending = playlistRequests.get(key);
     if (pending) return pending;
     const request = withTimeout(
-      invoke<PlatformPlaylist[]>("load_playlists", { channel }),
+      invoke<PlatformPlaylist[]>("load_playlists", { channel, page }),
       "歌单加载超时，请检查网络或代理设置",
-    ).finally(() => playlistRequests.delete(channel));
-    playlistRequests.set(channel, request);
+    ).finally(() => playlistRequests.delete(key));
+    playlistRequests.set(key, request);
     return request;
   },
   playlistTracks: (playlist: PlatformPlaylist) =>

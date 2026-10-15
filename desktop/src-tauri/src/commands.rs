@@ -98,10 +98,11 @@ pub async fn load_ranking_tracks(
 #[tauri::command]
 pub async fn load_playlists(
     channel: OnlineSearchChannel,
+    page: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<PlatformPlaylist>, String> {
     let use_proxy = state.settings().use_network_proxy;
-    tauri::async_runtime::spawn_blocking(move || online::playlists(channel, use_proxy))
+    tauri::async_runtime::spawn_blocking(move || online::playlists(channel, use_proxy, page.unwrap_or(1)))
         .await.map_err(|error| error.to_string())?
 }
 

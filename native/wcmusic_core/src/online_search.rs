@@ -342,6 +342,19 @@ pub fn load_playlists_with_proxy(
     channel: OnlineSearchChannel,
     use_proxy: bool,
 ) -> Result<Vec<PlatformPlaylist>, OnlineSearchError> {
+    load_playlists_page_with_proxy(channel, use_proxy, 1)
+}
+
+/// 从平台实时获取指定批次，避免发现页固定展示热门目录第一页。
+pub fn load_playlists_page_with_proxy(
+    channel: OnlineSearchChannel,
+    use_proxy: bool,
+    page: usize,
+) -> Result<Vec<PlatformPlaylist>, OnlineSearchError> {
+    let page = page.clamp(1, 5);
+    let offset = (page - 1) * PLAYLIST_LIMIT;
+    let refreshed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis().to_string();
     match channel {
         OnlineSearchChannel::Netease => {
             let value = request_json(
@@ -350,7 +363,8 @@ pub fn load_playlists_with_proxy(
                     ("cat", "全部".to_owned()),
                     ("order", "hot".to_owned()),
                     ("limit", "20".to_owned()),
-                    ("offset", "0".to_owned()),
+                    ("offset", offset.to_string()),
+                    ("_", refreshed_at),
                 ],
                 OnlineSearchChannel::Netease.referer(),
                 use_proxy,
@@ -364,9 +378,10 @@ pub fn load_playlists_with_proxy(
                 &[
                     ("categoryId", "10000000".to_owned()),
                     ("sortId", "5".to_owned()),
-                    ("sin", "0".to_owned()),
-                    ("ein", "29".to_owned()),
+                    ("sin", offset.to_string()),
+                    ("ein", (offset + PLAYLIST_LIMIT - 1).to_string()),
                     ("format", "json".to_owned()),
+                    ("_", refreshed_at),
                 ],
                 OnlineSearchChannel::QqMusic.referer(),
                 use_proxy,
@@ -377,9 +392,10 @@ pub fn load_playlists_with_proxy(
             let value = load_kuwo_json(
                 "https://www.kuwo.cn/api/www/classify/playlist/getRcmPlayList",
                 &[
-                    ("pn", "1".to_owned()),
+                    ("pn", page.to_string()),
                     ("rn", PLAYLIST_LIMIT.to_string()),
                     ("order", "hot".to_owned()),
+                    ("_", refreshed_at),
                 ],
                 use_proxy,
             )?;
@@ -388,7 +404,7 @@ pub fn load_playlists_with_proxy(
         OnlineSearchChannel::Kugou => {
             let value = request_json(
                 "http://m.kugou.com/plist/index",
-                &[("json", "true".to_owned())],
+                &[("json", "true".to_owned()), ("page", page.to_string()), ("_", refreshed_at)],
                 "http://m.kugou.com/",
                 use_proxy,
                 false,

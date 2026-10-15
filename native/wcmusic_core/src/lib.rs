@@ -12,6 +12,7 @@ pub use models::*;
 pub use online_search::{
     OnlineSearchChannel, OnlineSearchError, PlatformPlaylist, PlatformRanking,
     fetch_kuwo_track_cover_with_proxy, load_playlist_tracks_with_proxy, load_playlists_with_proxy,
+    load_playlists_page_with_proxy,
     load_ranking_tracks_with_proxy, load_rankings_with_proxy, search_online,
     search_online_with_proxy,
 };

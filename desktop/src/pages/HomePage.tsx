@@ -42,10 +42,20 @@ function cachedPlaylists(channel: OnlineSearchChannel): PlatformPlaylist[] {
   }
 }
 
+function nextPlaylistPage(channel: OnlineSearchChannel): number {
+  try {
+    const previous = Number(localStorage.getItem(`wcmusic-hot-page-${channel}`));
+    return Number.isInteger(previous) && previous >= 1 && previous <= 5 ? previous % 5 + 1 : 1;
+  } catch { return 1; }
+}
+
 /// 「此刻」页：平台热门歌单 + 我的收藏；点开歌单后切到详情视图。
 export default function HomePage() {
   const { settings, replace } = useSettings();
   const requestIdRef = useRef(0);
+  const refreshingRef = useRef(false);
+  const lastUpdateRef = useRef(0);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
   const [hot, setHot] = useState<PlatformPlaylist[]>(() => cachedPlaylists("Kuwo"));
   const [loading, setLoading] = useState(false);
@@ -55,14 +65,21 @@ export default function HomePage() {
 
   const loadHot = useCallback(async (next: OnlineSearchChannel) => {
     const requestId = ++requestIdRef.current;
+    refreshingRef.current = true;
+    setUpdatedAt(null);
     setHot(cachedPlaylists(next));
     setLoading(true);
     setError(null);
     try {
-      const playlists = await online.playlists(next);
+      const page = nextPlaylistPage(next);
+      const playlists = await online.playlists(next, page);
       if (requestId !== requestIdRef.current) return;
+      if (playlists.length === 0) throw new Error("平台暂未返回歌单，请稍后重试");
       setHot(playlists);
+      lastUpdateRef.current = Date.now();
+      setUpdatedAt(lastUpdateRef.current);
       try {
+        localStorage.setItem(`wcmusic-hot-page-${next}`, String(page));
         localStorage.setItem(`wcmusic-hot-${next}`, JSON.stringify(playlists));
       } catch {
         // 本地缓存不可用不影响实时歌单。
@@ -72,7 +89,10 @@ export default function HomePage() {
       setError(String(problem));
       setHot((current) => current.length ? current : cachedPlaylists(next));
     } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
+      if (requestId === requestIdRef.current) {
+        refreshingRef.current = false;
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -80,6 +100,23 @@ export default function HomePage() {
     void loadHot(channel);
     return () => { ++requestIdRef.current; };
   }, [channel, loadHot, settings?.use_network_proxy]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible" && !refreshingRef.current
+        && Date.now() - lastUpdateRef.current >= 5 * 60_000) {
+        void loadHot(channel);
+      }
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [channel, loadHot]);
 
   const openPlaylist = async (playlist: PlatformPlaylist) => {
     setDetail({ name: playlist.name, tracks: null });
@@ -155,7 +192,19 @@ export default function HomePage() {
       ) : null}
 
       <section className="mb-8 flex flex-col gap-3">
-        <SectionTitle>平台热门歌单</SectionTitle>
+        <div className="flex items-center justify-between gap-3">
+          <SectionTitle>平台热门歌单</SectionTitle>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-muted-foreground" role="status">
+              {loading ? "正在获取最新歌单…" : updatedAt
+                ? `更新于 ${new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                : hot.length ? "暂显示上次歌单" : ""}
+            </span>
+            <Button size="sm" variant="secondary" disabled={loading} onClick={() => void loadHot(channel)}>
+              换一批
+            </Button>
+          </div>
+        </div>
         {loading && hot.length === 0 ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(142px,1fr))] gap-3">
             {Array.from({ length: 6 }).map((_, index) => (
