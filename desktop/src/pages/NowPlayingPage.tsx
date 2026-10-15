@@ -1,5 +1,5 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react";
-import { motion, useReducedMotion } from "motion/react";
+import { MotionConfig, motion } from "motion/react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { useTrackLyrics, pageLyricColor } from "@/lib/use-track-lyrics";
@@ -16,6 +16,7 @@ interface LyricRowProps {
   line: LyricLine;
   nextTime: number;
   isCurrent: boolean;
+  animated: boolean;
   karaoke: boolean;
   fontSize: number;
   fontWeight: number;
@@ -36,6 +37,7 @@ const LyricRow = memo(function LyricRow({
   line,
   nextTime,
   isCurrent,
+  animated,
   karaoke,
   fontSize,
   fontWeight,
@@ -48,12 +50,11 @@ const LyricRow = memo(function LyricRow({
   offsetMs,
   onSeek,
 }: LyricRowProps) {
-  const reducedMotion = useReducedMotion();
   return (
     <motion.div
       // 当前行放大、变亮；其它行缩小、变暗。用缓动而不是直接跳变。
       animate={{ opacity: isCurrent ? 1 : 0.36, scale: isCurrent ? 1.08 : 0.9 }}
-      transition={{ duration: reducedMotion ? 0 : 0.75, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: animated ? 0.75 : 0, ease: [0.22, 1, 0.36, 1] }}
       onClick={() => onSeek(line.time_ms)}
       className={`cursor-pointer py-4 ${origin} ${isCurrent ? "lyric-line-current" : ""}`}
       style={{ fontSize: `${fontSize}px` }}
@@ -94,7 +95,6 @@ const LyricRow = memo(function LyricRow({
 /// 歌曲详情页：大封面 + 歌曲信息 + 逐字歌词（点歌词跳转）。
 export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const { settings } = useSettings();
-  const reducedMotion = useReducedMotion();
   const { snapshot, artwork, seek } = usePlayer();
   const track = snapshot?.current ?? null;
   const { lines, loading, error, retry } = useTrackLyrics(
@@ -186,10 +186,11 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
     const target = line.offsetTop + line.offsetHeight / 2 - container.clientHeight / 2;
     return animateLyricPosition(container.scrollTop, target,
       (value) => { container.scrollTop = value; },
-      !!reducedMotion || style?.animation === "off");
-  }, [index, following, fontSize, showTranslation, reducedMotion, style?.animation]);
+      style?.animation === "off");
+  }, [index, following, fontSize, showTranslation, style?.animation]);
 
   return (
+    <MotionConfig reducedMotion="never">
     <div className="grid h-full grid-cols-[300px_minmax(0,1fr)] gap-8 px-7 py-6">
       <div className="flex min-h-0 flex-col gap-4">
         <Button variant="ghost" size="sm" className="self-start" onClick={onBack}>
@@ -253,6 +254,7 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
                 line={line}
                 nextTime={lines[lineIndex + 1]?.time_ms ?? line.time_ms}
                 isCurrent={isCurrent}
+                animated={style?.animation !== "off"}
                 karaoke={karaoke}
                 fontSize={fontSize}
                 fontWeight={fontWeight}
@@ -273,5 +275,6 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
 
       </div>
     </div>
+    </MotionConfig>
   );
 }

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
-import { motion, useReducedMotion } from "motion/react";
+import { MotionConfig, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useTrackLyrics } from "@/lib/use-track-lyrics";
@@ -49,7 +49,6 @@ export default function LyricsWindow() {
   const fontSize = style?.font_size ?? 28;
   const fontSizeCss = `${fontSize}px`;
   const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 2.65 : 2.05);
-  const reducedMotion = useReducedMotion();
   const activeIndex = index >= 0 ? index : 0;
   const listOffset = viewportHeight > 0
     ? viewportHeight / 2 - (activeIndex * rowHeight + rowHeight / 2)
@@ -96,8 +95,8 @@ export default function LyricsWindow() {
     };
     const first = scrollPosition.current === null;
     return animateLyricPosition(scrollPosition.current ?? listOffset, listOffset, update,
-      first || !!reducedMotion || animation === "off");
-  }, [listOffset, singleLine, lines.length, reducedMotion, animation]);
+      first || animation === "off");
+  }, [listOffset, singleLine, lines.length, animation]);
 
   const readySent = useRef(false);
   const hasSnapshot = snapshot !== null;
@@ -135,6 +134,7 @@ export default function LyricsWindow() {
         : { opacity: 1 };
 
   return (
+    <MotionConfig reducedMotion="never">
     <div
       className={`relative flex h-full w-full flex-col justify-center gap-1.5 overflow-hidden px-4 py-3 ${alignment}`}
       style={{ background, opacity: style?.opacity ?? 1, textAlign }}
@@ -168,7 +168,7 @@ export default function LyricsWindow() {
                   aria-current={isCurrent ? "true" : undefined}
                   className="flex w-full flex-col justify-center overflow-hidden px-1"
                   animate={{ opacity: lineOpacity }}
-                  transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: animation === "off" ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
                   style={{ height: rowHeight, textAlign }}
                 >
                   <div
@@ -205,7 +205,7 @@ export default function LyricsWindow() {
             key={current.time_ms}
             initial={enterFrom}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: animation === "off" ? 0 : 0.45, ease: [0.16, 1, 0.3, 1] }}
             className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1"
           >
             <div className="w-full truncate leading-tight" style={{ fontSize: fontSizeCss, fontWeight, fontFamily, textShadow, color: karaoke ? undefined : highlight, textAlign }}>
@@ -226,5 +226,6 @@ export default function LyricsWindow() {
         )}
       </div>
     </div>
+    </MotionConfig>
   );
 }

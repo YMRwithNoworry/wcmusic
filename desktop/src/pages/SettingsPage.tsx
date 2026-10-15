@@ -330,7 +330,7 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
           </Row>
-          <Row label="切换动画">
+          <Row label="切换动画" hint="歌词按此选项执行换行缓动；选择关闭才停用，不受系统动画开关影响">
             <Select
               value={lyrics.animation}
               onValueChange={(value) => patchLyrics({ animation: value as LyricsAnimation })}
