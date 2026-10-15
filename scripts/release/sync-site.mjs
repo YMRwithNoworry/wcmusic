@@ -158,6 +158,7 @@ if (targetAndroidUrl) {
 // 3) 版本号与首屏文案。
 rewrite(INDEX, (html) => {
   let out = html
+    .replace(/(<p class="eyebrow"><span><\/span> WCMusic )[0-9.]+(<\/p>)/, "$1" + version + "$2")
     .replace(/(<p class="file-meta">版本 )[0-9.]+( · x64<\/p>)/, "$1" + version + "$2")
     .replace(/(<p class="version">)v[0-9.]+(<\/p>)/, "$1" + tag + "$2")
     .replace(/(<p class="hero-note">[^<]*Windows )[0-9.]+/, "$1" + version)

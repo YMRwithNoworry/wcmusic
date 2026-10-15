@@ -9,7 +9,8 @@
     <meta property="og:description" content="聚合搜索、本地曲库与自定义音源，在一处自然流动。">
     <meta property="og:image" content="assets/wcmusic-desktop.png">
     <title>WCMusic - 下载</title>
-    <link rel="icon" href="assets/app-icon.png">
+    <link rel="icon" type="image/png" href="assets/app-icon.png">
+    <link rel="apple-touch-icon" href="assets/app-icon.png">
     <link rel="stylesheet" href="styles.css">
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
     <script src="app.js" defer></script>
@@ -19,7 +20,7 @@
 
     <header class="site-header" data-header>
       <a class="brand" href="#top" aria-label="WCMusic 首页">
-        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <img class="brand-mark" src="assets/app-icon.png" alt="" width="34" height="34">
         <span>WCMusic</span>
       </a>
       <nav aria-label="主导航">
@@ -43,7 +44,7 @@
           </picture>
         </div>
         <div class="hero-copy">
-          <p class="eyebrow"><span></span> WCMusic 1.0</p>
+          <p class="eyebrow"><span></span> WCMusic 1.2.46</p>
           <h1 id="hero-title">让声音<br>自然生长</h1>
           <p class="hero-summary">聚合搜索、本地曲库与自定义音源，在一处自然流动。为 Windows 与 Android 而生。</p>
           <div class="hero-actions">
@@ -53,7 +54,7 @@
             </a>
             <a class="text-link" href="#experience">看看它如何工作 <i data-lucide="arrow-down" aria-hidden="true"></i></a>
           </div>
-          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.45 · Android 1.2.45</p>
+          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.46 · Android 1.2.45</p>
         </div>
         <div class="hero-caption" aria-hidden="true">
           <span>本地曲库</span><span>聚合搜索</span><span>自由音源</span>
@@ -64,8 +65,12 @@
         <div class="section-kicker reveal"><span>01</span> 随心聆听</div>
         <div class="intro-heading reveal">
           <h2 id="experience-title">不被平台围住的<br>音乐生活</h2>
-          <p>WCMusic 把散落各处的声音带回你身边。搜索在线音乐、整理本地收藏，或导入自己的音源脚本，播放逻辑始终简单而直接。</p>
+          <p>发现新的歌单，收藏喜欢的歌曲，在底栏切换播放方式。主窗口收进托盘后，桌面歌词仍会置顶显示，让听歌和手头的事自然相伴。</p>
         </div>
+        <figure class="experience-preview reveal">
+          <img src="assets/wcmusic-desktop-v1.2.46.png" alt="WCMusic 新版桌面界面：左侧导航、热门歌单和底部播放方式切换按钮" loading="lazy" width="1180" height="760">
+          <figcaption><span>Windows 1.2.46 实际界面</span><a href="#downloads">下载新版，开始聆听 <i data-lucide="download" aria-hidden="true"></i></a></figcaption>
+        </figure>
         <div class="feature-grid">
           <article class="feature feature-wide reveal">
             <div class="feature-art search-art" aria-hidden="true">
@@ -89,18 +94,18 @@
             </div>
             <div class="feature-copy">
               <i data-lucide="library" aria-hidden="true"></i>
-              <h3>收藏归你，播放也归你</h3>
-              <p>导入本地音频与 M3U 歌单，在桌面和移动端保持熟悉的节奏。</p>
+              <h3>喜欢的歌，随时接着听</h3>
+              <p>收藏歌单与歌曲，缺失的歌曲封面自动补全。底栏一键切换顺序播放、列表循环、随机播放与单曲循环。</p>
             </div>
           </article>
           <article class="feature feature-dark reveal">
             <div class="code-lines" aria-hidden="true">
-              <span>source.init()</span><span>✓ QuickJS ready</span><span>memory 32 MB</span>
+              <span>桌面歌词置顶显示</span><span>主窗口关闭后继续播放</span><span>原文与翻译随歌滚动</span>
             </div>
             <div class="feature-copy">
               <i data-lucide="braces" aria-hidden="true"></i>
-              <h3>开放，但有边界</h3>
-              <p>兼容洛雪自定义源，Rust 沙箱限制运行内存，导入时不开放网络请求。</p>
+              <h3>关上窗口，留下歌词</h3>
+              <p>主窗口收进托盘，音乐继续。桌面歌词保持置顶，支持鼠标穿透、逐字高亮与平滑滚动。</p>
             </div>
           </article>
         </div>
@@ -121,11 +126,11 @@
               <h3>Windows x64</h3>
               <p class="meta">Windows 10 / 11 · ZIP 便携版</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.45/wcmusic-windows-x64.zip">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.46/wcmusic-windows-x64.zip">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Windows 版
             </a>
-            <p class="file-meta">版本 1.2.45 · x64</p>
+            <p class="file-meta">版本 1.2.46 · x64</p>
           </article>
           <article class="download-card reveal" data-platform="android">
             <div class="platform-icon clay"><i data-lucide="smartphone" aria-hidden="true"></i></div>
@@ -148,13 +153,16 @@
         <div class="section-kicker reveal"><span>03</span> 最新发布</div>
         <div class="release-layout">
           <div class="release-sticky reveal">
-            <p class="version">v1.2.45</p>
-            <h2 id="release-title">榜单、翻译与更轻的桌面端</h2>
-            <p>2026 年 10 月 8 日</p>
+            <p class="version">v1.2.46</p>
+            <h2 id="release-title">更清晰的界面，更顺手的聆听</h2>
+            <p>2026 年 10 月 16 日</p>
             <span class="stable"><span></span> 稳定版</span>
           </div>
           <div class="changelog reveal">
-            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>修复播完后点播放没有反应</h3><p>- 根因：歌曲播完（顺序播放走到队列末尾时 finished 会一直保持 true）后点播放，</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="layout-dashboard" aria-hidden="true"></i></span><div><h3>桌面界面焕新</h3><p>发现、搜索、收藏与音源管理更清晰，支持浅色和深色主题，播放栏在小窗口下也更从容。</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="repeat" aria-hidden="true"></i></span><div><h3>播放方式，就在底栏</h3><p>顺序播放、列表循环、随机播放和单曲循环一键切换，自动保存并与设置同步。</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="text-cursor" aria-hidden="true"></i></span><div><h3>桌面歌词一直相伴</h3><p>主窗口关闭到托盘后，桌面歌词继续置顶显示。改善连续播放时的歌词缓动，并移除浏览器默认右键菜单。</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="image" aria-hidden="true"></i></span><div><h3>补回收藏里的歌曲封面</h3><p>按原平台歌曲 ID 补取缺失或失效封面，保存修复后的地址，重启后仍可正常显示。</p></div></div>
           </div>
         </div>
       </section>
@@ -173,7 +181,7 @@
           </details>
           <details>
             <summary>Windows 版本需要安装吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
-            <p>不需要。解压 ZIP 后直接运行 wcmusic.exe 即可，字体与图标都已打包在程序内。</p>
+            <p>不需要。解压 ZIP 后直接运行 wcmusic-desktop.exe 即可，字体与图标都已打包在程序内。</p>
           </details>
           <details>
             <summary>自定义音源安全吗？ <i data-lucide="plus" aria-hidden="true"></i></summary>
@@ -257,7 +265,7 @@
     </main>
 
     <footer>
-      <div class="footer-mark" aria-hidden="true"><span></span></div>
+      <img class="footer-mark" src="assets/app-icon.png" alt="WCMusic 软件图标" width="34" height="34">
       <div><strong>WCMusic</strong><p>让声音自然生长。</p></div>
       <p class="footer-tech">Tauri 2 · Flutter · Rust<br>Made for listening.</p>
       <a href="#top" class="back-top" aria-label="返回顶部"><i data-lucide="arrow-up" aria-hidden="true"></i></a>

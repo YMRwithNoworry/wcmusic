@@ -39,10 +39,9 @@ svg { width: 1.1em; height: 1.1em; stroke-width: 1.8; }
 .site-header.scrolled { background: rgba(242, 239, 231, 0.94); border-color: var(--line); backdrop-filter: blur(14px); }
 .brand { display: inline-flex; align-items: center; gap: 11px; width: max-content; text-decoration: none; font-weight: 700; }
 .brand-mark, .footer-mark {
-  display: grid; place-items: center; width: 34px; aspect-ratio: 1;
-  background: var(--moss-dark); border-radius: 7px;
+  display: block; width: 34px; height: 34px; flex-shrink: 0;
+  object-fit: contain; border-radius: 7px;
 }
-.brand-mark span, .footer-mark span { width: 13px; aspect-ratio: 1; border: 3px solid var(--paper); }
 nav { display: flex; gap: clamp(22px, 4vw, 48px); }
 nav a { position: relative; text-decoration: none; font-size: 14px; }
 nav a::after { content: ""; position: absolute; left: 0; right: 100%; bottom: -7px; height: 1px; background: currentColor; transition: right 180ms; }
@@ -84,6 +83,11 @@ h1 { max-width: 620px; margin: 0; font-size: clamp(64px, 7.4vw, 112px); line-hei
 .intro-heading { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .55fr); gap: 80px; align-items: end; margin-bottom: 68px; }
 .intro-heading h2, .download-lead h2, .release-sticky h2, .questions h2, .feedback h2 { margin: 0; font-size: clamp(46px, 6vw, 82px); line-height: 1.03; font-weight: 620; }
 .intro-heading p, .download-lead > p { margin: 0 0 5px; font-size: 17px; line-height: 1.75; color: rgba(32,35,31,.72); }
+.experience-preview { margin: 0 0 48px; }
+.experience-preview > img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px; }
+.experience-preview figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding-top: 16px; font-size: 13px; color: var(--moss-dark); }
+.experience-preview figcaption a { display: inline-flex; align-items: center; gap: 8px; text-underline-offset: 4px; }
+#experience, #downloads, #releases, #questions, #feedback { scroll-margin-top: 88px; }
 .feature-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
 .feature {
   min-width: 0; min-height: 520px; padding: 22px; border: 1px solid var(--line); border-radius: 8px;
