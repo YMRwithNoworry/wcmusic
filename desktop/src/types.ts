@@ -94,6 +94,7 @@ export interface AppSettings {
   quality_index: number;
   dark_theme: boolean;
   spatial_audio_enabled: boolean;
+  spatial_audio_strength: number;
   lyrics_enabled: boolean;
   lyrics: LyricsStyle;
   hotkeys: HotKeySettings;
@@ -120,6 +121,7 @@ export interface PlaybackSnapshot {
   current: Track | null;
   volume: number;
   spatial: boolean;
+  spatial_strength: number;
   error: string | null;
 }
 

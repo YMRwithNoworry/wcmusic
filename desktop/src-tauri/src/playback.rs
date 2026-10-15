@@ -32,6 +32,7 @@ pub struct PlaybackSnapshot {
     pub current: Option<Track>,
     pub volume: f32,
     pub spatial: bool,
+    pub spatial_strength: u32,
     /// 最近一次失败的原因，成功后清空。
     pub error: Option<String>,
 }
@@ -41,6 +42,7 @@ struct Shared {
     current: Option<Track>,
     volume: f32,
     spatial: bool,
+    spatial_strength: u32,
     playing: bool,
     position_ms: u64,
     finished: bool,
@@ -62,7 +64,7 @@ enum Command {
     Stop,
     Seek(u64),
     SetVolume(f32),
-    SetSpatial(bool),
+    SetSpatial(bool, u32),
     Shutdown,
 }
 
@@ -73,11 +75,12 @@ pub struct Playback {
 }
 
 impl Playback {
-    pub fn new(volume: f32, spatial: bool) -> Self {
+    pub fn new(volume: f32, spatial: bool, spatial_strength: u32) -> Self {
         let shared = Arc::new(Mutex::new(Shared {
             current: None,
             volume: volume.clamp(0.0, 1.0),
             spatial,
+            spatial_strength: spatial_strength.min(100),
             playing: false,
             position_ms: 0,
             finished: false,
@@ -161,11 +164,13 @@ impl Playback {
         let _ = self.send(Command::SetVolume(volume));
     }
 
-    pub fn set_spatial(&self, enabled: bool) {
+    pub fn set_spatial(&self, enabled: bool, strength: u32) {
+        let strength = strength.min(100);
         if let Ok(mut shared) = self.shared.lock() {
             shared.spatial = enabled;
+            shared.spatial_strength = strength;
         }
-        let _ = self.send(Command::SetSpatial(enabled));
+        let _ = self.send(Command::SetSpatial(enabled, strength));
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
@@ -181,6 +186,7 @@ impl Playback {
             current: shared.current.clone(),
             volume: shared.volume,
             spatial: shared.spatial,
+            spatial_strength: shared.spatial_strength,
             error: shared.error.clone(),
         }
     }
@@ -254,8 +260,9 @@ fn handle(command: Command, player: &mut Option<AudioPlayer>, shared: &Arc<Mutex
                 player.set_volume(volume);
             }
         }
-        Command::SetSpatial(enabled) => {
+        Command::SetSpatial(enabled, strength) => {
             if let Some(player) = player.as_ref() {
+                player.set_spatial_strength(strength);
                 player.set_spatial_audio_enabled(enabled);
             }
         }
@@ -304,18 +311,23 @@ fn start(
         }
     }
     let active = player.as_mut().expect("刚创建过");
+    let (volume, spatial, strength) = read_volume_and_spatial(shared);
+    active.set_volume(volume);
+    active.set_spatial_strength(strength);
+    active.set_spatial_audio_enabled(spatial);
     // 优先边下边播；连接或格式不支持时退回整曲下载，与旧端行为一致。
     let result = match open_streaming_source(&url, use_proxy) {
-        Ok(stream) => active.play_stream(stream),
+        Ok(stream) => active.play_stream(stream)
         Err(_) => match download_audio_with_proxy(&url, use_proxy) {
-            Ok(bytes) => active.play(bytes),
+            Ok(bytes) => active.play(bytes)
             Err(error) => Err(error),
         },
     };
     match result {
         Ok(()) => {
-            let (volume, spatial) = read_volume_and_spatial(shared);
+            let (volume, spatial, strength) = read_volume_and_spatial(shared);
             active.set_volume(volume);
+            active.set_spatial_strength(strength);
             active.set_spatial_audio_enabled(spatial);
             set(shared, |state| {
                 state.current = Some(track);
@@ -336,9 +348,9 @@ fn fail(shared: &Arc<Mutex<Shared>>, message: &str) {
     });
 }
 
-fn read_volume_and_spatial(shared: &Arc<Mutex<Shared>>) -> (f32, bool) {
+fn read_volume_and_spatial(shared: &Arc<Mutex<Shared>>) -> (f32, bool, u32) {
     let state = shared.lock().unwrap_or_else(|error| error.into_inner());
-    (state.volume, state.spatial)
+    (state.volume, state.spatial, state.spatial_strength)
 }
 
 fn set(shared: &Arc<Mutex<Shared>>, update: impl FnOnce(&mut Shared)) {

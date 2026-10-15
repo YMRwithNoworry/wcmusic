@@ -89,7 +89,7 @@ export const player = {
   stop: () => invoke<void>("stop_playback"),
   seek: (positionMs: number) => invoke<void>("seek_playback", { positionMs }),
   setVolume: (volume: number) => invoke<void>("set_playback_volume", { volume }),
-  setSpatial: (enabled: boolean) => invoke<void>("set_spatial_audio", { enabled }),
+  setSpatial: (enabled: boolean) => invoke<AppSettings>("set_spatial_audio", { enabled }),
   artwork: (track: Track) => invoke<string | null>("track_artwork", { track }),
 };
 

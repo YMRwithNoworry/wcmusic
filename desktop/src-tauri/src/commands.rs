@@ -44,14 +44,16 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 pub async fn save_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    settings: AppSettings,
+    mut settings: AppSettings,
 ) -> Result<AppSettings, String> {
+    settings.spatial_audio_strength = settings.spatial_audio_strength.min(100);
     if settings.lyrics_enabled {
         show_lyrics_window(&app, &settings.lyrics)?;
     } else {
         destroy_lyrics_window(&app)?;
     }
     let saved = state.update_settings(|current| *current = settings);
+    state.with_playback(|playback| playback.set_spatial(saved.spatial_audio_enabled, saved.spatial_audio_strength));
     state.apply_hotkeys();
     apply_lyrics_window_style(&app, &saved.lyrics);
     let _ = app.emit("wcmusic://settings-changed", &saved);
@@ -169,8 +171,11 @@ pub fn set_playback_volume(volume: f32, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn set_spatial_audio(enabled: bool, state: State<'_, AppState>) {
-    state.with_playback(|playback| playback.set_spatial(enabled))
+pub fn set_spatial_audio(enabled: bool, app: tauri::AppHandle, state: State<'_, AppState>) -> AppSettings {
+    let saved = state.update_settings(|settings| settings.spatial_audio_enabled = enabled);
+    state.with_playback(|playback| playback.set_spatial(enabled, saved.spatial_audio_strength));
+    let _ = app.emit("wcmusic://settings-changed", &saved);
+    saved
 }
 
 /// 下载（并缓存）封面，返回可直接放进 `<img src>` 的 data URL。
@@ -365,12 +370,7 @@ pub fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
     let visible = window.is_visible().map_err(|error| error.to_string())?;
     if visible {
-        close_lyrics_window(&app)?;
-        window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
-        if let Err(error) = window.hide() {
-            let _ = window.set_ignore_cursor_events(false);
-            return Err(error.to_string());
-        }
+        hide_main_window(&app)?;
     } else {
         window.set_ignore_cursor_events(false).map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
@@ -378,6 +378,18 @@ pub fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
         window.set_focus().map_err(|error| error.to_string())?;
     }
     Ok(!visible)
+}
+
+/// 所有收进托盘入口共用：释放歌词覆盖层，隐藏主窗口并禁用鼠标命中。
+pub fn hide_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+    close_lyrics_window(app)?;
+    let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
+    window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
+    if let Err(error) = window.hide() {
+        let _ = window.set_ignore_cursor_events(false);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 /// 一条快捷键绑定（设置页展示用）。

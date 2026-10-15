@@ -132,6 +132,10 @@ export default function SettingsPage() {
   const { settings, update } = useSettings();
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
+  const [spatialStrength, setSpatialStrength] = useState(settings?.spatial_audio_strength ?? 100);
+  useEffect(() => {
+    setSpatialStrength(settings?.spatial_audio_strength ?? 100);
+  }, [settings?.spatial_audio_strength]);
   const [bindings, setBindings] = useState<HotKeyView[]>([]);
   const [issues, setIssues] = useState<HotKeyIssue[]>([]);
   const [presets, setPresets] = useState<LyricsPresets | null>(null);
@@ -237,6 +241,19 @@ export default function SettingsPage() {
                 void update({ spatial_audio_enabled });
               }}
             />
+          </Row>
+          <Row label="空间强度" hint="0% 为原声；增加后增强声场拓宽、早期反射与房间混响">
+            <Slider
+              className="w-[190px]"
+              value={[spatialStrength]}
+              min={0}
+              max={100}
+              step={5}
+              disabled={!settings.spatial_audio_enabled}
+              onValueChange={([value]) => setSpatialStrength(value)}
+              onValueCommit={([spatial_audio_strength]) => void update({ spatial_audio_strength })}
+            />
+            <span className="tabular text-xs">{spatialStrength}%</span>
           </Row>
         </Section>
 

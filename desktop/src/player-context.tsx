@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 
 import { desktopWindow, lyricsWindow, player } from "./api";
@@ -40,7 +41,7 @@ function trackKey(track: Track): string {
 }
 
 export function PlayerProvider({ children, controls = true }: { children: ReactNode; controls?: boolean }) {
-  const { settings } = useSettings();
+  const { settings, replace } = useSettings();
   const [snapshot, setSnapshot] = useState<PlaybackSnapshot | null>(null);
   const [artwork, setArtwork] = useState<string | null>(null);
   const [queue, setQueue] = useState<Track[]>([]);
@@ -270,10 +271,14 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
 
   const setSpatial = useCallback(
     async (enabled: boolean) => {
-      await player.setSpatial(enabled);
-      await refresh();
+      try {
+        replace(await player.setSpatial(enabled));
+        await refresh();
+      } catch (problem) {
+        toast.error(`更新空间音效失败：${problem}`);
+      }
     },
-    [refresh],
+    [refresh, replace],
   );
 
   const value = useMemo<PlayerContextValue>(

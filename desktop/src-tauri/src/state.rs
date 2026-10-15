@@ -20,7 +20,7 @@ impl AppState {
     /// 启动时从 `%APPDATA%\wcmusic\settings.json` 读一次。
     pub fn load() -> Self {
         let settings = AppSettings::load();
-        let playback = Playback::new(1.0, settings.spatial_audio_enabled);
+        let playback = Playback::new(1.0, settings.spatial_audio_enabled, settings.spatial_audio_strength);
         Self {
             settings: Mutex::new(settings),
             playback: Mutex::new(playback),

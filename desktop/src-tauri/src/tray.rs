@@ -1,6 +1,6 @@
 //! 系统托盘：左键点图标回到主界面，右键菜单可以显示主界面或退出。
 //!
-//! 主窗口关闭按钮退出程序；通过快捷键隐藏后可从托盘恢复。
+//! 主窗口关闭按钮收进托盘并继续播放；托盘菜单的「退出」彻底结束程序。
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};

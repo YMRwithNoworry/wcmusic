@@ -485,6 +485,7 @@ pub struct AudioPlayer {
     handle: OutputStreamHandle,
     sink: Option<Sink>,
     spatial_audio_enabled: Arc<AtomicBool>,
+    spatial_strength: Arc<AtomicU32>,
     volume: VolumeMemory,
     /// 当前边下边播的下载句柄；停止时用它取消后台下载。
     streaming: Option<Arc<StreamState>>,
@@ -499,6 +500,7 @@ impl AudioPlayer {
             handle,
             sink: None,
             spatial_audio_enabled: Arc::new(AtomicBool::new(false)),
+            spatial_strength: Arc::new(AtomicU32::new(100)),
             volume: VolumeMemory::new(),
             streaming: None,
         })
@@ -518,7 +520,7 @@ impl AudioPlayer {
         sink.append(SpatialSource::new(
             source,
             Arc::clone(&self.spatial_audio_enabled),
-        ));
+        ).with_strength(Arc::clone(&self.spatial_strength)));
         sink.play();
         self.sink = Some(sink);
         Ok(())
@@ -534,7 +536,7 @@ impl AudioPlayer {
         sink.append(SpatialSource::new(
             source,
             Arc::clone(&self.spatial_audio_enabled),
-        ));
+        ).with_strength(Arc::clone(&self.spatial_strength)));
         sink.play();
         self.sink = Some(sink);
         Ok(())
@@ -542,6 +544,10 @@ impl AudioPlayer {
 
     pub fn set_spatial_audio_enabled(&self, enabled: bool) {
         self.spatial_audio_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_spatial_strength(&self, strength: u32) {
+        self.spatial_strength.store(strength.min(100), Ordering::Relaxed);
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -1087,7 +1093,7 @@ mod tests {
 /// 空间音频：在 rodio 的解码流上做立体声拓宽、头部串扰、早期反射与混响尾。
 mod spatial {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::Duration;
 
     use fundsp::prelude32::{AudioUnit, reverb_stereo};
@@ -1153,6 +1159,7 @@ mod spatial {
     pub struct SpatialSource<S> {
         input: S,
         enabled: Arc<AtomicBool>,
+        strength: Arc<AtomicU32>,
         room: Box<dyn AudioUnit>,
         input_channels: u16,
         sample_rate: u32,
@@ -1213,6 +1220,7 @@ mod spatial {
             Self {
                 input,
                 enabled,
+                strength: Arc::new(AtomicU32::new(100)),
                 room,
                 input_channels,
                 sample_rate,
@@ -1239,6 +1247,14 @@ mod spatial {
             }
         }
 
+        pub fn with_strength(mut self, strength: Arc<AtomicU32>) -> Self {
+            self.blend = if self.enabled.load(Ordering::Relaxed) {
+                strength.load(Ordering::Relaxed).min(100) as f32 / 100.0
+            } else { 0.0 };
+            self.strength = strength;
+            self
+        }
+
         fn read_frame(&mut self) -> bool {
             for channel in 0..self.input_channels as usize {
                 let Some(sample) = self.input.next() else {
@@ -1252,12 +1268,11 @@ mod spatial {
             self.next_channel = 0;
 
             let enabled = self.enabled.load(Ordering::Relaxed);
+            let target = if enabled {
+                self.strength.load(Ordering::Relaxed).min(100) as f32 / 100.0
+            } else { 0.0 };
             let previous_blend = self.blend;
-            self.blend = if enabled {
-                (self.blend + self.blend_step).min(1.0)
-            } else {
-                (self.blend - self.blend_step).max(0.0)
-            };
+            self.blend += (target - self.blend).clamp(-self.blend_step, self.blend_step);
             if self.blend == 0.0 {
                 // 关闭后的旁路不改动采样，也不继续消耗混响运算。
                 if previous_blend > 0.0 {
@@ -1402,7 +1417,7 @@ mod spatial {
             self.input.try_seek(position)?;
             self.reset_space();
             self.blend = if self.enabled.load(Ordering::Relaxed) {
-                1.0
+                self.strength.load(Ordering::Relaxed).min(100) as f32 / 100.0
             } else {
                 0.0
             };
@@ -1419,6 +1434,47 @@ mod spatial {
     mod tests {
         use super::*;
         use rodio::buffer::SamplesBuffer;
+
+        #[test]
+        fn zero_strength_is_exact_bypass_even_when_enabled() {
+            let samples = vec![0.2, -0.3, 0.7, -0.6, 0.0, 0.1];
+            let output: Vec<_> = SpatialSource::new(
+                SamplesBuffer::new(2, 48_000, samples.clone()), control(true),
+            ).with_strength(Arc::new(AtomicU32::new(0))).collect();
+            assert_eq!(output, samples);
+        }
+
+        #[test]
+        fn half_strength_interpolates_between_dry_and_full_effect() {
+            let input = || impulse(2, 48_000);
+            let dry: Vec<_> = SpatialSource::new(input(), control(false)).collect();
+            let full: Vec<_> = SpatialSource::new(input(), control(true)).collect();
+            let half: Vec<_> = SpatialSource::new(input(), control(true))
+                .with_strength(Arc::new(AtomicU32::new(50))).collect();
+            assert_eq!(dry.len(), half.len());
+            for ((dry, full), half) in dry.iter().zip(&full).zip(&half) {
+                assert!((half - (dry + full) * 0.5).abs() < 1e-6);
+            }
+        }
+
+        #[test]
+        fn strength_changes_ramp_and_seek_keeps_requested_strength() {
+            let strength = Arc::new(AtomicU32::new(100));
+            let mut source = SpatialSource::new(impulse(2, 48_000), control(true))
+                .with_strength(strength.clone());
+            source.by_ref().take(100).for_each(drop);
+            strength.store(25, Ordering::Relaxed);
+            source.by_ref().take(2).for_each(drop);
+            assert!(source.blend > 0.25 && source.blend < 1.0);
+            source.by_ref().take(4_000).for_each(drop);
+            assert_eq!(source.blend, 0.25);
+            source.try_seek(Duration::from_millis(100)).unwrap();
+            assert_eq!(source.blend, 0.25);
+            strength.store(0, Ordering::Relaxed);
+            source.by_ref().take(4_000).for_each(drop);
+            assert_eq!(source.blend, 0.0);
+            assert!(source.reflection.iter().all(|sample| *sample == 0.0));
+        }
 
         fn control(enabled: bool) -> Arc<AtomicBool> {
             Arc::new(AtomicBool::new(enabled))
