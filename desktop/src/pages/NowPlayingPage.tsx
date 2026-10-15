@@ -220,7 +220,7 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
       <div className="relative min-h-0">
         <div
           ref={listRef}
-          className="relative h-full overflow-y-auto pr-2"
+          className="relative h-full overflow-x-hidden overflow-y-auto pr-2"
           onWheel={pauseFollow}
           onTouchMove={pauseFollow}
           style={{
