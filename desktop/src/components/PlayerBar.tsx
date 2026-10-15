@@ -1,4 +1,8 @@
 import {
+  ArrowsDownUpIcon,
+  RepeatIcon,
+  RepeatOnceIcon,
+  ShuffleIcon,
   MusicNotesIcon,
   PauseIcon,
   PlayIcon,
@@ -16,7 +20,16 @@ import { lyricsWindow } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useSettings } from "@/settings-context";
+import type { PlaybackMode } from "@/types";
 import { formatTime, usePlayer } from "@/player-context";
+
+const PLAYBACK_MODES = [
+  { value: "sequence", label: "顺序播放", icon: ArrowsDownUpIcon },
+  { value: "listLoop", label: "列表循环", icon: RepeatIcon },
+  { value: "shuffle", label: "随机播放", icon: ShuffleIcon },
+  { value: "singleLoop", label: "单曲循环", icon: RepeatOnceIcon },
+] satisfies { value: PlaybackMode; label: string; icon: typeof RepeatIcon }[];
 
 /// 正在出声的三条跳动竖条：用动画表达「正在播放」这个状态。
 function PlayingBars() {
@@ -51,6 +64,22 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
     setSpatial,
     queueLength,
   } = usePlayer();
+
+  const { settings, update } = useSettings();
+  const [savingMode, setSavingMode] = useState(false);
+  const modeIndex = Math.max(0, PLAYBACK_MODES.findIndex((mode) => mode.value === settings?.playback_mode));
+  const mode = PLAYBACK_MODES[modeIndex];
+  const nextMode = PLAYBACK_MODES[(modeIndex + 1) % PLAYBACK_MODES.length];
+  const ModeIcon = mode.icon;
+
+  async function cyclePlaybackMode() {
+    setSavingMode(true);
+    try {
+      await update({ playback_mode: nextMode.value });
+    } finally {
+      setSavingMode(false);
+    }
+  }
 
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const track = snapshot?.current ?? null;
@@ -96,7 +125,22 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
 
       {/* 中：走带 */}
       <div className="flex min-w-0 flex-col items-center gap-2">
-        <div className="flex items-center gap-4">
+        <div className="relative flex w-full items-center justify-center gap-4">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute left-0 gap-1.5 px-2 text-muted-foreground hover:text-primary"
+                disabled={!settings || savingMode}
+                aria-label={`播放方式：${mode.label}，点击切换为${nextMode.label}`}
+                onClick={() => void cyclePlaybackMode()}
+              >
+                <ModeIcon /><span className="text-[11px]">{mode.label}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>当前：{mode.label} · 点击切换为{nextMode.label}</TooltipContent>
+          </Tooltip>
           <Button
             variant="ghost"
             size="icon-sm"
