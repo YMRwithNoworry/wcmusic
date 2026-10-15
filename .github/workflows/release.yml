@@ -1,14 +1,13 @@
 name: Release
 
-# 每次推送到 main：递增版本号 -> 构建 Windows / Android -> 发布 GitHub Release -> 同步官网。
-# 版本号提交与官网提交都带 [skip ci]，所以不会自己触发自己。
+# 普通分支推送自动发布；机器人写回版本/官网的提交不重复触发构建。
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       bump:
-        description: 版本号递增方式
+        description: 版本号递增方式（none 重新发布当前版本）
         type: choice
         options: [patch, minor, major, none]
         default: patch
@@ -17,48 +16,69 @@ on:
 permissions:
   contents: write
 
+# 所有分支共用发布序列，避免争抢版本号或覆盖正在构建的 Release。
 concurrency:
-  group: release-main
+  group: wcmusic-release
   cancel-in-progress: false
 
 jobs:
   version:
-    name: 递增版本号
+    name: 确定版本与构建提交
     if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.bump.outputs.version }}
       previous: ${{ steps.bump.outputs.previous }}
       tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
-      - id: bump
-        name: 计算新版本号
-        run: node scripts/release/bump-version.mjs "${{ inputs.bump || 'patch' }}"
-      - name: 提交版本号
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 校验发布脚本
+        run: node --test scripts/release/release.test.mjs
+      - id: latest
+        name: 查询最新已发布版本
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          if git diff --quiet; then
-            echo "版本号未变化，跳过提交"
-            exit 0
-          fi
+          set -euo pipefail
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - id: bump
+        name: 递增版本（不低于已发布版本）
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+          LATEST: ${{ steps.latest.outputs.tag }}
+        run: node scripts/release/bump-version.mjs "$BUMP" "$LATEST"
+      - id: source
+        name: 写回版本并锁定构建提交
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json pubspec.yaml
-          git commit -m "chore(release): ${{ steps.bump.outputs.tag }} [skip ci]"
-          git push origin main
+          git add desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json desktop/package-lock.json pubspec.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): $TAG [skip ci]"
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   windows:
-    name: 构建 Windows 包（Tauri 桌面端）
+    name: 构建 Windows 包
     needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -71,27 +91,26 @@ jobs:
       - name: 安装前端依赖
         working-directory: desktop
         run: npm ci
-      - name: 构建前端（vite → dist/）
+      - name: 构建前端
         working-directory: desktop
         run: npm run build
+      - name: Rust 测试
+        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib
       - name: 构建 Tauri 桌面端
-        # 必须带 custom-protocol：它决定加载内嵌前端而不是 http://localhost:1420。
-        run: cargo build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
-      - name: 打包 zip
+        run: cargo build --locked --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
+      - name: 打包 ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item desktop\src-tauri\target\release\wcmusic-desktop.exe dist\wcmusic-desktop.exe
           Compress-Archive -Path dist\wcmusic-desktop.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
-          Get-Item dist\wcmusic-windows-x64.zip | Format-List Name, Length
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/wcmusic-windows-x64.zip
           if-no-files-found: error
 
-  # Android 端依赖 cargo-ndk 与 NDK，属于尽力而为：失败也不影响 Windows 包发布，
-  # 只是本次 Release 不带 APK（官网的 Android 链接会保持原样）。
+  # Android 构建失败时仍发布 Windows；官网沿用上个实际存在的 APK。
   android:
     name: 构建 Android 包
     needs: version
@@ -100,14 +119,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.44.8"
           channel: stable
           cache: true
       - uses: dtolnay/rust-toolchain@stable
@@ -119,7 +137,7 @@ jobs:
       - name: 安装 cargo-ndk
         run: cargo install cargo-ndk --locked
       - run: flutter pub get
-      - name: flutter build apk
+      - name: 构建 APK
         run: flutter build apk --release --target-platform android-arm64
       - name: 收集 APK
         run: |
@@ -132,20 +150,24 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: 发布 Release 并同步官网
+    name: 发布 Release 并同步官网源码
     needs: [version, windows, android]
     if: ${{ always() && needs.version.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: actions/download-artifact@v4
         with:
           name: windows
           path: dist
       - uses: actions/download-artifact@v4
+        if: ${{ needs.android.result == 'success' }}
         continue-on-error: true
         with:
           name: android
@@ -154,70 +176,102 @@ jobs:
         id: assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
-          set -e
-          ls -la dist
-          repo="${{ github.repository }}"
-          tag="${{ needs.version.outputs.tag }}"
-          if [ -f dist/wcmusic-android-arm64.apk ]; then
+          set -euo pipefail
+          test -s dist/wcmusic-windows-x64.zip
+          if [ -s dist/wcmusic-android-arm64.apk ]; then
             echo "android=true" >> "$GITHUB_OUTPUT"
-            echo "android_url=https://github.com/$repo/releases/download/$tag/wcmusic-android-arm64.apk" >> "$GITHUB_OUTPUT"
+            echo "android_url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/wcmusic-android-arm64.apk" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Android 构建没有产出 APK，本次 Release 只包含 Windows 包"
-            # 官网的 Android 按钮不能指向空文件：退回最近一个真有 APK 的 Release。
-            url=""
-            for candidate in "$repo" YMRwithNoworry/wcmusic-releases; do
-              url=$(gh api "repos/$candidate/releases?per_page=20" --jq '[.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "wcmusic-android-arm64.apk")][0].browser_download_url' 2>/dev/null || true)
-              if [ -n "$url" ] && [ "$url" != "null" ]; then break; fi
-              url=""
-              done
+            url=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "wcmusic-android-arm64.apk")][0].browser_download_url // ""')
+            test -n "$url" || { echo "::error::未找到可用的历史 APK"; exit 1; }
             echo "android_url=$url" >> "$GITHUB_OUTPUT"
+            echo "::warning::Android 未出包，官网保留历史 APK：$url"
           fi
       - name: 生成 Release 说明与官网改动
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PREVIOUS: ${{ needs.version.outputs.previous }}
+          ANDROID: ${{ steps.assets.outputs.android }}
+          ANDROID_URL: ${{ steps.assets.outputs.android_url }}
         run: |
-          node scripts/release/sync-site.mjs \
-            --version "${{ needs.version.outputs.version }}" \
-            --repo "${{ github.repository }}" \
-            --previous "v${{ needs.version.outputs.previous }}" \
-            --android "${{ steps.assets.outputs.android }}" \
-            --android-url "${{ steps.assets.outputs.android_url }}" \
-            --notes release-notes.md
-          git --no-pager diff --stat
+          node scripts/release/sync-site.mjs --version "$VERSION" --repo "$GITHUB_REPOSITORY" --previous "v$PREVIOUS" --android "$ANDROID" --android-url "$ANDROID_URL" --notes release-notes.md
       - name: 发布 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SOURCE_SHA: ${{ needs.version.outputs.sha }}
         run: |
-          set -e
-          tag="${{ needs.version.outputs.tag }}"
-          version="${{ needs.version.outputs.version }}"
-          repo="${{ github.repository }}"
-          assets="dist/wcmusic-windows-x64.zip"
-          if [ -f dist/wcmusic-android-arm64.apk ]; then
-            assets="$assets dist/wcmusic-android-arm64.apk"
-          fi
-          # 手动重跑（bump=none）时同一个 tag 已经发过，改成覆盖资产而不是报错。
-          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            echo "Release $tag 已存在，覆盖资产与说明"
-            gh release upload "$tag" $assets --clobber --repo "$repo"
-            gh release edit "$tag" --title "WCMusic $version" --notes-file release-notes.md --repo "$repo"
+          set -euo pipefail
+          assets=(dist/wcmusic-windows-x64.zip)
+          if [ -s dist/wcmusic-android-arm64.apk ]; then assets+=(dist/wcmusic-android-arm64.apk); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --title "WCMusic $VERSION" --notes-file release-notes.md --latest
           else
-            gh release create "$tag" \
-              --repo "$repo" \
-              --target main \
-              --title "WCMusic $version" \
-              --notes-file release-notes.md \
-              $assets
+            gh release create "$TAG" --target "$SOURCE_SHA" --title "WCMusic $VERSION" --notes-file release-notes.md --latest "${assets[@]}"
           fi
-      - name: 提交官网改动
+      - name: 写回官网源码
         run: |
-          set -e
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add site/index.html site/app.js
-          if git diff --cached --quiet; then
-            echo "官网无需改动"
-            exit 0
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(site): 同步 ${{ needs.version.outputs.tag }} [skip ci]"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi
-          git commit -m "chore(site): 同步 v${{ needs.version.outputs.version }} [skip ci]"
-          git push origin main
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website
+          path: site/
+          if-no-files-found: error
+
+  deploy:
+    name: 部署 Cloudflare Pages 官网
+    needs: [version, release]
+    if: ${{ always() && needs.version.result == 'success' && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://wcmusic.pages.dev
+    steps:
+      - name: 检查部署凭据
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CF_TOKEN" || { echo "::error::请在仓库 Actions Secrets 中设置 CLOUDFLARE_API_TOKEN（账号 Cloudflare Pages Edit 权限）"; exit 1; }
+          test -n "$CF_ACCOUNT" || { echo "::error::请设置仓库变量 CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: website
+          path: site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 部署正式站点
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CF_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          SOURCE_SHA: ${{ needs.version.outputs.sha }}
+        run: npx --yes wrangler@4.59.2 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$SOURCE_SHA" --commit-dirty=true
+      - name: 验证正式站点版本
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error "https://wcmusic.pages.dev/?release=$VERSION" | grep -Fq "Windows $VERSION"; then
+              echo "官网已同步 Windows $VERSION" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::正式站点未显示本次版本 $VERSION"
+          exit 1

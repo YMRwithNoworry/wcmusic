@@ -94,7 +94,19 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。自动发布（推送到 `main` 触发）打包 `wcmusic-windows-x64.zip`，Android 发布仍使用上面的 Flutter APK 命令。
+Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。
+
+自动发布由 [Release 工作流](.github/workflows/release.yml) 完成：普通分支推送 → 递增版本并锁定源码提交 → Windows / Android 构建 → GitHub Release → 同步官网版本、下载链接与日志 → 部署 https://wcmusic.pages.dev/。机器人写回的提交带 `[skip ci]`，避免重复构建。Android 构建失败时仍发布 Windows，官网保留上一个实际可下载的 APK。
+
+仓库 Settings → Secrets and variables → Actions 需要以下配置：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | 限定目标账号、具备 `Account / Cloudflare Pages / Edit` 权限的 API Token |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账号 ID |
+| Variable | `CLOUDFLARE_PAGES_PROJECT` | `wcmusic` |
+
+GitHub 发布使用内置 `GITHUB_TOKEN`，无需另配 GitHub Token。手动运行工作流可选择 `patch`、`minor`、`major` 或 `none`；`none` 用于重新发布当前版本。部署失败后可在 Actions 里选择“Re-run failed jobs”，无需重新构建应用。
 
 ## 目录
 

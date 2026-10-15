@@ -21,7 +21,9 @@ const JSON_MANIFESTS = ["desktop/package.json"];
 /// Flutter 端的版本号（构建号 +N 每次发布递增，Android 靠它区分同版本号的不同构建）。
 const PUBSPEC = "pubspec.yaml";
 
+// 可选第二个参数为最新已发布 tag，旧分支也必须从该版本继续递增。
 const kind = process.argv[2] ?? "patch";
+const latest = (process.argv[3] ?? "").replace(/^v/, "");
 
 function nextVersion(current, kind) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(current);
@@ -69,15 +71,30 @@ function bumpJsonManifest(path, version) {
 const sourceToml = readFileSync(SOURCE, "utf8");
 const currentMatch = /^version = "(\d+\.\d+\.\d+)"/m.exec(sourceToml);
 if (!currentMatch) throw new Error(SOURCE + " 里找不到版本号");
-const previous = currentMatch[1];
+const current = currentMatch[1];
+if (latest && !/^\d+\.\d+\.\d+$/.test(latest)) {
+  throw new Error("无法解析最新发布版本：" + latest);
+}
+function compareVersions(a, b) {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] - right[i];
+  return 0;
+}
+const previous = kind !== "none" && latest && compareVersions(latest, current) > 0 ? latest : current;
 const version = nextVersion(previous, kind);
 
-if (version !== previous) {
+if (version !== current) {
   writeFileSync(SOURCE, sourceToml.replace(/^version = "\d+\.\d+\.\d+"/m, 'version = "' + version + '"'));
   for (const { path, package: packageName } of CARGO_LOCKS) {
     bumpCargoLock(path, packageName, version);
   }
   for (const path of JSON_MANIFESTS) bumpJsonManifest(path, version);
+  const lockPath = "desktop/package-lock.json";
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  lock.version = version;
+  if (lock.packages?.[""]) lock.packages[""].version = version;
+  writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
 
   const pubspec = readFileSync(PUBSPEC, "utf8");
   const pubspecPattern = /^version: (\d+\.\d+\.\d+)\+(\d+)$/m;
