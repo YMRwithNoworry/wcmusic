@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { app, hotkeys, lyrics as lyricsApi, lyricsWindow } from "@/api";
+import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,12 +61,12 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <Card className="gap-0 py-0">
-      <div className="border-b px-4 py-2.5">
-        <h2 className="text-[13px] font-semibold">{title}</h2>
+    <Card id={`settings-${title}`} className="scroll-mt-20 gap-0 overflow-hidden rounded-2xl border-border/70 py-0 shadow-none">
+      <div className="border-b bg-background/50 px-5 py-4">
+        <h2 className="text-[15px] font-semibold">{title}</h2>
         {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
       </div>
-      <div className="px-4 py-1">{children}</div>
+      <div className="divide-y divide-border/60 px-5 py-1">{children}</div>
     </Card>
   );
 }
@@ -80,10 +81,10 @@ function Row({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 py-2.5">
+    <div role="group" aria-label={label} className="flex items-center justify-between gap-5 py-4">
       <div className="min-w-0">
         <div className="text-[13px]">{label}</div>
-        {hint ? <div className="text-[11px] text-muted-foreground">{hint}</div> : null}
+        {hint ? <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</div> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
@@ -185,7 +186,12 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <h1 className="mb-5 text-[22px] font-semibold">设置</h1>
+      <PageHeader title="设置" description="调整你的听歌习惯。更改后自动保存，无需额外确认。" />
+      <nav aria-label="设置分类" className="sticky top-0 z-10 mb-5 flex flex-wrap gap-1 rounded-xl border bg-card/95 p-1.5 backdrop-blur-md">
+        {["外观", "播放", "歌词", "歌词外观", "全局快捷键", "网络", "关于"].map((title) => (
+          <Button key={title} variant="ghost" size="sm" onClick={() => document.getElementById(`settings-${title}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{title}</Button>
+        ))}
+      </nav>
 
       <div className="flex max-w-[760px] flex-col gap-4 pb-6">
         <Section title="外观">

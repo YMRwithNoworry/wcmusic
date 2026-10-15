@@ -21,7 +21,7 @@ import RankingsPage from "@/pages/RankingsPage";
 import SearchPage from "@/pages/SearchPage";
 import SettingsPage from "@/pages/SettingsPage";
 import SourcesPage from "@/pages/SourcesPage";
-import { PlayerProvider } from "@/player-context";
+import { PlayerProvider, usePlayer } from "@/player-context";
 import { SettingsProvider } from "@/settings-context";
 import type { AppInfo } from "@/types";
 
@@ -30,20 +30,20 @@ import appIcon from "../../assets/icons/app_icon.png";
 
 /// 侧栏导航：对应当前 Tauri 客户端的页面。
 const NAV = [
-  { key: "home", label: "主页", icon: HouseIcon },
-  { key: "search", label: "搜索", icon: MagnifyingGlassIcon },
+  { key: "home", label: "发现音乐", icon: HouseIcon },
+  { key: "search", label: "搜索音乐", icon: MagnifyingGlassIcon },
   { key: "rankings", label: "排行榜", icon: ChartLineUpIcon },
-  { key: "playlists", label: "歌单", icon: MusicNotesIcon },
-  { key: "sources", label: "音源", icon: PlugsConnectedIcon },
+  { key: "playlists", label: "我的收藏", icon: MusicNotesIcon },
+  { key: "sources", label: "音源管理", icon: PlugsConnectedIcon },
   { key: "settings", label: "设置", icon: GearSixIcon },
 ] as const;
 
 type NavKey = (typeof NAV)[number]["key"];
 
-function page(key: NavKey) {
+function page(key: NavKey, navigate: (key: NavKey) => void) {
   switch (key) {
     case "home":
-      return <HomePage />;
+      return <HomePage onSearch={() => navigate("search")} />;
     case "search":
       return <SearchPage />;
     case "rankings":
@@ -58,6 +58,7 @@ function page(key: NavKey) {
 }
 
 function Shell() {
+  const { snapshot } = usePlayer();
   const [tab, setTab] = useState<NavKey>("home");
   const [nowPlaying, setNowPlaying] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -69,27 +70,25 @@ function Shell() {
   const viewKey = nowPlaying ? "now-playing" : tab;
 
   return (
-    <div className="grid h-full grid-rows-[36px_minmax(0,1fr)_84px]">
+    <div className="grid h-full grid-rows-[36px_minmax(0,1fr)_100px]">
       <TitleBar />
 
-      <div className="grid min-h-0 grid-cols-[212px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col gap-4 border-r bg-sidebar px-3 py-4">
-          <div className="flex items-center gap-2.5 px-2">
+      <div className="grid min-h-0 grid-cols-[184px_minmax(0,1fr)] gap-2 pr-3 pb-3">
+        <aside className="flex min-h-0 flex-col px-3 pt-4 pb-2 [@media(max-height:680px)]:pt-2">
+          <div className="mb-8 flex items-center gap-2.5 px-2 [@media(max-height:680px)]:mb-4">
             <img
               src={appIcon}
               alt=""
               className="size-8 rounded-[10px] object-cover ring-1 ring-border"
             />
             <div className="leading-tight">
-              <div className="text-sm font-semibold">WCMusic</div>
-              <div className="text-[11px] text-muted-foreground">
-                {info ? `v${info.version}` : "连接中"}
-              </div>
+              <div className="text-[15px] font-semibold tracking-tight">WCMusic</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">随时听见喜欢</div>
             </div>
           </div>
 
-          <nav className="flex flex-col gap-0.5">
-            {NAV.map((item) => {
+          <nav aria-label="主导航" className="flex flex-1 flex-col gap-1 overflow-y-auto">
+            {NAV.map((item, index) => {
               const active = item.key === tab && !nowPlaying;
               return (
                 <button
@@ -99,16 +98,17 @@ function Shell() {
                     setNowPlaying(false);
                     setTab(item.key);
                   }}
-                  className={`relative flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors ${
+                  aria-current={active ? "page" : undefined}
+                  className={`relative flex min-h-11 shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring [@media(max-height:680px)]:min-h-10 [@media(max-height:680px)]:py-2 ${index === 3 || index === 4 ? "mt-5 [@media(max-height:680px)]:mt-3" : ""} ${
                     active
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "font-semibold text-primary"
+                      : "text-muted-foreground hover:bg-card hover:text-foreground"
                   }`}
                 >
                   {active ? (
                     <motion.span
                       layoutId="nav-pill"
-                      className="absolute inset-0 rounded-[10px] bg-accent"
+                      className="absolute inset-0 rounded-xl bg-accent"
                       transition={{ type: "spring", stiffness: 520, damping: 38 }}
                     />
                   ) : null}
@@ -121,9 +121,19 @@ function Shell() {
               );
             })}
           </nav>
+          <button
+            type="button"
+            disabled={!snapshot?.current}
+            onClick={() => setNowPlaying(true)}
+            className={`mt-3 flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 ${nowPlaying ? "bg-accent text-primary" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}
+          >
+            <MusicNotesIcon size={18} />
+            正在播放
+          </button>
+          <div className="mt-4 px-3 text-[10px] text-muted-foreground/75 [@media(max-height:680px)]:mt-2">{info ? `WCMusic ${info.version}` : "正在连接播放器…"}</div>
         </aside>
 
-        <main className="relative min-h-0 overflow-hidden">
+        <main className="relative min-h-0 min-w-0 overflow-hidden rounded-[20px] border border-border/60 bg-card">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={viewKey}
@@ -136,7 +146,7 @@ function Shell() {
               {nowPlaying ? (
                 <NowPlayingPage onBack={() => setNowPlaying(false)} />
               ) : (
-                page(tab)
+                page(tab, setTab)
               )}
             </motion.div>
           </AnimatePresence>

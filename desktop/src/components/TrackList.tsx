@@ -1,7 +1,8 @@
-import { StarIcon } from "@phosphor-icons/react";
+import { MusicNotesIcon, StarIcon } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { memo, useCallback, useRef } from "react";
 
+import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatTime, usePlayer } from "@/player-context";
@@ -57,18 +58,21 @@ const TrackRow = memo(function TrackRow({
   onToggleSave,
 }: RowProps) {
   return (
-    <motion.li
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.22,
-        delay: Math.min(index, 12) * 0.015,
-        ease: [0.22, 1, 0.36, 1],
-      }}
+    <li
       onClick={() => onPlay(index)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onPlay(index);
+        }
+      }}
+      tabIndex={0}
+      aria-label={`播放：${track.title}，${track.artist}`}
+      aria-current={playing ? "true" : undefined}
       className={cn(
-        "group grid cursor-pointer grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_64px_28px] items-center gap-3 rounded-[10px] px-2.5 py-2 text-sm transition-colors",
-        playing ? "bg-accent/70" : "hover:bg-accent/45",
+        "group grid cursor-pointer grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] items-center gap-3 rounded-xl px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        playing ? "bg-accent/70" : "hover:bg-muted/65",
       )}
     >
       <span className="flex size-6 items-center justify-center">
@@ -80,7 +84,7 @@ const TrackRow = memo(function TrackRow({
           </span>
         )}
       </span>
-      <span className="size-10 overflow-hidden rounded-[7px] bg-muted">
+      <span className="flex size-10 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
         {track.artworkUri ? (
           <img
             src={track.artworkUri}
@@ -88,7 +92,7 @@ const TrackRow = memo(function TrackRow({
             loading="lazy"
             className="size-full object-cover"
           />
-        ) : null}
+        ) : <MusicNotesIcon size={18} weight="duotone" />}
       </span>
       <span className={cn("truncate font-medium", playing && "text-primary")}>
         {track.title}
@@ -106,8 +110,10 @@ const TrackRow = memo(function TrackRow({
             "size-7 transition-opacity",
             isSaved
               ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+              : "text-muted-foreground/60 hover:text-primary",
           )}
+          aria-pressed={isSaved}
+          aria-label={isSaved ? `取消收藏：${track.title}` : `收藏歌曲：${track.title}`}
           title={isSaved ? "取消收藏" : "收藏到我的收藏"}
           onClick={(event) => {
             event.stopPropagation();
@@ -119,14 +125,14 @@ const TrackRow = memo(function TrackRow({
       ) : (
         <span />
       )}
-    </motion.li>
+    </li>
   );
 });
 
 /// 曲目列表：点行播放，可选收藏按钮。搜索 / 榜单 / 歌单页共用。
 export default function TrackList({ tracks, onToggleSave, saved, empty }: Props) {
   const { playAt, snapshot } = usePlayer();
-  const playingId = snapshot?.current?.id ?? null;
+  const playingKey = snapshot?.current ? `${snapshot.current.source}-${snapshot.current.id}` : null;
 
   // 用 ref 拿到最新列表，`onPlay` 才能保持稳定，memo 的行才不会被无谓重渲染。
   const tracksRef = useRef(tracks);
@@ -134,21 +140,21 @@ export default function TrackList({ tracks, onToggleSave, saved, empty }: Props)
   const onPlay = useCallback((index: number) => void playAt(tracksRef.current, index), [playAt]);
 
   if (tracks.length === 0) {
-    return (
-      <div className="flex h-40 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
-        {empty ?? "这里还没有歌曲。"}
-      </div>
-    );
+    return <EmptyState title="这里还没有歌曲" description={empty ?? "从搜索、榜单或歌单中选择一首歌曲开始播放。"} />;
   }
 
   return (
+    <div>
+    <div aria-hidden="true" className="mb-2 grid grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] gap-3 border-b px-3 pb-3 text-[11px] text-muted-foreground">
+      <span>#</span><span /><span>歌曲</span><span>歌手</span><span>专辑</span><span className="text-right">时长</span><span />
+    </div>
     <ul className="flex flex-col gap-0.5">
       {tracks.map((track, index) => (
         <TrackRow
           key={`${track.source}-${track.id}`}
           track={track}
           index={index}
-          playing={track.id === playingId}
+          playing={`${track.source}-${track.id}` === playingKey}
           isSaved={saved?.(track) ?? false}
           showSave={!!onToggleSave}
           onPlay={onPlay}
@@ -156,5 +162,6 @@ export default function TrackList({ tracks, onToggleSave, saved, empty }: Props)
         />
       ))}
     </ul>
+    </div>
   );
 }

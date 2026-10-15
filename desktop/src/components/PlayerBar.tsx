@@ -1,4 +1,5 @@
 import {
+  MusicNotesIcon,
   PauseIcon,
   PlayIcon,
   SkipBackIcon,
@@ -8,6 +9,7 @@ import {
   TextAaIcon,
   WaveformIcon,
 } from "@phosphor-icons/react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { lyricsWindow } from "@/api";
@@ -50,6 +52,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
     queueLength,
   } = usePlayer();
 
+  const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const track = snapshot?.current ?? null;
   const duration = track?.durationMs ?? 0;
   const position = snapshot?.position_ms ?? 0;
@@ -57,18 +60,21 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
   const volume = snapshot?.volume ?? 1;
 
   return (
-    <footer className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-6 border-t bg-sidebar px-4">
+    <footer className="grid grid-cols-[minmax(150px,1fr)_minmax(260px,1.6fr)_minmax(210px,1fr)] items-center gap-5 border-t border-border/70 bg-background px-5">
       {/* 左：当前曲目 */}
       <button
         type="button"
         onClick={onOpenNowPlaying}
-        className="flex min-w-0 items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors hover:bg-accent/60 active:scale-[0.995]"
+        disabled={!track}
+        title={track ? "查看歌曲详情和歌词" : "选择一首歌曲开始播放"}
+        aria-label={track ? `查看歌词：${track.title}` : "尚未播放歌曲"}
+        className="flex min-w-0 items-center gap-3 rounded-xl py-2 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
       >
         <div className="relative size-12 shrink-0 overflow-hidden rounded-[10px] bg-muted">
           {artwork ? (
             <img src={artwork} alt="" className="size-full object-cover" />
           ) : (
-            <div className="size-full bg-gradient-to-br from-muted to-accent" />
+            <div className="flex size-full items-center justify-center text-muted-foreground"><MusicNotesIcon size={22} weight="duotone" /></div>
           )}
         </div>
         <div className="min-w-0">
@@ -83,14 +89,14 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
               ? snapshot.error
               : snapshot?.loading
                 ? "正在解析整曲地址"
-                : (track?.artist ?? "从搜索或榜单里点一首开始")}
+                : track ? `${track.artist} · 查看歌词` : "搜索音乐，或打开一个歌单"}
           </div>
         </div>
       </button>
 
       {/* 中：走带 */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
+      <div className="flex min-w-0 flex-col items-center gap-2">
+        <div className="flex items-center gap-4">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -134,20 +140,26 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           </Button>
         </div>
 
-        <span className="tabular w-10 text-right text-[11px] text-muted-foreground">
-          {formatTime(position)}
+        <div className="flex w-full items-center gap-3">
+        <span className="tabular w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+          {formatTime(scrubPosition ?? position)}
         </span>
         <Slider
-          className="w-[clamp(200px,28vw,460px)]"
-          value={[Math.min(position, Math.max(duration, 1))]}
+          className="min-w-0 flex-1"
+          aria-label="播放进度"
+          value={[Math.min(scrubPosition ?? position, Math.max(duration, 1))]}
           max={Math.max(duration, 1)}
           step={1000}
           disabled={!track || duration === 0}
-          onValueChange={([value]) => void seek(value)}
+          onValueChange={([value]) => setScrubPosition(value)}
+          onValueCommit={([value]) => {
+            void seek(value).finally(() => setScrubPosition(null));
+          }}
         />
-        <span className="tabular w-10 text-[11px] text-muted-foreground">
+        <span className="tabular w-10 shrink-0 text-[10px] text-muted-foreground">
           {formatTime(duration)}
         </span>
+        </div>
       </div>
 
       {/* 右：空间音频 / 桌面歌词 / 音量 */}
@@ -171,8 +183,8 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" onClick={() => void lyricsWindow.toggle()}>
-              <TextAaIcon />
+            <Button variant="ghost" size="sm" aria-label="桌面歌词" title="显示或关闭桌面歌词" onClick={() => void lyricsWindow.toggle()}>
+              <TextAaIcon /><span className="text-[11px]">歌词</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>桌面歌词</TooltipContent>
@@ -186,7 +198,8 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           {volume > 0 ? <SpeakerHighIcon /> : <SpeakerSlashIcon />}
         </Button>
         <Slider
-          className="w-28"
+          className="w-[68px]"
+          aria-label="音量"
           value={[Math.round(volume * 100)]}
           max={100}
           step={1}

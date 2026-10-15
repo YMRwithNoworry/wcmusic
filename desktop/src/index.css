@@ -41,78 +41,75 @@
 /* 深浅主题：靠 <html class="dark"> 切换（见 settings-context）。 */
 @custom-variant dark (&:is(.dark *));
 
-/*
- * 配色取自应用图标：板岩蓝的中性底 + 琥珀主色。
- * 只用这一个强调色，深色为默认（播放器场景大多在暗环境里用）。
- */
+/* 音乐资料库：中性蓝灰底色，蓝色用于主操作；深浅主题共用语义层次。 */
 :root {
   --radius: 0.75rem;
 
-  --background: oklch(0.985 0.002 258);
-  --foreground: oklch(0.215 0.015 258);
+  --background: #f4f6fa;
+  --foreground: #182235;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.215 0.015 258);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.215 0.015 258);
-  --primary: oklch(0.66 0.14 70);
-  --primary-foreground: oklch(0.22 0.03 70);
+  --primary: #4569d4;
+  --primary-foreground: #ffffff;
   --secondary: oklch(0.955 0.004 258);
   --secondary-foreground: oklch(0.28 0.015 258);
   --muted: oklch(0.955 0.004 258);
-  --muted-foreground: oklch(0.5 0.012 258);
-  --accent: oklch(0.94 0.006 258);
-  --accent-foreground: oklch(0.24 0.015 258);
+  --muted-foreground: #657286;
+  --accent: #e9eefb;
+  --accent-foreground: #304fa7;
   --destructive: oklch(0.58 0.19 25);
   --border: oklch(0.215 0.015 258 / 12%);
   --input: oklch(0.215 0.015 258 / 16%);
-  --ring: oklch(0.66 0.14 70 / 45%);
+  --ring: #4569d480;
   --chart-1: oklch(0.66 0.14 70);
   --chart-2: oklch(0.6 0.09 200);
   --chart-3: oklch(0.55 0.08 258);
   --chart-4: oklch(0.72 0.12 130);
   --chart-5: oklch(0.62 0.13 25);
-  --sidebar: oklch(0.97 0.003 258);
+  --sidebar: #f4f6fa;
   --sidebar-foreground: oklch(0.215 0.015 258);
-  --sidebar-primary: oklch(0.66 0.14 70);
+  --sidebar-primary: #4569d4;
   --sidebar-primary-foreground: oklch(0.22 0.03 70);
   --sidebar-accent: oklch(0.93 0.005 258);
   --sidebar-accent-foreground: oklch(0.24 0.015 258);
   --sidebar-border: oklch(0.215 0.015 258 / 10%);
-  --sidebar-ring: oklch(0.66 0.14 70 / 45%);
+  --sidebar-ring: #4569d480;
 }
 
 .dark {
-  --background: oklch(0.165 0.012 258);
-  --foreground: oklch(0.965 0.004 258);
-  --card: oklch(0.205 0.014 258);
+  --background: #131924;
+  --foreground: #e8eef7;
+  --card: #1b2331;
   --card-foreground: oklch(0.965 0.004 258);
   --popover: oklch(0.215 0.014 258);
   --popover-foreground: oklch(0.965 0.004 258);
-  --primary: oklch(0.79 0.13 78);
-  --primary-foreground: oklch(0.2 0.03 78);
+  --primary: #9ab5ff;
+  --primary-foreground: #142548;
   --secondary: oklch(0.26 0.014 258);
   --secondary-foreground: oklch(0.96 0.004 258);
   --muted: oklch(0.245 0.012 258);
   --muted-foreground: oklch(0.72 0.012 258);
-  --accent: oklch(0.285 0.016 258);
-  --accent-foreground: oklch(0.97 0.004 258);
+  --accent: #283752;
+  --accent-foreground: #dce6ff;
   --destructive: oklch(0.66 0.18 25);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.79 0.13 78 / 55%);
+  --ring: #9ab5ff80;
   --chart-1: oklch(0.79 0.13 78);
   --chart-2: oklch(0.7 0.1 200);
   --chart-3: oklch(0.65 0.08 258);
   --chart-4: oklch(0.78 0.13 130);
   --chart-5: oklch(0.7 0.14 25);
-  --sidebar: oklch(0.185 0.013 258);
+  --sidebar: #131924;
   --sidebar-foreground: oklch(0.965 0.004 258);
-  --sidebar-primary: oklch(0.79 0.13 78);
+  --sidebar-primary: #9ab5ff;
   --sidebar-primary-foreground: oklch(0.2 0.03 78);
   --sidebar-accent: oklch(0.26 0.014 258);
   --sidebar-accent-foreground: oklch(0.97 0.004 258);
   --sidebar-border: oklch(1 0 0 / 9%);
-  --sidebar-ring: oklch(0.79 0.13 78 / 55%);
+  --sidebar-ring: #9ab5ff80;
 }
 
 @theme inline {

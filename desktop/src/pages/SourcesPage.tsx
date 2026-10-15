@@ -3,11 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { sources } from "@/api";
+import PageHeader from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SourceView } from "@/types";
+
+const SOURCE_NAMES: Record<string, string> = { kw: "酷我音乐", kg: "酷狗音乐", tx: "QQ 音乐", wy: "网易云音乐" };
 
 /// 音源页：内置音源 + 导入的 QuickJS 音源脚本。
 export default function SourcesPage() {
@@ -69,13 +72,7 @@ export default function SourcesPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <header className="mb-5 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-[22px] font-semibold">音源</h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            音源脚本是第三方代码：运行时限制 32 MB 内存、单次请求 15 秒超时；导入的音源只在本次运行内有效。
-          </p>
-        </div>
+      <PageHeader title="音源管理" description="内置音源可直接使用。需要其他音源时，导入 .js 文件并启用；导入的音源仅本次运行有效。">
         <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           <UploadSimpleIcon weight="bold" />
           {busy ? "正在校验" : "导入音源文件"}
@@ -87,7 +84,7 @@ export default function SourcesPage() {
           className="hidden"
           onChange={(event) => void onPickFile(event)}
         />
-      </header>
+      </PageHeader>
 
       {list === null ? (
         <div className="flex flex-col gap-2">
@@ -100,7 +97,7 @@ export default function SourcesPage() {
           {list.map((source) => (
             <Card
               key={source.index === null ? "builtin" : `source-${source.index}`}
-              className={`flex flex-row items-center justify-between gap-4 px-4 py-3 ${
+              className={`flex flex-row items-center justify-between gap-4 rounded-2xl px-5 py-5 shadow-none ${
                 source.active ? "border-primary/50 bg-accent/40" : ""
               }`}
             >
@@ -116,7 +113,7 @@ export default function SourcesPage() {
                   </div>
                   {source.capabilities.length > 0 ? (
                     <div className="truncate text-xs text-muted-foreground">
-                      支持：{source.capabilities.join("、")}
+                      支持：{source.capabilities.map((key) => SOURCE_NAMES[key] ?? key).join("、")}
                     </div>
                   ) : null}
                 </div>

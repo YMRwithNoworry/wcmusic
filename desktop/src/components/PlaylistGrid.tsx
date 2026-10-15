@@ -1,7 +1,6 @@
-import { StarIcon } from "@phosphor-icons/react";
-import { motion } from "motion/react";
-
+import { ArrowUpRightIcon, MusicNotesIcon, StarIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import EmptyState from "@/components/EmptyState";
 import { cn } from "@/lib/utils";
 import type { PlatformPlaylist } from "@/types";
 
@@ -18,86 +17,43 @@ export function playlistKey(playlist: PlatformPlaylist): string {
   return `${playlist.channel}-${playlist.id}`;
 }
 
-/// 歌单卡片网格：热门歌单与我的收藏共用。
-export default function PlaylistGrid({
-  playlists,
-  activeKey,
-  onOpen,
-  onToggleSave,
-  isSaved,
-  empty,
-}: Props) {
-  if (playlists.length === 0) {
-    return (
-      <div className="flex h-36 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
-        {empty ?? "还没有歌单。"}
-      </div>
-    );
-  }
-
+export default function PlaylistGrid({ playlists, activeKey, onOpen, onToggleSave, isSaved, empty }: Props) {
+  if (!playlists.length) return <EmptyState title="这里还没有歌单" description={empty ?? "点击歌单封面上的星标，就能在这里找到它。"} />;
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(142px,1fr))] gap-3">
-      {playlists.map((playlist, index) => {
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-5 gap-y-7">
+      {playlists.map((playlist) => {
         const key = playlistKey(playlist);
         const saved = isSaved?.(playlist) ?? false;
         return (
-          <motion.button
-            key={key}
-            type="button"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{
-              duration: 0.24,
-              delay: Math.min(index, 10) * 0.02,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-            whileHover={{ y: -2 }}
-            whileTap={{ scale: 0.985 }}
-            onClick={() => onOpen(playlist)}
-            className={cn(
-              "group relative flex flex-col gap-2 rounded-xl border bg-card p-2 text-left transition-colors",
-              key === activeKey ? "border-primary/60" : "hover:border-primary/40",
-            )}
-          >
-            <div className="aspect-square w-full overflow-hidden rounded-[10px] bg-muted">
-              {playlist.artwork_uri ? (
-                <img
-                  src={playlist.artwork_uri}
-                  alt=""
-                  loading="lazy"
-                  className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-                />
-              ) : (
-                <div className="size-full bg-gradient-to-br from-muted to-accent" />
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-[13px] font-medium" title={playlist.name}>
-                {playlist.name}
+          <article key={key} className="group relative min-w-0">
+            <button
+              type="button"
+              onClick={() => onOpen(playlist)}
+              aria-label={`打开歌单：${playlist.name}`}
+              className={cn("w-full rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card", key === activeKey && "ring-2 ring-primary")}
+            >
+              <div className="relative aspect-square overflow-hidden rounded-xl bg-muted ring-1 ring-black/5">
+                {playlist.artwork_uri ? <img src={playlist.artwork_uri} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover:scale-[1.04]" /> : (
+                  <div className="flex size-full items-center justify-center text-muted-foreground"><MusicNotesIcon size={40} weight="duotone" /></div>
+                )}
+                <span className="absolute right-3 bottom-3 flex size-9 translate-y-1 items-center justify-center rounded-full bg-white text-slate-900 opacity-0 shadow-lg transition-all group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100"><ArrowUpRightIcon size={18} /></span>
+                {playlist.track_count ? <span className="absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm">{playlist.track_count} 首</span> : null}
               </div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {playlist.author || "未知作者"}
-                {playlist.track_count ? ` · ${playlist.track_count} 首` : ""}
-              </div>
-            </div>
+              <div className="mt-3 line-clamp-2 min-h-10 text-[13px] leading-5 font-medium" title={playlist.name}>{playlist.name}</div>
+              <p className="mt-1 truncate text-[11px] text-muted-foreground">{playlist.author || "精选歌单"}</p>
+            </button>
             {onToggleSave ? (
               <Button
                 variant="secondary"
                 size="icon-sm"
-                className={cn(
-                  "absolute top-3 right-3 size-7 rounded-full shadow-sm transition-opacity",
-                  saved ? "text-primary opacity-100" : "opacity-0 group-hover:opacity-100",
-                )}
+                className={cn("absolute top-2.5 right-2.5 size-8 rounded-full bg-card/90 shadow-sm backdrop-blur-sm", saved ? "text-primary" : "text-muted-foreground hover:text-primary")}
+                aria-pressed={saved}
+                aria-label={saved ? `取消收藏：${playlist.name}` : `收藏歌单：${playlist.name}`}
                 title={saved ? "取消收藏" : "收藏歌单"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleSave(playlist);
-                }}
-              >
-                <StarIcon weight={saved ? "fill" : "regular"} />
-              </Button>
+                onClick={() => onToggleSave(playlist)}
+              ><StarIcon weight={saved ? "fill" : "regular"} /></Button>
             ) : null}
-          </motion.button>
+          </article>
         );
       })}
     </div>

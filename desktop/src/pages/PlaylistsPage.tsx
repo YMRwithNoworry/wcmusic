@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { favorites, online } from "@/api";
+import PageHeader from "@/components/PageHeader";
 import PlaylistDetail from "@/components/PlaylistDetail";
 import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
 import TrackList from "@/components/TrackList";
@@ -72,7 +73,7 @@ export default function PlaylistsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <h1 className="mb-5 text-[22px] font-semibold">歌单</h1>
+      <PageHeader title="我的收藏" description="收藏的歌单与歌曲都在这里，随时回来接着听。" />
 
       {error ? (
         <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -81,7 +82,7 @@ export default function PlaylistsPage() {
       ) : null}
 
       <section className="mb-8 flex flex-col gap-3">
-        <h2 className="text-[13px] font-semibold tracking-wide text-muted-foreground">
+        <h2 className="text-[16px] font-semibold tracking-tight">
           收藏的歌单
         </h2>
         <PlaylistGrid
@@ -96,8 +97,8 @@ export default function PlaylistsPage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-[13px] font-semibold tracking-wide text-muted-foreground">
-          爱听的
+        <h2 className="text-[16px] font-semibold tracking-tight">
+          收藏的歌曲
         </h2>
         <div className="flex flex-wrap gap-1.5">
           {folders.map((name) => (
@@ -105,6 +106,7 @@ export default function PlaylistsPage() {
               key={name}
               size="sm"
               variant={name === folder ? "default" : "outline"}
+              aria-pressed={name === folder}
               onClick={() => setFolder(name)}
             >
               {name}

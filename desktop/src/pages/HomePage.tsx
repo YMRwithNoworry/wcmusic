@@ -1,6 +1,8 @@
+import { ArrowClockwiseIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { favorites, online } from "@/api";
+import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import PlaylistDetail from "@/components/PlaylistDetail";
 import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
@@ -24,7 +26,7 @@ export const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-[13px] font-semibold tracking-wide text-muted-foreground">
+    <h2 className="text-[16px] font-semibold tracking-tight">
       {children}
     </h2>
   );
@@ -50,7 +52,7 @@ function nextPlaylistPage(channel: OnlineSearchChannel): number {
 }
 
 /// 「此刻」页：平台热门歌单 + 我的收藏；点开歌单后切到详情视图。
-export default function HomePage() {
+export default function HomePage({ onSearch }: { onSearch?: () => void }) {
   const { settings, replace } = useSettings();
   const requestIdRef = useRef(0);
   const refreshingRef = useRef(false);
@@ -158,20 +160,16 @@ export default function HomePage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <header className="mb-6 flex items-end justify-between gap-6">
-        <div>
-          <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-            WCMusic / 每日发现
-          </div>
-          <h1 className="mt-1.5 text-[26px] leading-tight font-semibold">
-            此刻，听见喜欢
-          </h1>
-        </div>
+      <PageHeader title="今天，听点不一样的" description="从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。">
+        <Button variant="outline" onClick={onSearch}><MagnifyingGlassIcon />搜索音乐</Button>
+      </PageHeader>
+      <div className="mb-7 flex flex-wrap items-center justify-between gap-3 border-b pb-5">
+        <p className="text-[13px] text-muted-foreground">选择平台，发现此刻值得听的音乐</p>
         <Select
           value={channel}
           onValueChange={(value) => setChannel(value as OnlineSearchChannel)}
         >
-          <SelectTrigger className="w-[140px]">
+          <SelectTrigger aria-label="歌单平台" className="w-[140px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -182,7 +180,7 @@ export default function HomePage() {
             ))}
           </SelectContent>
         </Select>
-      </header>
+      </div>
 
       {error ? (
         <div className="mb-5 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -201,12 +199,12 @@ export default function HomePage() {
                 : hot.length ? "暂显示上次歌单" : ""}
             </span>
             <Button size="sm" variant="secondary" disabled={loading} onClick={() => void loadHot(channel)}>
-              换一批
+              <ArrowClockwiseIcon />换一批
             </Button>
           </div>
         </div>
         {loading && hot.length === 0 ? (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(142px,1fr))] gap-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-5 gap-y-7">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="h-[212px] rounded-xl" />
             ))}

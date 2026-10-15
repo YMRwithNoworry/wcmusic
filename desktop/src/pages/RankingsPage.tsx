@@ -1,6 +1,8 @@
+import { PlayIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { favorites, online } from "@/api";
+import PageHeader from "@/components/PageHeader";
 import TrackList from "@/components/TrackList";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
 import type { OnlineSearchChannel, PlatformRanking, Track } from "@/types";
 
@@ -23,6 +26,7 @@ const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 
 /// 排行榜页：先选平台，再选榜单，最后出曲目。
 export default function RankingsPage() {
+  const { playAt } = usePlayer();
   const { settings, replace } = useSettings();
   const requestIdRef = useRef(0);
   const [channel, setChannel] = useState<OnlineSearchChannel>("Kuwo");
@@ -108,8 +112,7 @@ export default function RankingsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col px-7 py-6">
-      <header className="mb-4 flex items-center justify-between gap-4">
-        <h1 className="text-[22px] font-semibold">排行榜</h1>
+      <PageHeader title="排行榜" description="先选音乐平台，再挑一个榜单，听听大家最近在循环什么。">
         <Select
           value={channel}
           onValueChange={(value) => {
@@ -117,7 +120,7 @@ export default function RankingsPage() {
             setChannel(value as OnlineSearchChannel);
           }}
         >
-          <SelectTrigger className="w-[140px]">
+          <SelectTrigger aria-label="排行榜平台" className="w-[140px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -128,7 +131,7 @@ export default function RankingsPage() {
             ))}
           </SelectContent>
         </Select>
-      </header>
+      </PageHeader>
 
       {error ? (
         <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -137,12 +140,14 @@ export default function RankingsPage() {
         </div>
       ) : null}
 
-      <div className="mb-4 flex flex-wrap gap-1.5">
+      <div aria-label="选择榜单" className="mb-5 flex shrink-0 gap-2 overflow-x-auto pb-3">
         {visible.map((ranking) => (
           <Button
             key={`${ranking.channel}-${ranking.id}`}
             size="sm"
             variant={ranking.id === active?.id ? "default" : "outline"}
+            className="shrink-0 rounded-full px-4"
+            aria-pressed={ranking.id === active?.id}
             onClick={() => setActive(ranking)}
           >
             {ranking.name}
@@ -153,6 +158,10 @@ export default function RankingsPage() {
         ) : null}
       </div>
 
+      {active ? <div className="mb-5 flex shrink-0 items-center justify-between gap-3 rounded-xl bg-background/70 px-4 py-3">
+        <div><h2 className="text-base font-semibold">{active.name}</h2><p className="mt-1 text-xs text-muted-foreground">{loading ? "正在加载歌曲…" : `${tracks.length} 首歌曲`}</p></div>
+        <Button disabled={loading || !tracks.length} onClick={() => void playAt(tracks, 0)}><PlayIcon weight="fill" />播放全部</Button>
+      </div> : null}
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {directoryLoading || loading ? (
           <div className="flex flex-col gap-1.5">

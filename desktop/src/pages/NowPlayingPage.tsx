@@ -191,17 +191,15 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
 
   return (
     <MotionConfig reducedMotion="never">
-    <div className="grid h-full grid-cols-[300px_minmax(0,1fr)] gap-8 px-7 py-6">
-      <div className="flex min-h-0 flex-col gap-4">
+    <div className="grid h-full grid-cols-[minmax(210px,0.8fr)_minmax(0,1.5fr)] gap-10 px-7 py-6">
+      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
         <Button variant="ghost" size="sm" className="self-start" onClick={onBack}>
           <ArrowLeftIcon />
           返回
         </Button>
 
         <div className="relative">
-          {/* 封面背后的暖色光晕：随主题走，静态、不循环。 */}
-          <div className="absolute -inset-6 rounded-full bg-primary/12 blur-3xl" />
-          <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-muted ring-1 ring-border">
+          <div className="relative aspect-square w-full overflow-hidden rounded-2xl bg-muted shadow-lg ring-1 ring-border">
             {artwork ? (
               <img src={artwork} alt="" className="size-full object-cover" />
             ) : (
@@ -211,10 +209,12 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="min-w-0">
-          <div className="truncate text-xl font-semibold">{track?.title ?? "未在播放"}</div>
+          <p className="mb-2 text-xs text-muted-foreground">正在播放</p>
+          <div className="text-[24px] leading-snug font-semibold tracking-tight">{track?.title ?? "未在播放"}</div>
           <div className="mt-1 truncate text-sm text-muted-foreground">{track?.artist}</div>
           <div className="truncate text-xs text-muted-foreground">{track?.album}</div>
         </div>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">点击右侧歌词可跳到对应位置。滚动浏览后会自动回到当前句。</p>
       </div>
 
       <div className="relative min-h-0">
