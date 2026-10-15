@@ -155,14 +155,19 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant={snapshot?.spatial ? "secondary" : "ghost"}
+              variant="ghost"
+              className={snapshot?.spatial
+                ? "bg-amber-400/15 text-amber-600 hover:bg-amber-400/25 hover:text-amber-700 dark:text-amber-300 dark:hover:bg-amber-400/25 dark:hover:text-amber-200"
+                : undefined}
+              aria-label="空间音效"
+              aria-pressed={snapshot?.spatial ?? false}
               size="icon-sm"
               onClick={() => void setSpatial(!snapshot?.spatial)}
             >
               <WaveformIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>空间音频</TooltipContent>
+          <TooltipContent>空间音效：{snapshot?.spatial ? "已开启" : "已关闭"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
