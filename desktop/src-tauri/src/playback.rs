@@ -317,9 +317,9 @@ fn start(
     active.set_spatial_audio_enabled(spatial);
     // 优先边下边播；连接或格式不支持时退回整曲下载，与旧端行为一致。
     let result = match open_streaming_source(&url, use_proxy) {
-        Ok(stream) => active.play_stream(stream)
+        Ok(stream) => active.play_stream(stream),
         Err(_) => match download_audio_with_proxy(&url, use_proxy) {
-            Ok(bytes) => active.play(bytes)
+            Ok(bytes) => active.play(bytes),
             Err(error) => Err(error),
         },
     };
