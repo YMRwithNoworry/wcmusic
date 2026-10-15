@@ -100,7 +100,7 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const { lines, loading, error, retry } = useTrackLyrics(
     track, settings?.lyrics.show_translation ?? true, settings?.use_network_proxy ?? false,
   );
-  /// 是否跟随当前行自动滚动；用户手动滚动后暂停，过几秒再恢复。
+  /// 仅手动滚动时短暂暂停跟随，停手后自动接回。
   const [following, setFollowing] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const resumeTimer = useRef<number | null>(null);
@@ -126,23 +126,34 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
         ? "origin-right"
         : "origin-center";
 
-  const onSeek = useCallback((timeMs: number) => void seek(Math.max(0, timeMs - offset)), [seek, offset]);
+  const onSeek = useCallback((timeMs: number) => {
+    if (resumeTimer.current !== null) {
+      window.clearTimeout(resumeTimer.current);
+      resumeTimer.current = null;
+    }
+    setFollowing(true);
+    void seek(Math.max(0, timeMs - offset));
+  }, [seek, offset]);
 
-  /// 用户开始自己滚动：先停止跟随，停手 5 秒后再接回。
+  /// 只有滚轮/触摸拖动暂停跟随，普通点击不打断换行动画。
   const pauseFollow = useCallback(() => {
     setFollowing(false);
     if (resumeTimer.current !== null) {
       window.clearTimeout(resumeTimer.current);
     }
-    resumeTimer.current = window.setTimeout(() => setFollowing(true), 5000);
+    resumeTimer.current = window.setTimeout(() => {
+      resumeTimer.current = null;
+      setFollowing(true);
+    }, 1500);
   }, []);
 
-  const resumeFollow = useCallback(() => {
+  useEffect(() => {
     if (resumeTimer.current !== null) {
       window.clearTimeout(resumeTimer.current);
+      resumeTimer.current = null;
     }
     setFollowing(true);
-  }, []);
+  }, [track?.id, track?.source]);
 
   useEffect(
     () => () => {
@@ -210,9 +221,10 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
           ref={listRef}
           className="relative h-full overflow-y-auto pr-2"
           onWheel={pauseFollow}
-          onTouchStart={pauseFollow}
-          onPointerDown={pauseFollow}
+          onTouchMove={pauseFollow}
           style={{
+            overflowAnchor: "none",
+            scrollBehavior: "auto",
             fontFamily: style?.font_family ? `"${style.font_family}"` : undefined,
             textAlign: style?.alignment ?? "center",
           }}
@@ -259,15 +271,6 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
         )}
         </div>
 
-        {!following ? (
-          <button
-            type="button"
-            onClick={resumeFollow}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border bg-card/90 px-3 py-1 text-xs text-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent"
-          >
-            回到当前
-          </button>
-        ) : null}
       </div>
     </div>
   );
