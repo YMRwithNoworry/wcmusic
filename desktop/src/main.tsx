@@ -9,6 +9,7 @@ import { SettingsProvider } from "./settings-context";
 import "./index.css";
 
 const isLyricsWindow = getCurrentWindow().label === "lyrics";
+if (isLyricsWindow) document.documentElement.classList.add("lyrics-mode");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -217,6 +217,9 @@
 }
 
 /* 桌面歌词窗口：整页透明，背景由设置里的「背景不透明度」决定。 */
+html.lyrics-mode,
+html.lyrics-mode body,
+html.lyrics-mode #root,
 body.lyrics-mode,
 body.lyrics-mode #root {
   background: transparent;

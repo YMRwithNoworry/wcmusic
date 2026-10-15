@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
 import { motion, useReducedMotion } from "motion/react";
@@ -97,6 +98,34 @@ export default function LyricsWindow() {
     return animateLyricPosition(scrollPosition.current ?? listOffset, listOffset, update,
       first || !!reducedMotion || animation === "off");
   }, [listOffset, singleLine, lines.length, reducedMotion, animation]);
+
+  const readySent = useRef(false);
+  const hasSnapshot = snapshot !== null;
+  useEffect(() => {
+    if (!settings || !hasSnapshot || readySent.current || viewportHeight === 0) return;
+    let disposed = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    // 明确加载歌词使用的字重，避免显示后由备用字体切换产生一次跳动。
+    void document.fonts.load(`${fontWeight} ${fontSize}px "${style?.font_family ?? "MiSans"}"`, "歌词 Music")
+      .catch((problem) => console.warn("[lyrics font]", problem))
+      .then(() => {
+        if (disposed) return;
+        firstFrame = requestAnimationFrame(() => {
+          secondFrame = requestAnimationFrame(() => {
+            if (disposed) return;
+            void invoke("lyrics_window_ready").then(() => {
+              readySent.current = true;
+            }).catch((problem) => console.error("[lyrics ready]", problem));
+          });
+        });
+      });
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
+  }, [!!settings, hasSnapshot, viewportHeight, fontWeight, fontSize, style?.font_family]);
 
   const enterFrom =
     animation === "scale"

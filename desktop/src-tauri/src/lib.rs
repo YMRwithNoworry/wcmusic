@@ -96,7 +96,8 @@ pub fn run() {
             commands::hotkey_issues,
             commands::hotkey_list,
             commands::toggle_main_window,
-            commands::toggle_lyrics_window
+            commands::toggle_lyrics_window,
+            commands::lyrics_window_ready
         ])
         .run(tauri::generate_context!())
         .expect("WCMusic 桌面端启动失败");

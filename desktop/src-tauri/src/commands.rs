@@ -440,16 +440,10 @@ pub fn toggle_lyrics_window_inner(
     app: &tauri::AppHandle,
     style: &crate::lyrics::LyricsStyle,
 ) -> Result<bool, String> {
-    if let Some(window) = app.get_webview_window("lyrics") {
-        let visible = window.is_visible().unwrap_or(false);
-        if visible {
-            destroy_lyrics_window(app)?;
-            return Ok(false);
-        }
-        window.set_ignore_cursor_events(style.locked).map_err(|error| error.to_string())?;
-        window.show().map_err(|error| error.to_string())?;
-        window.set_focus().map_err(|error| error.to_string())?;
-        return Ok(true);
+    if app.get_webview_window("lyrics").is_some() {
+        // 正在初始化的隐藏窗口也视为已启用，再次点击应取消而非提前显示。
+        destroy_lyrics_window(app)?;
+        return Ok(false);
     }
     create_lyrics_window(app, style)?;
     Ok(true)
@@ -460,8 +454,8 @@ pub fn show_lyrics_window(
     app: &tauri::AppHandle,
     style: &crate::lyrics::LyricsStyle,
 ) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("lyrics") {
-        window.show().map_err(|error| error.to_string())?;
+    if app.get_webview_window("lyrics").is_some() {
+        // 显示只由首屏就绪通知触发，保存设置不能抢先显示初始化中的窗口。
         return Ok(());
     }
     create_lyrics_window(app, style)
@@ -491,6 +485,10 @@ fn create_lyrics_window(
         style.window_y.unwrap_or(120.0) as f64,
     )
     .decorations(false)
+    .visible(false)
+    .focused(false)
+    .background_color(tauri::window::Color(0, 0, 0, 0))
+    .initialization_script("if (document.documentElement) document.documentElement.classList.add('lyrics-mode'); else document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('lyrics-mode'), { once: true });")
     .transparent(true)
     .shadow(false)
     .always_on_top(style.always_on_top)
@@ -502,14 +500,17 @@ fn create_lyrics_window(
     window
         .set_ignore_cursor_events(style.locked)
         .map_err(|error| format!("设置桌面歌词鼠标行为失败：{error}"))?;
-    window
-        .show()
-        .map_err(|error| format!("显示桌面歌词窗口失败：{error}"))?;
-    if !style.locked {
-        window.set_focus().map_err(|error| format!("聚焦桌面歌词窗口失败：{error}"))?;
-    }
-    eprintln!("桌面歌词窗口已创建");
+    eprintln!("桌面歌词窗口已创建，等待首屏就绪");
     Ok(())
+}
+
+/// 前端完成外观、字体及首屏布局后才显示，避免 WebView 默认背景闪现。
+#[tauri::command]
+pub fn lyrics_window_ready(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "lyrics" {
+        return Err("仅歌词窗口可以通知首屏就绪".to_owned());
+    }
+    window.show().map_err(|error| error.to_string())
 }
 
 /// 销毁原生窗口，释放置顶透明窗口的鼠标命中区域。
