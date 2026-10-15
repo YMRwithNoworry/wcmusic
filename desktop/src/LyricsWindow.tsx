@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useTrackLyrics } from "@/lib/use-track-lyrics";
 import KaraokeText from "@/components/KaraokeText";
+import { animateLyricPosition } from "@/lib/lyric-motion";
 import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
@@ -34,6 +35,8 @@ export default function LyricsWindow() {
   }, []);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollPosition = useRef<number | null>(null);
   const [viewportHeight, setViewportHeight] = useState(0);
   const style = settings?.lyrics;
   const singleLine = style?.single_line ?? false;
@@ -80,6 +83,21 @@ export default function LyricsWindow() {
   const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
   const fontWeight = style?.font_weight ?? 600;
   const animation = style?.animation ?? "slide";
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list || singleLine || !lines.length) {
+      scrollPosition.current = null;
+      return;
+    }
+    const update = (position: number) => {
+      scrollPosition.current = position;
+      list.style.transform = `translate3d(0, ${position}px, 0)`;
+    };
+    const first = scrollPosition.current === null;
+    return animateLyricPosition(scrollPosition.current ?? listOffset, listOffset, update,
+      first || !!reducedMotion || animation === "off");
+  }, [listOffset, singleLine, lines.length, reducedMotion, animation]);
+
   const enterFrom =
     animation === "scale"
       ? { opacity: 0, scale: 0.88 }
@@ -103,12 +121,10 @@ export default function LyricsWindow() {
       ) : null}
       <div ref={viewportRef} className="relative h-full w-full overflow-hidden">
         {!singleLine && lines.length > 0 ? (
-          <motion.div
-            className="absolute left-0 top-0 w-full"
-            initial={false}
+          <div
+            ref={listRef}
+            className="absolute left-0 top-0 w-full will-change-transform"
             data-lyrics-list
-            animate={{ y: listOffset }}
-            transition={{ duration: reducedMotion || animation === "off" ? 0 : 0.85, ease: [0.22, 1, 0.36, 1] }}
           >
             {lines.map((line, lineIndex) => {
               const distance = index >= 0 ? Math.abs(lineIndex - index) : lineIndex;
@@ -154,7 +170,7 @@ export default function LyricsWindow() {
                 </motion.div>
               );
             })}
-          </motion.div>
+          </div>
         ) : current ? (
           <motion.div
             key={current.time_ms}

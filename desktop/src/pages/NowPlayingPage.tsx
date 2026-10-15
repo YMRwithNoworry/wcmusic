@@ -1,11 +1,12 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react";
-import { animate, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { useTrackLyrics, pageLyricColor } from "@/lib/use-track-lyrics";
 import KaraokeText from "@/components/KaraokeText";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { animateLyricPosition } from "@/lib/lyric-motion";
 import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
@@ -172,12 +173,9 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
     const line = container?.querySelector<HTMLElement>(".lyric-line-current");
     if (!container || !line) return;
     const target = line.offsetTop + line.offsetHeight / 2 - container.clientHeight / 2;
-    const controls = animate(container.scrollTop, target, {
-      duration: reducedMotion || style?.animation === "off" ? 0 : 0.85,
-      ease: [0.22, 1, 0.36, 1],
-      onUpdate: (value) => { container.scrollTop = value; },
-    });
-    return () => controls.stop();
+    return animateLyricPosition(container.scrollTop, target,
+      (value) => { container.scrollTop = value; },
+      !!reducedMotion || style?.animation === "off");
   }, [index, following, fontSize, showTranslation, reducedMotion, style?.animation]);
 
   return (
