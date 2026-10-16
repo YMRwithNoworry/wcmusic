@@ -161,15 +161,16 @@ export default function LyricsWindow() {
               const nextLine = lines[lineIndex + 1];
               const lineColor = lineIndex <= index ? highlight : textColor;
               const lineOpacity = isCurrent ? 1 : Math.max(0.2, 0.78 - distance * 0.12);
+              const lineScale = isCurrent ? 1.06 : 0.94;
               return (
                 <motion.div
                   key={`${line.time_ms}-${lineIndex}`}
                   data-lyric-index={lineIndex}
                   aria-current={isCurrent ? "true" : undefined}
-                  className="flex w-full flex-col justify-center overflow-hidden px-1"
-                  animate={{ opacity: lineOpacity }}
+                  className="flex w-full flex-col justify-center overflow-hidden px-1 will-change-[transform,opacity]"
+                  animate={{ opacity: lineOpacity, scale: lineScale }}
                   transition={{ duration: animation === "off" ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
-                  style={{ height: rowHeight, textAlign }}
+                  style={{ height: rowHeight, textAlign, transformOrigin: style?.alignment === "left" ? "left center" : style?.alignment === "right" ? "right center" : "center center" }}
                 >
                   <div
                     className="w-full truncate leading-tight"

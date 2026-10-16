@@ -91,7 +91,7 @@ impl SourceStore {
     pub fn list(&self) -> Vec<SourceView> {
         let mut views = vec![SourceView {
             index: None,
-            name: "内置音源（屿溪-终章）".to_owned(),
+            name: "内置音源".to_owned(),
             active: self.active.is_none(),
             capabilities: Vec::new(),
         }];
