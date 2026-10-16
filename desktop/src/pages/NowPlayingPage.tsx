@@ -104,6 +104,7 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
   const [following, setFollowing] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const resumeTimer = useRef<number | null>(null);
+  const cancelLyricAnimation = useRef<(() => void) | null>(null);
 
   const style = settings?.lyrics;
   const offset = style?.offset_ms ?? 0;
@@ -137,7 +138,10 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
 
   /// 只有滚轮/触摸拖动暂停跟随，普通点击不打断换行动画。
   const pauseFollow = useCallback(() => {
-    setFollowing(false);
+    // 先同步停止自动居中，避免 rAF 与原生滚轮同时写入 scrollTop。
+    cancelLyricAnimation.current?.();
+    cancelLyricAnimation.current = null;
+    setFollowing((value) => value ? false : value);
     if (resumeTimer.current !== null) {
       window.clearTimeout(resumeTimer.current);
     }
@@ -184,9 +188,16 @@ export default function NowPlayingPage({ onBack }: { onBack: () => void }) {
     const line = container?.querySelector<HTMLElement>(".lyric-line-current");
     if (!container || !line) return;
     const target = line.offsetTop + line.offsetHeight / 2 - container.clientHeight / 2;
-    return animateLyricPosition(container.scrollTop, target,
+    const cancel = animateLyricPosition(container.scrollTop, target,
       (value) => { container.scrollTop = value; },
       style?.animation === "off");
+    cancelLyricAnimation.current = cancel;
+    return () => {
+      cancel();
+      if (cancelLyricAnimation.current === cancel) {
+        cancelLyricAnimation.current = null;
+      }
+    };
   }, [index, following, fontSize, showTranslation, style?.animation]);
 
   return (
