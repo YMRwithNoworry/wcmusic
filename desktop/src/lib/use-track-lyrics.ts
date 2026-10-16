@@ -4,6 +4,10 @@ import type { LyricLine, Track } from "@/types";
 
 // 同一窗口的详情页重新打开时复用正文；失败请求移除，允许再次尝试。
 const requests = new Map<string, Promise<LyricLine[]>>();
+function hasPlatformTranslation(lines: LyricLine[]) {
+  return lines.some((line) => line.translation?.trim());
+}
+
 function load(track: Track, key: string) {
   let request = requests.get(key);
   if (!request) {
@@ -40,8 +44,8 @@ export function useTrackLyrics(track: Track | null, translate: boolean, useProxy
         if (!alive) return;
         setLines(body);
         setLoading(false);
-        // 正文已经显示后再请求翻译；翻译失败保留正文。
-        if (translate && body.length > 0 && body.every((line) => !line.translation)) {
+        // 先显示平台原生翻译；只有整首歌词都没有平台翻译时，才请求自动翻译。
+        if (translate && body.length > 1 && !hasPlatformTranslation(body)) {
           void lyrics.translate(body)
             .then((translated) => { if (alive) setLines(translated); })
             .catch((problem) => console.warn("[lyrics translation]", problem));

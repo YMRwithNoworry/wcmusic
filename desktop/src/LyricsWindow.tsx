@@ -48,7 +48,7 @@ export default function LyricsWindow() {
   const current = index >= 0 ? lines[index] : null;
   const fontSize = style?.font_size ?? 28;
   const fontSizeCss = `${fontSize}px`;
-  const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 2.65 : 2.05);
+  const rowHeight = fontSize * (style?.show_translation && lines.some((line) => line.translation) ? 2.9 : 2.05);
   const activeIndex = index >= 0 ? index : 0;
   const listOffset = viewportHeight > 0
     ? viewportHeight / 2 - (activeIndex * rowHeight + rowHeight / 2)
@@ -192,7 +192,7 @@ export default function LyricsWindow() {
                   {style?.show_translation && line.translation ? (
                     <div
                       className="w-full truncate leading-tight"
-                      style={{ fontSize: `${fontSize * 0.52}px`, color: textColor, textShadow, fontFamily, opacity: isCurrent ? 0.86 : 0.68 }}
+                      style={{ fontSize: `${fontSize * 0.72}px`, color: textColor, textShadow, fontFamily, opacity: isCurrent ? 0.86 : 0.68 }}
                     >
                       {line.translation}
                     </div>
@@ -215,7 +215,7 @@ export default function LyricsWindow() {
               ) : current.text || "♪"}
             </div>
             {style?.show_translation && current.translation ? (
-              <div className="w-full truncate" style={{ fontSize: `${fontSize * 0.6}px`, color: textColor, textShadow, fontFamily, opacity: 0.8, textAlign }}>
+              <div className="w-full truncate" style={{ fontSize: `${fontSize * 0.72}px`, color: textColor, textShadow, fontFamily, opacity: 0.8, textAlign }}>
                 {current.translation}
               </div>
             ) : null}
