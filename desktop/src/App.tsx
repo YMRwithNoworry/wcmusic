@@ -40,6 +40,21 @@ const NAV = [
 
 type NavKey = (typeof NAV)[number]["key"];
 
+function NowPlayingNav({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  const { snapshot } = usePlayer();
+  return (
+    <button
+      type="button"
+      disabled={!snapshot?.current}
+      onClick={onOpen}
+      className={`mt-3 flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 ${active ? "bg-accent text-primary" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}
+    >
+      <MusicNotesIcon size={18} />
+      正在播放
+    </button>
+  );
+}
+
 function page(key: NavKey, navigate: (key: NavKey) => void) {
   switch (key) {
     case "home":
@@ -58,7 +73,6 @@ function page(key: NavKey, navigate: (key: NavKey) => void) {
 }
 
 function Shell() {
-  const { snapshot } = usePlayer();
   const [tab, setTab] = useState<NavKey>("home");
   const [nowPlaying, setNowPlaying] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -121,15 +135,7 @@ function Shell() {
               );
             })}
           </nav>
-          <button
-            type="button"
-            disabled={!snapshot?.current}
-            onClick={() => setNowPlaying(true)}
-            className={`mt-3 flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 ${nowPlaying ? "bg-accent text-primary" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}
-          >
-            <MusicNotesIcon size={18} />
-            正在播放
-          </button>
+          <NowPlayingNav active={nowPlaying} onOpen={() => setNowPlaying(true)} />
           <div className="mt-4 px-3 text-[10px] text-muted-foreground/75 [@media(max-height:680px)]:mt-2">{info ? `WCMusic ${info.version}` : "正在连接播放器…"}</div>
         </aside>
 

@@ -34,18 +34,12 @@ const PLAYBACK_MODES = [
 /// 正在出声的三条跳动竖条：用动画表达「正在播放」这个状态。
 function PlayingBars() {
   return (
-    <span className="flex h-3.5 items-end gap-[3px]">
+    <span className="flex h-3.5 items-end gap-[3px]" aria-hidden="true">
       {[0, 1, 2].map((index) => (
-        <motion.span
+        <span
           key={index}
-          className="w-[3px] rounded-full bg-primary"
-          animate={{ height: ["30%", "100%", "45%"] }}
-          transition={{
-            duration: 1.1,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: index * 0.16,
-          }}
+          className="player-bar-pulse w-[3px] rounded-full bg-primary"
+          style={{ animationDelay: `${index * 0.16}s` }}
         />
       ))}
     </span>

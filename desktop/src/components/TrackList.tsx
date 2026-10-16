@@ -1,5 +1,4 @@
 import { StarIcon } from "@phosphor-icons/react";
-import { motion } from "motion/react";
 import { memo, useCallback, useRef } from "react";
 
 import TrackArtwork from "@/components/TrackArtwork";
@@ -20,18 +19,12 @@ interface Props {
 /// 正在播放的三条跳动竖条。
 function PlayingBars() {
   return (
-    <span className="flex h-3 items-end gap-[2px]">
+    <span className="flex h-3 items-end gap-[2px]" aria-hidden="true">
       {[0, 1, 2].map((index) => (
-        <motion.span
+        <span
           key={index}
-          className="w-[2px] rounded-full bg-primary"
-          animate={{ height: ["35%", "100%", "50%"] }}
-          transition={{
-            duration: 1,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: index * 0.14,
-          }}
+          className="player-bar-pulse w-[2px] rounded-full bg-primary"
+          style={{ animationDelay: `${index * 0.14}s` }}
         />
       ))}
     </span>
