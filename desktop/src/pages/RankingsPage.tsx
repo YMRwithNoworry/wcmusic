@@ -112,7 +112,7 @@ export default function RankingsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col px-7 py-6">
-      <PageHeader title="排行榜" description="先选音乐平台，再挑一个榜单，听听大家最近在循环什么。">
+      <PageHeader eyebrow="榜单" title="排行榜" description="先选音乐平台，再挑一个榜单，听听大家最近在循环什么。">
         <Select
           value={channel}
           onValueChange={(value) => {
@@ -158,7 +158,7 @@ export default function RankingsPage() {
         ) : null}
       </div>
 
-      {active ? <div className="mb-5 flex shrink-0 items-center justify-between gap-3 rounded-xl bg-background/70 px-4 py-3">
+      {active ? <div className="mb-5 flex shrink-0 items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/40 px-4 py-3">
         <div><h2 className="text-base font-semibold">{active.name}</h2><p className="mt-1 text-xs text-muted-foreground">{loading ? "正在加载歌曲…" : `${tracks.length} 首歌曲`}</p></div>
         <Button disabled={loading || !tracks.length} onClick={() => void playAt(tracks, 0)}><PlayIcon weight="fill" />播放全部</Button>
       </div> : null}

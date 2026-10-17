@@ -12,11 +12,11 @@ export default function TitleBar() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 items-center justify-between bg-background pl-5 select-none"
+      className="flex h-9 items-center justify-between bg-transparent pl-5 select-none"
     >
       <span
         data-tauri-drag-region
-        className="text-[11px] font-medium text-muted-foreground"
+        className="text-[11px] font-medium tracking-[0.14em] text-muted-foreground/80 uppercase"
       >
         WCMusic
       </span>

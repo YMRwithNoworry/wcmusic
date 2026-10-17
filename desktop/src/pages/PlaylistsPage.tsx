@@ -73,7 +73,7 @@ export default function PlaylistsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader title="我的收藏" description="收藏的歌单与歌曲都在这里，随时回来接着听。" />
+      <PageHeader eyebrow="资料库" title="我的收藏" description="收藏的歌单与歌曲都在这里，随时回来接着听。" />
 
       {error ? (
         <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -82,7 +82,8 @@ export default function PlaylistsPage() {
       ) : null}
 
       <section className="mb-8 flex flex-col gap-3">
-        <h2 className="text-[16px] font-semibold tracking-tight">
+        <h2 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight">
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-full bg-gradient-to-b from-primary to-primary/25" />
           收藏的歌单
         </h2>
         <PlaylistGrid
@@ -97,7 +98,8 @@ export default function PlaylistsPage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-[16px] font-semibold tracking-tight">
+        <h2 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight">
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-full bg-gradient-to-b from-primary to-primary/25" />
           收藏的歌曲
         </h2>
         <div className="flex flex-wrap gap-1.5">

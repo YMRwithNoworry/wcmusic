@@ -61,9 +61,9 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <Card id={`settings-${title}`} className="scroll-mt-20 gap-0 overflow-hidden rounded-2xl border-border/70 py-0 shadow-none">
-      <div className="border-b bg-background/50 px-5 py-4">
-        <h2 className="text-[15px] font-semibold">{title}</h2>
+    <Card id={`settings-${title}`} className="scroll-mt-20 gap-0 overflow-hidden rounded-2xl border-border/70 py-0 shadow-sm">
+      <div className="border-b bg-gradient-to-r from-muted/55 to-transparent px-5 py-4">
+        <h2 className="flex items-center gap-2 text-[15px] font-semibold"><span className="size-1.5 rounded-full bg-primary/70" />{title}</h2>
         {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
       </div>
       <div className="divide-y divide-border/60 px-5 py-1">{children}</div>
@@ -186,7 +186,7 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader title="设置" description="调整你的听歌习惯。更改后自动保存，无需额外确认。" />
+      <PageHeader eyebrow="偏好" title="设置" description="调整你的听歌习惯。更改后自动保存，无需额外确认。" />
       <nav aria-label="设置分类" className="sticky top-0 z-10 mb-5 flex flex-wrap gap-1 rounded-xl border bg-card/95 p-1.5 backdrop-blur-md">
         {["外观", "播放", "歌词", "歌词外观", "全局快捷键", "网络", "关于"].map((title) => (
           <Button key={title} variant="ghost" size="sm" onClick={() => document.getElementById(`settings-${title}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{title}</Button>

@@ -65,10 +65,13 @@ const TrackRow = memo(function TrackRow({
       aria-label={`播放：${track.title}，${track.artist}`}
       aria-current={playing ? "true" : undefined}
       className={cn(
-        "group grid cursor-pointer grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] items-center gap-3 rounded-xl px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        playing ? "bg-accent/70" : "hover:bg-muted/65",
+        "group relative grid cursor-pointer grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] items-center gap-3 rounded-xl px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        playing ? "bg-accent/70 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--primary)_18%,transparent)]" : "hover:bg-muted/60",
       )}
     >
+      {playing ? (
+        <span aria-hidden="true" className="absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+      ) : null}
       <span className="flex size-6 items-center justify-center">
         {playing ? (
           <PlayingBars />
@@ -130,7 +133,7 @@ export default function TrackList({ tracks, onToggleSave, saved, empty }: Props)
 
   return (
     <div>
-    <div aria-hidden="true" className="mb-2 grid grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] gap-3 border-b px-3 pb-3 text-[11px] text-muted-foreground">
+    <div aria-hidden="true" className="mb-2 grid grid-cols-[24px_40px_minmax(0,2.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_52px_28px] gap-3 border-b px-3 pb-2.5 text-[10px] font-medium tracking-[0.14em] text-muted-foreground/70 uppercase">
       <span>#</span><span /><span>歌曲</span><span>歌手</span><span>专辑</span><span className="text-right">时长</span><span />
     </div>
     <ul className="flex flex-col gap-0.5">

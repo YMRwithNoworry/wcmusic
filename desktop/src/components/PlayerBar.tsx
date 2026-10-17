@@ -83,7 +83,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
   const volume = snapshot?.volume ?? 1;
 
   return (
-    <footer className="grid grid-cols-[minmax(150px,1fr)_minmax(260px,1.6fr)_minmax(210px,1fr)] items-center gap-5 border-t border-border/70 bg-background px-5">
+    <footer className="player-dock mx-3 mb-2 grid grid-cols-[minmax(150px,1fr)_minmax(260px,1.6fr)_minmax(210px,1fr)] items-center gap-5 rounded-2xl border border-border/60 px-4">
       {/* 左：当前曲目 */}
       <button
         type="button"
@@ -93,7 +93,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         aria-label={track ? `查看歌词：${track.title}` : "尚未播放歌曲"}
         className="flex min-w-0 items-center gap-3 rounded-xl py-2 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
       >
-        <div className="relative size-12 shrink-0 overflow-hidden rounded-[10px] bg-muted">
+        <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-muted shadow-md ring-1 ring-black/10">
           {artwork ? (
             <img src={artwork} alt="" className="size-full object-cover" />
           ) : (
@@ -146,7 +146,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           </Button>
           <Button
             size="icon"
-            className="size-10 rounded-full"
+            className="size-10 rounded-full bg-primary shadow-[0_6px_16px_-6px_var(--primary)] ring-1 ring-primary/30 transition-transform hover:scale-[1.04] active:scale-95"
             disabled={!track}
             onClick={() => void toggle()}
             title={playing ? "暂停" : "播放"}

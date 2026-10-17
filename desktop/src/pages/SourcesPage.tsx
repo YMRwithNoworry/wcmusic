@@ -72,7 +72,7 @@ export default function SourcesPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader title="音源管理" description="内置音源可直接使用。需要其他音源时，导入 .js 文件并启用；导入的音源仅本次运行有效。">
+      <PageHeader eyebrow="音源" title="音源管理" description="内置音源可直接使用。需要其他音源时，导入 .js 文件并启用；导入的音源仅本次运行有效。">
         <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           <UploadSimpleIcon weight="bold" />
           {busy ? "正在校验" : "导入音源文件"}
@@ -97,15 +97,20 @@ export default function SourcesPage() {
           {list.map((source) => (
             <Card
               key={source.index === null ? "builtin" : `source-${source.index}`}
-              className={`flex flex-row items-center justify-between gap-4 rounded-2xl px-5 py-5 shadow-none ${
-                source.active ? "border-primary/50 bg-accent/40" : ""
+              className={`flex flex-row items-center justify-between gap-4 rounded-2xl px-5 py-4 shadow-sm transition-shadow hover:shadow-md ${
+                source.active ? "border-primary/40 bg-accent/50" : ""
               }`}
             >
               <div className="flex min-w-0 items-center gap-3">
-                <PlugsConnectedIcon
-                  weight={source.active ? "fill" : "regular"}
-                  className={source.active ? "size-5 text-primary" : "size-5 text-muted-foreground"}
-                />
+                <span
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-xl ring-1 ${
+                    source.active
+                      ? "bg-primary/12 text-primary ring-primary/25"
+                      : "bg-muted/60 text-muted-foreground ring-border/60"
+                  }`}
+                >
+                  <PlugsConnectedIcon weight={source.active ? "fill" : "regular"} className="size-[18px]" />
+                </span>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium">{source.name}</span>

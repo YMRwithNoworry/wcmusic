@@ -26,7 +26,8 @@ export const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-[16px] font-semibold tracking-tight">
+    <h2 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight">
+      <span aria-hidden="true" className="h-4 w-[3px] rounded-full bg-gradient-to-b from-primary to-primary/25" />
       {children}
     </h2>
   );
@@ -160,7 +161,7 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader title="今天，听点不一样的" description="从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。">
+      <PageHeader eyebrow="发现" title="今天，听点不一样的" description="从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。">
         <Button variant="outline" onClick={onSearch}><MagnifyingGlassIcon />搜索音乐</Button>
       </PageHeader>
       <div className="mb-7 flex flex-wrap items-center justify-between gap-3 border-b pb-5">
