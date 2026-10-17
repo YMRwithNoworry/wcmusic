@@ -12,11 +12,11 @@ export default function TitleBar() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 items-center justify-between bg-transparent pl-5 select-none"
+      className="flex h-[38px] items-center justify-between bg-sidebar pl-5 text-sidebar-foreground select-none"
     >
       <span
         data-tauri-drag-region
-        className="text-[11px] font-medium tracking-[0.14em] text-muted-foreground/80 uppercase"
+        className="text-[11px] font-medium tracking-[0.12em] text-sidebar-foreground/60"
       >
         WCMusic
       </span>
@@ -24,7 +24,7 @@ export default function TitleBar() {
         <Button
           variant="ghost"
           size="icon-sm"
-          className="h-full w-11 rounded-none text-muted-foreground hover:bg-accent"
+          className="h-full w-11 rounded-none text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
           title="最小化"
           onClick={() => void appWindow.minimize()}
         >
@@ -33,7 +33,7 @@ export default function TitleBar() {
         <Button
           variant="ghost"
           size="icon-sm"
-          className="h-full w-11 rounded-none text-muted-foreground hover:bg-accent"
+          className="h-full w-11 rounded-none text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
           title="最大化 / 还原"
           onClick={() => void appWindow.toggleMaximize()}
         >
@@ -42,7 +42,7 @@ export default function TitleBar() {
         <Button
           variant="ghost"
           size="icon-sm"
-          className="h-full w-11 rounded-none text-muted-foreground hover:bg-destructive hover:text-white"
+          className="h-full w-11 rounded-none text-sidebar-foreground/60 hover:bg-destructive hover:text-white"
           title="关闭到托盘"
           onClick={() => void appWindow.close()}
         >

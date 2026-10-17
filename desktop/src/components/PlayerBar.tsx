@@ -83,7 +83,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
   const volume = snapshot?.volume ?? 1;
 
   return (
-    <footer className="player-dock mx-3 mb-2 grid grid-cols-[minmax(150px,1fr)_minmax(260px,1.6fr)_minmax(210px,1fr)] items-center gap-5 rounded-2xl border border-border/60 px-4">
+    <footer className="player-dock grid grid-cols-[minmax(160px,1fr)_minmax(280px,1.6fr)_minmax(220px,1fr)] items-center gap-6 border-t border-sidebar-border px-6 py-3">
       {/* 左：当前曲目 */}
       <button
         type="button"
@@ -91,7 +91,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         disabled={!track}
         title={track ? "查看歌曲详情和歌词" : "选择一首歌曲开始播放"}
         aria-label={track ? `查看歌词：${track.title}` : "尚未播放歌曲"}
-        className="flex min-w-0 items-center gap-3 rounded-xl py-2 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+        className="flex min-w-0 items-center gap-3 rounded-xl py-2 text-left outline-none transition-colors hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:cursor-default"
       >
         <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-muted">
           {artwork ? (

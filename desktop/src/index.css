@@ -56,80 +56,80 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* 音乐资料库：中性蓝灰底色，蓝色用于主操作；深浅主题共用语义层次。 */
+/* WCMusic：炭黑、石灰绿与纸白，像一张带荧光标记的唱片内页。 */
 :root {
   --radius: 0.75rem;
 
-  --background: #eef1f7;
-  --foreground: #16203a;
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.215 0.015 258);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.215 0.015 258);
-  --primary: #4361d8;
-  --primary-foreground: #ffffff;
-  --secondary: oklch(0.958 0.005 258);
-  --secondary-foreground: oklch(0.28 0.015 258);
-  --muted: oklch(0.955 0.006 258);
-  --muted-foreground: #64708a;
-  --accent: #e7edfd;
-  --accent-foreground: #2c4bb0;
-  --destructive: oklch(0.58 0.19 25);
-  --border: oklch(0.24 0.03 262 / 11%);
-  --input: oklch(0.24 0.03 262 / 15%);
-  --ring: #4361d880;
-  --chart-1: oklch(0.66 0.14 70);
-  --chart-2: oklch(0.6 0.09 200);
-  --chart-3: oklch(0.55 0.08 258);
-  --chart-4: oklch(0.72 0.12 130);
-  --chart-5: oklch(0.62 0.13 25);
-  --sidebar: #eef1f7;
-  --sidebar-foreground: oklch(0.215 0.015 258);
-  --sidebar-primary: #4361d8;
-  --sidebar-primary-foreground: oklch(0.22 0.03 70);
-  --sidebar-accent: oklch(0.93 0.006 258);
-  --sidebar-accent-foreground: oklch(0.24 0.015 258);
-  --sidebar-border: oklch(0.215 0.015 258 / 10%);
-  --sidebar-ring: #4361d880;
+  --background: #eceee8;
+  --foreground: #171b17;
+  --card: #f7f8f2;
+  --card-foreground: #171b17;
+  --popover: #f7f8f2;
+  --popover-foreground: #171b17;
+  --primary: #214b36;
+  --primary-foreground: #f5f7ee;
+  --secondary: #dfe5da;
+  --secondary-foreground: #243128;
+  --muted: #e3e8df;
+  --muted-foreground: #59645a;
+  --accent: #d5ed70;
+  --accent-foreground: #1b2718;
+  --destructive: #b74343;
+  --border: #1e2a201c;
+  --input: #1e2a2028;
+  --ring: #214b3680;
+  --chart-1: #214b36;
+  --chart-2: #d5ed70;
+  --chart-3: #7d9680;
+  --chart-4: #c3cec0;
+  --chart-5: #b74343;
+  --sidebar: #151a16;
+  --sidebar-foreground: #edf1e8;
+  --sidebar-primary: #d5ed70;
+  --sidebar-primary-foreground: #1b2718;
+  --sidebar-accent: #273227;
+  --sidebar-accent-foreground: #f2f5eb;
+  --sidebar-border: #edf1e81a;
+  --sidebar-ring: #d5ed7080;
 }
 
 .dark {
-  --background: #0c1119;
-  --foreground: #e9eefb;
-  --card: #151c28;
-  --card-foreground: oklch(0.965 0.004 258);
-  --popover: oklch(0.2 0.016 258);
-  --popover-foreground: oklch(0.965 0.004 258);
-  --primary: #9db8ff;
-  --primary-foreground: #101f42;
-  --secondary: oklch(0.27 0.016 258);
-  --secondary-foreground: oklch(0.96 0.004 258);
-  --muted: oklch(0.255 0.014 258);
-  --muted-foreground: oklch(0.735 0.014 258);
-  --accent: #22304a;
-  --accent-foreground: #dfe8ff;
-  --destructive: oklch(0.66 0.18 25);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 13%);
-  --ring: #9db8ff80;
-  --chart-1: oklch(0.79 0.13 78);
-  --chart-2: oklch(0.7 0.1 200);
-  --chart-3: oklch(0.65 0.08 258);
-  --chart-4: oklch(0.78 0.13 130);
-  --chart-5: oklch(0.7 0.14 25);
-  --sidebar: #0c1119;
-  --sidebar-foreground: oklch(0.965 0.004 258);
-  --sidebar-primary: #9db8ff;
-  --sidebar-primary-foreground: oklch(0.2 0.03 78);
-  --sidebar-accent: oklch(0.27 0.016 258);
-  --sidebar-accent-foreground: oklch(0.97 0.004 258);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: #9db8ff80;
+  --background: #0e110f;
+  --foreground: #edf1e8;
+  --card: #171c17;
+  --card-foreground: #edf1e8;
+  --popover: #1b211b;
+  --popover-foreground: #edf1e8;
+  --primary: #d5ed70;
+  --primary-foreground: #1b2718;
+  --secondary: #252e25;
+  --secondary-foreground: #edf1e8;
+  --muted: #202820;
+  --muted-foreground: #a7b0a1;
+  --accent: #30402b;
+  --accent-foreground: #e5f68d;
+  --destructive: #e17b72;
+  --border: #edf1e814;
+  --input: #edf1e823;
+  --ring: #d5ed7080;
+  --chart-1: #d5ed70;
+  --chart-2: #edf1e8;
+  --chart-3: #9aab96;
+  --chart-4: #526251;
+  --chart-5: #e17b72;
+  --sidebar: #090c0a;
+  --sidebar-foreground: #edf1e8;
+  --sidebar-primary: #d5ed70;
+  --sidebar-primary-foreground: #1b2718;
+  --sidebar-accent: #202a20;
+  --sidebar-accent-foreground: #f1f5e8;
+  --sidebar-border: #edf1e814;
+  --sidebar-ring: #d5ed7080;
 }
 
 @theme inline {
-  --font-sans: "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
-  --font-display: "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-sans: "Outfit Variable", "Outfit", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-display: "Outfit Variable", "Outfit", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --shadow-xs: 0 1px 2px rgba(24,34,53,.05);
   --shadow-sm: 0 2px 8px rgba(24,34,53,.08);
@@ -189,7 +189,7 @@
   h2,
   h3 {
     font-family: var(--font-display);
-    letter-spacing: -0.025em;
+    letter-spacing: 0;
     text-wrap: balance;
   }
 
@@ -266,27 +266,39 @@
 
   /* 侧栏当前页使用单一色阶，避免与封面抢焦点。 */
   .nav-pill {
-    background: var(--accent);
+    background: var(--sidebar-accent);
   }
 
-  /* 播放器是常驻的浮动操作区，与内容保持一个色阶。 */
+  /* 播放器是常驻的深色操作区；覆盖语义变量，让现有控件在深色底上保持对比度。 */
   .player-dock {
-    background: var(--card);
-    box-shadow:
-      0 1px 2px rgb(22 32 58 / 8%),
-      0 16px 40px -24px rgb(22 32 58 / 45%);
+    --card: var(--sidebar);
+    --muted: var(--sidebar-accent);
+    --muted-foreground: color-mix(in oklab, var(--sidebar-foreground) 62%, transparent);
+    --secondary: var(--sidebar-accent);
+    --secondary-foreground: var(--sidebar-foreground);
+    --border: var(--sidebar-border);
+    background: var(--sidebar);
+    color: var(--sidebar-foreground);
+    box-shadow: inset 0 1px 0 var(--sidebar-border);
   }
 
-  .dark .player-dock {
-    background: var(--card);
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 40%),
-      0 20px 46px -26px rgb(0 0 0 / 80%);
+  @keyframes source-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  .source-marquee-track {
+    animation: source-marquee 28s linear infinite;
+    will-change: transform;
   }
 
   /* 歌单封面底部渐隐，保证「N 首」在任何封面上都读得清。 */
   .cover-fade {
-    background: linear-gradient(180deg, transparent 52%, rgb(8 12 20 / 55%) 100%);
+    background: linear-gradient(180deg, transparent 44%, rgb(8 12 9 / 76%) 100%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .source-marquee-track { animation-play-state: paused; }
   }
 }
 
