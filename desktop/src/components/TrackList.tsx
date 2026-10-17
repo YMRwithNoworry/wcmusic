@@ -1,9 +1,18 @@
-import { StarIcon } from "@phosphor-icons/react";
+import { FolderPlusIcon, StarIcon } from "@phosphor-icons/react";
 import { memo, useCallback, useRef } from "react";
 
 import TrackArtwork from "@/components/TrackArtwork";
 import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { formatTime, usePlayer } from "@/player-context";
 import type { Track } from "@/types";
@@ -11,8 +20,11 @@ import type { Track } from "@/types";
 interface Props {
   tracks: Track[];
   /// 传入时行尾显示收藏按钮（`saved` 决定是否已收藏）。
-  onToggleSave?: (track: Track) => void;
-  saved?: (track: Track) => boolean;
+  onToggleSave?: (track: Track, folder: string) => void;
+  saved?: (track: Track, folder?: string) => boolean;
+  folders?: string[];
+  defaultFolder?: string;
+  onCreateFolder?: () => void;
   empty?: string;
 }
 
@@ -36,9 +48,73 @@ interface RowProps {
   index: number;
   playing: boolean;
   isSaved: boolean;
+  folders: string[];
+  saved?: (track: Track, folder?: string) => boolean;
   showSave: boolean;
   onPlay: (index: number) => void;
-  onToggleSave?: (track: Track) => void;
+  onToggleSave?: (track: Track, folder: string) => void;
+  onCreateFolder?: () => void;
+}
+
+interface FavoriteControlProps {
+  track: Track;
+  folders: string[];
+  saved: (track: Track, folder?: string) => boolean;
+  onToggleSave: (track: Track, folder: string) => void;
+  onCreateFolder?: () => void;
+}
+
+function FavoriteControl({
+  track,
+  folders,
+  saved,
+  onToggleSave,
+  onCreateFolder,
+}: FavoriteControlProps) {
+  const savedAnywhere = folders.some((folder) => saved(track, folder));
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn(
+            "size-7 transition-opacity",
+            savedAnywhere
+              ? "text-primary opacity-100"
+              : "text-muted-foreground/60 hover:text-primary",
+          )}
+          aria-pressed={savedAnywhere}
+          aria-label={savedAnywhere ? `管理收藏：${track.title}` : `收藏歌曲：${track.title}`}
+          title="选择收藏文件夹"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <StarIcon weight={savedAnywhere ? "fill" : "regular"} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={6} className="w-48">
+        <DropdownMenuLabel>收藏到文件夹</DropdownMenuLabel>
+        {folders.map((folder) => (
+          <DropdownMenuCheckboxItem
+            key={folder}
+            checked={saved(track, folder)}
+            onSelect={() => onToggleSave(track, folder)}
+          >
+            {folder}
+          </DropdownMenuCheckboxItem>
+        ))}
+        {onCreateFolder ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onCreateFolder}>
+              <FolderPlusIcon />新建文件夹
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 /// 单行曲目：用 memo 隔离，播放进度轮询不会让整张列表重渲染。
@@ -47,9 +123,12 @@ const TrackRow = memo(function TrackRow({
   index,
   playing,
   isSaved,
+  folders,
+  saved,
   showSave,
   onPlay,
   onToggleSave,
+  onCreateFolder,
 }: RowProps) {
   return (
     <li
@@ -91,25 +170,15 @@ const TrackRow = memo(function TrackRow({
         {formatTime(track.durationMs)}
       </span>
       {showSave ? (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className={cn(
-            "size-7 transition-opacity",
-            isSaved
-              ? "text-primary opacity-100"
-              : "text-muted-foreground/60 hover:text-primary",
-          )}
-          aria-pressed={isSaved}
-          aria-label={isSaved ? `取消收藏：${track.title}` : `收藏歌曲：${track.title}`}
-          title={isSaved ? "取消收藏" : "收藏到我的收藏"}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleSave?.(track);
-          }}
-        >
-          <StarIcon weight={isSaved ? "fill" : "regular"} />
-        </Button>
+        <span onClick={(event) => event.stopPropagation()}>
+          <FavoriteControl
+            track={track}
+            folders={folders}
+            saved={saved ?? (() => isSaved)}
+            onToggleSave={onToggleSave ?? (() => undefined)}
+            onCreateFolder={onCreateFolder}
+          />
+        </span>
       ) : (
         <span />
       )}
@@ -118,9 +187,18 @@ const TrackRow = memo(function TrackRow({
 });
 
 /// 曲目列表：点行播放，可选收藏按钮。搜索 / 榜单 / 歌单页共用。
-export default function TrackList({ tracks, onToggleSave, saved, empty }: Props) {
+export default function TrackList({
+  tracks,
+  onToggleSave,
+  saved,
+  folders,
+  defaultFolder = "我的收藏",
+  onCreateFolder,
+  empty,
+}: Props) {
   const { playAt, snapshot } = usePlayer();
   const playingKey = snapshot?.current ? `${snapshot.current.source}-${snapshot.current.id}` : null;
+  const folderNames = folders?.length ? folders : [defaultFolder];
 
   // 用 ref 拿到最新列表，`onPlay` 才能保持稳定，memo 的行才不会被无谓重渲染。
   const tracksRef = useRef(tracks);
@@ -143,10 +221,13 @@ export default function TrackList({ tracks, onToggleSave, saved, empty }: Props)
           track={track}
           index={index}
           playing={`${track.source}-${track.id}` === playingKey}
-          isSaved={saved?.(track) ?? false}
+          isSaved={saved?.(track, defaultFolder) ?? false}
+          folders={folderNames}
+          saved={saved}
           showSave={!!onToggleSave}
           onPlay={onPlay}
           onToggleSave={onToggleSave}
+          onCreateFolder={onCreateFolder}
         />
       ))}
     </ul>

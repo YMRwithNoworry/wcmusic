@@ -171,7 +171,7 @@ impl SavedPlaylist {
 /// 仍能按文件夹展示这些歌，并复用现有的播放流程再次点播。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SavedTrack {
-    /// 所在的文件夹，取值为 `PLAYLIST_FOLDERS` 之一。
+    /// 所在的文件夹，可以是内置文件夹或用户创建的收藏文件夹。
     pub folder: String,
     pub track: Track,
 }
@@ -214,6 +214,9 @@ pub struct AppSettings {
     /// 没有这个字段时仍能加载，加载后对应一个空列表。
     #[serde(default)]
     pub saved_tracks: Vec<SavedTrack>,
+    /// 用户创建的收藏文件夹。内置文件夹不重复写入这里。
+    #[serde(default)]
+    pub saved_folders: Vec<String>,
     /// 播放方式（顺序 / 列表循环 / 随机循环 / 单曲循环）。
     /// 旧设置文件没有这个字段时落回顺序播放。
     #[serde(default)]
@@ -233,6 +236,7 @@ impl Default for AppSettings {
             use_network_proxy: false,
             saved_playlists: Vec::new(),
             saved_tracks: Vec::new(),
+            saved_folders: Vec::new(),
             playback_mode: PlaybackMode::default(),
         }
     }
@@ -486,6 +490,20 @@ mod tests {
 
         assert!(loaded.dark_theme);
         assert!(loaded.saved_tracks.is_empty());
+        assert!(loaded.saved_folders.is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn round_trips_saved_folders() {
+        let path = temp_path("saved-folders");
+        let mut settings = AppSettings::default();
+        settings.saved_folders = vec!["夜间驾驶".to_owned(), "周末散步".to_owned()];
+
+        settings.save_to(&path).unwrap();
+        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+
+        assert_eq!(loaded.saved_folders, settings.saved_folders);
         let _ = fs::remove_file(path);
     }
 

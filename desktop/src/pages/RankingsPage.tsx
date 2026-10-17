@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { favoriteFolderNames } from "@/lib/favorite-folders";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
 import type { OnlineSearchChannel, PlatformRanking, Track } from "@/types";
@@ -100,10 +101,11 @@ export default function RankingsPage() {
   }, [active]);
 
   const savedTracks = settings?.saved_tracks ?? [];
-  const isTrackSaved = (track: Track) =>
+  const folders = favoriteFolderNames(settings);
+  const isTrackSaved = (track: Track, folder = "我的收藏") =>
     savedTracks.some(
       (item) =>
-        item.folder === "我的收藏" &&
+        item.folder === folder &&
         item.track.id === track.id &&
         item.track.source === track.source,
     );
@@ -172,8 +174,9 @@ export default function RankingsPage() {
         ) : (
           <TrackList
             tracks={tracks}
-            onToggleSave={(track) => {
-              void favorites.toggleTrack(track, "我的收藏").then(replace);
+            folders={folders}
+            onToggleSave={(track, folder) => {
+              void favorites.toggleTrack(track, folder).then(replace);
             }}
             saved={isTrackSaved}
             empty="选一个榜单看看。"

@@ -97,6 +97,8 @@ export const player = {
 /// 收藏：歌单与歌曲（都写回 settings.json）。
 export const favorites = {
   folders: () => invoke<string[]>("playlist_folders"),
+  createFolder: (name: string) =>
+    invoke<AppSettings>("create_playlist_folder", { name }),
   togglePlaylist: (playlist: PlatformPlaylist) =>
     invoke<AppSettings>("toggle_saved_playlist", { playlist }),
   toggleTrack: (track: Track, folder: string) =>

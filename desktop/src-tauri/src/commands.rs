@@ -13,8 +13,8 @@ use crate::settings::{AppSettings, SavedPlaylist, SavedTrack};
 use crate::source::{self, SourceView};
 use crate::state::AppState;
 
-/// 收藏歌曲的四个文件夹，保持与 Flutter 客户端的数据约定一致。
-const PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
+/// 收藏歌曲的内置文件夹，保持与 Flutter 客户端的数据约定一致。
+const DEFAULT_PLAYLIST_FOLDERS: [&str; 4] = ["试听列表", "我的收藏", "最近播放", "通勤"];
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -223,10 +223,55 @@ pub async fn track_artwork(
     Ok(data)
 }
 
-/// 收藏歌曲的四个文件夹名（前端用它渲染「爱听的」分组）。
+fn playlist_folder_names(settings: &AppSettings) -> Vec<String> {
+    let mut names = DEFAULT_PLAYLIST_FOLDERS
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for name in settings
+        .saved_folders
+        .iter()
+        .chain(settings.saved_tracks.iter().map(|saved| &saved.folder))
+    {
+        let name = name.trim();
+        if !name.is_empty() && !names.iter().any(|known| known == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// 收藏歌曲的文件夹名（前端用它渲染「我的收藏」分组）。
 #[tauri::command]
-pub fn playlist_folders() -> Vec<&'static str> {
-    PLAYLIST_FOLDERS.to_vec()
+pub fn playlist_folders(state: State<'_, AppState>) -> Vec<String> {
+    playlist_folder_names(&state.settings())
+}
+
+/// 创建一个空的收藏文件夹，并返回落盘后的整份设置。
+#[tauri::command]
+pub fn create_playlist_folder(
+    name: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSettings, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("文件夹名称不能为空".to_owned());
+    }
+    if name.chars().count() > 40 {
+        return Err("文件夹名称不能超过 40 个字符".to_owned());
+    }
+
+    let current = state.settings();
+    if playlist_folder_names(&current).iter().any(|folder| folder == name) {
+        return Err("这个文件夹已经存在".to_owned());
+    }
+
+    let name = name.to_owned();
+    let saved = state.update_settings(|settings| settings.saved_folders.push(name.clone()));
+    let _ = app.emit("wcmusic://settings-changed", &saved);
+    Ok(saved)
 }
 
 /// 收藏 / 取消收藏一个平台歌单，返回落盘后的整份设置。

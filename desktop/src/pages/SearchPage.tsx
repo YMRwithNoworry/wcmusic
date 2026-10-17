@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { favoriteFolderNames } from "@/lib/favorite-folders";
 import { useSettings } from "@/settings-context";
 import type { OnlineSearchChannel, Track } from "@/types";
 
@@ -30,10 +31,11 @@ export default function SearchPage() {
   const { channel, setChannel, query, setQuery, results, loading, error, run } = useSearchSession();
 
   const savedTracks = settings?.saved_tracks ?? [];
-  const isTrackSaved = (track: Track) =>
+  const folders = favoriteFolderNames(settings);
+  const isTrackSaved = (track: Track, folder = "我的收藏") =>
     savedTracks.some(
       (item) =>
-        item.folder === "我的收藏" &&
+        item.folder === folder &&
         item.track.id === track.id &&
         item.track.source === track.source,
     );
@@ -100,8 +102,9 @@ export default function SearchPage() {
         ) : (
           <TrackList
             tracks={results}
-            onToggleSave={(track) => {
-              void favorites.toggleTrack(track, "我的收藏").then(replace);
+            folders={folders}
+            onToggleSave={(track, folder) => {
+              void favorites.toggleTrack(track, folder).then(replace);
             }}
             saved={isTrackSaved}
             empty="输入关键字回车即可搜索，点结果行开始播放。"

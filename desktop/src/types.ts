@@ -101,6 +101,7 @@ export interface AppSettings {
   use_network_proxy: boolean;
   saved_playlists: SavedPlaylist[];
   saved_tracks: SavedTrack[];
+  saved_folders: string[];
   playback_mode: PlaybackMode;
 }
 

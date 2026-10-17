@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import PlaylistDetail from "@/components/PlaylistDetail";
 import PlaylistGrid, { playlistKey } from "@/components/PlaylistGrid";
 import { Skeleton } from "@/components/ui/skeleton";
+import { favoriteFolderNames } from "@/lib/favorite-folders";
 import { useSettings } from "@/settings-context";
 import type { OnlineSearchChannel, PlatformPlaylist, Track } from "@/types";
 
@@ -181,17 +182,18 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
 
   const savedPlaylists = settings?.saved_playlists ?? [];
   const savedTracks = settings?.saved_tracks ?? [];
+  const folders = favoriteFolderNames(settings);
   const isSaved = (playlist: PlatformPlaylist) =>
     savedPlaylists.some((item) => playlistKey(item.playlist) === playlistKey(playlist));
-  const isTrackSaved = (track: Track) =>
+  const isTrackSaved = (track: Track, folder = "我的收藏") =>
     savedTracks.some(
       (item) =>
-        item.folder === "我的收藏" &&
+        item.folder === folder &&
         item.track.id === track.id &&
         item.track.source === track.source,
     );
-  const toggleTrack = (track: Track) => {
-    void favorites.toggleTrack(track, "我的收藏").then(replace);
+  const toggleTrack = (track: Track, folder: string) => {
+    void favorites.toggleTrack(track, folder).then(replace);
   };
 
   if (detail) {
@@ -202,6 +204,7 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
         onBack={() => setDetail(null)}
         onToggleSave={toggleTrack}
         saved={isTrackSaved}
+        folders={folders}
       />
     );
   }

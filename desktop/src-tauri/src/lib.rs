@@ -81,6 +81,7 @@ pub fn run() {
             commands::set_spatial_audio,
             commands::track_artwork,
             commands::playlist_folders,
+            commands::create_playlist_folder,
             commands::toggle_saved_playlist,
             commands::toggle_saved_track,
             commands::load_lyrics,

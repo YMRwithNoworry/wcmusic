@@ -10,14 +10,26 @@ interface Props {
   name: string;
   tracks: Track[] | null;
   onBack: () => void;
-  onToggleSave?: (track: Track) => void;
-  saved?: (track: Track) => boolean;
+  onToggleSave?: (track: Track, folder: string) => void;
+  saved?: (track: Track, folder?: string) => boolean;
+  folders?: string[];
+  defaultFolder?: string;
+  onCreateFolder?: () => void;
 }
 
 /// 歌单详情：点开卡片后接管整块内容区，带返回按钮。
 ///
 /// 之前是把详情塞在长列表最底部，点卡片后画面没变化，看起来像「点不动」。
-export default function PlaylistDetail({ name, tracks, onBack, onToggleSave, saved }: Props) {
+export default function PlaylistDetail({
+  name,
+  tracks,
+  onBack,
+  onToggleSave,
+  saved,
+  folders,
+  defaultFolder,
+  onCreateFolder,
+}: Props) {
   const { playAt } = usePlayer();
   return (
     <div className="flex h-full min-h-0 flex-col px-7 py-6">
@@ -40,6 +52,9 @@ export default function PlaylistDetail({ name, tracks, onBack, onToggleSave, sav
             tracks={tracks}
             onToggleSave={onToggleSave}
             saved={saved}
+            folders={folders}
+            defaultFolder={defaultFolder}
+            onCreateFolder={onCreateFolder}
             empty="这个歌单里还没有歌曲。"
           />
         ) : (
