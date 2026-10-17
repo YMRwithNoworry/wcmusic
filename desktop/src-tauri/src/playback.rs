@@ -121,12 +121,29 @@ impl Playback {
         if track.source_id.is_none() {
             return Err("搜索结果缺少平台歌曲 ID".to_owned());
         }
-        self.send(Command::Play {
+        // 播放命令由独立线程异步解析；先把目标歌曲写进共享状态，避免前端在
+        // 音频线程真正处理命令前读到上一首「已播完」的快照并重复触发自动切歌。
+        set(&self.shared, |state| {
+            state.current = Some(track.clone());
+            state.position_ms = 0;
+            state.finished = false;
+            state.loading = true;
+            state.playing = false;
+            state.error = None;
+        });
+        let result = self.send(Command::Play {
             track,
             quality: quality.to_owned(),
             use_proxy,
             script,
-        })
+        });
+        if let Err(error) = &result {
+            set(&self.shared, |state| {
+                state.loading = false;
+                state.error = Some(error.clone());
+            });
+        }
+        result
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -218,7 +235,14 @@ fn handle(command: Command, player: &mut Option<AudioPlayer>, shared: &Arc<Mutex
             quality,
             use_proxy,
             script,
-        } => start(track, &quality, use_proxy, script, player, shared),
+        } => {
+            // 解析新歌曲可能需要网络请求，先切掉旧 sink，避免旧歌继续出声到
+            // 新歌曲真正准备好，或在快速连续点歌时和新 sink 重叠。
+            if let Some(active) = player.as_mut() {
+                active.stop();
+            }
+            start(track, &quality, use_proxy, script, player, shared);
+        }
         Command::Pause => {
             if let Some(player) = player.as_ref() {
                 let _ = player.pause();
