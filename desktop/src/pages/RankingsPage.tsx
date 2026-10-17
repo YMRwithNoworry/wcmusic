@@ -112,7 +112,7 @@ export default function RankingsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col px-7 py-6">
-      <PageHeader eyebrow="榜单" title="排行榜" description="先选音乐平台，再挑一个榜单，听听大家最近在循环什么。">
+      <PageHeader title="排行榜" description="先选音乐平台，再挑一个榜单，听听大家最近在循环什么。">
         <Select
           value={channel}
           onValueChange={(value) => {

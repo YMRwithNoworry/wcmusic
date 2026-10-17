@@ -73,7 +73,7 @@ export default function PlaylistsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader eyebrow="资料库" title="我的收藏" description="收藏的歌单与歌曲都在这里，随时回来接着听。" />
+      <PageHeader title="我的收藏" description="收藏的歌单与歌曲都在这里，随时回来接着听。" />
 
       {error ? (
         <div className="mb-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">

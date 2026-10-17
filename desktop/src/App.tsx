@@ -55,7 +55,7 @@ function NowPlayingNav({ active, onOpen }: { active: boolean; onOpen: () => void
       disabled={!track}
       onClick={onOpen}
       aria-label={track ? `正在播放：${track.title}` : "正在播放"}
-      className={`mt-2 flex items-center gap-2.5 rounded-2xl border p-2 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-45 ${active ? "border-primary/25 bg-accent/80 shadow-sm" : "border-transparent hover:border-border/70 hover:bg-card/70"}`}
+      className={`mt-2 flex items-center gap-2.5 rounded-2xl p-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-45 ${active ? "bg-accent/75" : "hover:bg-card/70"}`}
     >
       <span className="relative size-9 shrink-0 overflow-hidden rounded-[9px] bg-muted ring-1 ring-black/10">
         {artwork ? (
@@ -67,10 +67,10 @@ function NowPlayingNav({ active, onOpen }: { active: boolean; onOpen: () => void
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[9.5px] font-medium tracking-[0.16em] text-muted-foreground/80 uppercase">
+        <span className="block text-[12px] text-muted-foreground">
           正在播放
         </span>
-        <span className="mt-0.5 block truncate text-[12px] font-medium">
+        <span className="mt-0.5 block truncate text-[13px] font-medium">
           {track?.title ?? "尚未播放"}
         </span>
       </span>
@@ -118,13 +118,13 @@ function Shell() {
   const viewKey = nowPlaying ? "now-playing" : tab;
 
   return (
-    <div className="app-backdrop grid h-full grid-rows-[34px_minmax(0,1fr)_108px]">
+    <div className="grid h-full grid-rows-[34px_minmax(0,1fr)_108px] bg-background">
       <TitleBar />
 
       <div className="grid min-h-0 grid-cols-[188px_minmax(0,1fr)] gap-3 px-3 pb-1">
         <aside className="flex min-h-0 flex-col pt-1 pb-1">
           <div className="mb-6 flex items-center gap-2.5 px-1 [@media(max-height:680px)]:mb-3">
-            <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[12px] shadow-sm ring-1 ring-black/10">
+            <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[12px]">
               <img
                 src={appIcon}
                 alt=""
@@ -132,15 +132,15 @@ function Shell() {
               />
             </span>
             <div className="min-w-0 leading-tight">
-              <div className="text-[15px] font-semibold tracking-[-0.01em]">WCMusic</div>
-              <div className="mt-1 text-[10.5px] tracking-[0.14em] text-muted-foreground/80">随时听见喜欢</div>
+              <div className="text-[16px] font-semibold">WCMusic</div>
+              <div className="mt-1 text-[12px] text-muted-foreground">随时听见喜欢</div>
             </div>
           </div>
 
           <nav aria-label="主导航" className="no-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto">
             {NAV_GROUPS.map((group, groupIndex) => (
               <div key={group.label} className={groupIndex > 0 ? "mt-3 [@media(max-height:680px)]:mt-2" : undefined}>
-                <div className="px-3 pb-1.5 text-[9.5px] font-medium tracking-[0.2em] text-muted-foreground/55 uppercase [@media(max-height:680px)]:hidden">
+                <div className="px-3 pb-1.5 text-[12px] font-medium text-muted-foreground [@media(max-height:680px)]:hidden">
                   {group.label}
                 </div>
                 <div className="flex flex-col gap-0.5">
@@ -182,10 +182,10 @@ function Shell() {
             ))}
           </nav>
           <NowPlayingNav active={nowPlaying} onOpen={() => setNowPlaying(true)} />
-          <div className="mt-3 px-2 text-[10px] text-muted-foreground/55">{info ? `WCMusic ${info.version}` : "正在连接播放器…"}</div>
+          <div className="mt-3 px-2 text-[12px] text-muted-foreground">{info ? `WCMusic ${info.version}` : "正在连接播放器…"}</div>
         </aside>
 
-        <main className="app-panel relative min-h-0 min-w-0 overflow-hidden rounded-[22px] border border-border/60">
+        <main className="app-panel relative min-h-0 min-w-0 overflow-hidden rounded-[20px] bg-card">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={viewKey}
@@ -202,10 +202,6 @@ function Shell() {
               )}
             </motion.div>
           </AnimatePresence>
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-card to-transparent"
-          />
         </main>
       </div>
 

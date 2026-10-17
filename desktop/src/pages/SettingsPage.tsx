@@ -186,7 +186,7 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader eyebrow="偏好" title="设置" description="调整你的听歌习惯。更改后自动保存，无需额外确认。" />
+      <PageHeader title="设置" description="调整你的听歌习惯。更改后自动保存，无需额外确认。" />
       <nav aria-label="设置分类" className="sticky top-0 z-10 mb-5 flex flex-wrap gap-1 rounded-xl border bg-card/95 p-1.5 backdrop-blur-md">
         {["外观", "播放", "歌词", "歌词外观", "全局快捷键", "网络", "关于"].map((title) => (
           <Button key={title} variant="ghost" size="sm" onClick={() => document.getElementById(`settings-${title}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{title}</Button>

@@ -27,7 +27,7 @@ export const CHANNELS: { value: OnlineSearchChannel; label: string }[] = [
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight">
-      <span aria-hidden="true" className="h-4 w-[3px] rounded-full bg-gradient-to-b from-primary to-primary/25" />
+      <span aria-hidden="true" className="h-4 w-[3px] rounded-full bg-primary" />
       {children}
     </h2>
   );
@@ -161,11 +161,11 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader eyebrow="发现" title="今天，听点不一样的" description="从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。">
+      <PageHeader title="今天，听点不一样的" description="从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。">
         <Button variant="outline" onClick={onSearch}><MagnifyingGlassIcon />搜索音乐</Button>
       </PageHeader>
       <div className="mb-7 flex flex-wrap items-center justify-between gap-3 border-b pb-5">
-        <p className="text-[13px] text-muted-foreground">选择平台，发现此刻值得听的音乐</p>
+        <p className="text-[14px] text-muted-foreground">选择平台，发现此刻值得听的音乐</p>
         <Select
           value={channel}
           onValueChange={(value) => setChannel(value as OnlineSearchChannel)}
@@ -194,7 +194,7 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
         <div className="flex items-center justify-between gap-3">
           <SectionTitle>平台热门歌单</SectionTitle>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-muted-foreground" role="status">
+            <span className="text-[12px] text-muted-foreground" role="status">
               {loading ? "正在获取最新歌单…" : updatedAt
                 ? `更新于 ${new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
                 : hot.length ? "暂显示上次歌单" : ""}

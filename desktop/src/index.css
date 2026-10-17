@@ -255,50 +255,31 @@
     font-family: var(--font-mono);
   }
 
-  /* 应用背景：两团极淡极光，避免大片纯色显得平板。 */
-  .app-backdrop {
-    background-image:
-      radial-gradient(110% 75% at 8% -12%, color-mix(in oklab, var(--primary) 20%, transparent), transparent 62%),
-      radial-gradient(85% 65% at 96% -6%, color-mix(in oklab, var(--chart-2) 16%, transparent), transparent 64%),
-      radial-gradient(70% 55% at 62% 112%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 68%);
-  }
-
-  /* 主面板：顶部微高光 + 柔和投影，让内容浮在背景之上。 */
+  /* 主面板与应用底色通过色阶区分，不依赖渐变和投影。 */
   .app-panel {
-    background: linear-gradient(180deg, color-mix(in oklab, var(--card) 94%, white) 0%, var(--card) 220px);
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 65%),
-      0 2px 6px -3px rgb(22 32 58 / 18%),
-      0 22px 48px -30px rgb(22 32 58 / 45%);
+    background: var(--card);
   }
 
   .dark .app-panel {
-    background: linear-gradient(180deg, color-mix(in oklab, var(--card) 90%, white 5%) 0%, var(--card) 240px);
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 6%),
-      0 2px 6px -3px rgb(0 0 0 / 55%),
-      0 28px 60px -32px rgb(0 0 0 / 85%);
+    background: var(--card);
   }
 
-  /* 侧栏选中项：淡渐变 + 内侧描边，比纯色块更有层次。 */
+  /* 侧栏当前页使用单一色阶，避免与封面抢焦点。 */
   .nav-pill {
-    background: linear-gradient(100deg, color-mix(in oklab, var(--primary) 20%, transparent), color-mix(in oklab, var(--primary) 5%, transparent));
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 24%, transparent);
+    background: var(--accent);
   }
 
-  /* 底部播放器：悬浮底座。底座后面是静态渐变，不用 backdrop-filter，避免每帧重算模糊。 */
+  /* 播放器是常驻的浮动操作区，与内容保持一个色阶。 */
   .player-dock {
-    background: color-mix(in oklab, var(--card) 94%, transparent);
+    background: var(--card);
     box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 55%),
       0 1px 2px rgb(22 32 58 / 8%),
       0 16px 40px -24px rgb(22 32 58 / 45%);
   }
 
   .dark .player-dock {
-    background: color-mix(in oklab, var(--card) 95%, transparent);
+    background: var(--card);
     box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 7%),
       0 1px 2px rgb(0 0 0 / 40%),
       0 20px 46px -26px rgb(0 0 0 / 80%);
   }

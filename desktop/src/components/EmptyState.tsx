@@ -7,8 +7,8 @@ export default function EmptyState({ title, description, children }: {
   children?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl border border-border/60 bg-gradient-to-b from-muted/45 to-muted/15 px-6 py-8 text-center">
-      <span className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-card text-primary shadow-sm ring-1 ring-border">
+    <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl bg-muted/40 px-6 py-8 text-center">
+      <span className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-card text-primary">
         <MusicNotesIcon size={22} weight="duotone" />
       </span>
       <p className="text-sm font-medium">{title}</p>

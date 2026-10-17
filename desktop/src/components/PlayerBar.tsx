@@ -93,7 +93,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         aria-label={track ? `查看歌词：${track.title}` : "尚未播放歌曲"}
         className="flex min-w-0 items-center gap-3 rounded-xl py-2 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
       >
-        <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-muted shadow-md ring-1 ring-black/10">
+        <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-muted">
           {artwork ? (
             <img src={artwork} alt="" className="size-full object-cover" />
           ) : (
@@ -107,7 +107,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
               {track?.title ?? "未在播放"}
             </span>
           </div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="truncate text-[13px] text-muted-foreground">
             {snapshot?.error
               ? snapshot.error
               : snapshot?.loading
@@ -130,7 +130,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
                 aria-label={`播放方式：${mode.label}，点击切换为${nextMode.label}`}
                 onClick={() => void cyclePlaybackMode()}
               >
-                <ModeIcon /><span className="text-[11px]">{mode.label}</span>
+                <ModeIcon /><span className="text-[12px]">{mode.label}</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>当前：{mode.label} · 点击切换为{nextMode.label}</TooltipContent>
@@ -146,7 +146,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           </Button>
           <Button
             size="icon"
-            className="size-10 rounded-full bg-primary shadow-[0_6px_16px_-6px_var(--primary)] ring-1 ring-primary/30 transition-transform hover:scale-[1.04] active:scale-95"
+            className="size-10 rounded-full transition-transform hover:scale-[1.03] active:scale-95"
             disabled={!track}
             onClick={() => void toggle()}
             title={playing ? "暂停" : "播放"}
@@ -179,7 +179,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         </div>
 
         <div className="flex w-full items-center gap-3">
-        <span className="tabular w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+        <span className="tabular w-10 shrink-0 text-right text-[12px] text-muted-foreground">
           {formatTime(scrubPosition ?? position)}
         </span>
         <Slider
@@ -194,7 +194,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
             void seek(value).finally(() => setScrubPosition(null));
           }}
         />
-        <span className="tabular w-10 shrink-0 text-[10px] text-muted-foreground">
+        <span className="tabular w-10 shrink-0 text-[12px] text-muted-foreground">
           {formatTime(duration)}
         </span>
         </div>
@@ -222,7 +222,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="sm" aria-label="桌面歌词" title="显示或关闭桌面歌词" onClick={() => void lyricsWindow.toggle()}>
-              <TextAaIcon /><span className="text-[11px]">歌词</span>
+              <TextAaIcon /><span className="text-[12px]">歌词</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>桌面歌词</TooltipContent>

@@ -72,7 +72,7 @@ export default function SourcesPage() {
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6">
-      <PageHeader eyebrow="音源" title="音源管理" description="内置音源可直接使用。需要其他音源时，导入 .js 文件并启用；导入的音源仅本次运行有效。">
+      <PageHeader title="音源管理" description="内置音源可直接使用。需要其他音源时，导入 .js 文件并启用；导入的音源仅本次运行有效。">
         <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           <UploadSimpleIcon weight="bold" />
           {busy ? "正在校验" : "导入音源文件"}

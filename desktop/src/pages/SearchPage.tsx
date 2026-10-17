@@ -40,7 +40,7 @@ export default function SearchPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col px-7 py-6">
-      <PageHeader eyebrow="探索" title="搜索音乐" description="输入歌曲或歌手，选择平台开始搜索。切换页面后，输入和结果会保留。" />
+      <PageHeader title="搜索音乐" description="输入歌曲或歌手，选择平台开始搜索。切换页面后，输入和结果会保留。" />
       <div className="mb-5 flex items-center gap-3 rounded-2xl border border-border/70 bg-card/70 p-2 shadow-sm backdrop-blur">
         <Select
           value={channel}
