@@ -1,7 +1,7 @@
 {
   "name": "wcmusic-desktop",
   "private": true,
-  "version": "1.2.53",
+  "version": "1.2.54",
   "type": "module",
   "scripts": {
     "dev": "vite",
