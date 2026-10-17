@@ -49,6 +49,9 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
   const [queueIndex, setQueueIndex] = useState(-1);
   /// 已经因为「播完」自动切过的那一首，避免重复触发。
   const advanced = useRef<string | null>(null);
+  /// IPC 播放命令还没有反映到快照时，屏蔽旧歌曲的 finished 状态。
+  const pendingPlay = useRef<string | null>(null);
+  const playRequestId = useRef(0);
   const currentId = snapshot?.current?.id ?? null;
 
   const refresh = useCallback(async () => {
@@ -94,15 +97,32 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
   }, [currentId, controls]);
 
   const playAt = useCallback(
-    async (tracks: Track[], index: number) => {
+    async (tracks: Track[], index: number, automatic = false) => {
       if (index < 0 || index >= tracks.length) {
         return;
       }
+      const track = tracks[index];
+      const key = trackKey(track);
+      const requestId = ++playRequestId.current;
+      pendingPlay.current = key;
       setQueue(tracks);
       setQueueIndex(index);
-      advanced.current = null;
-      await player.play(tracks[index]);
-      await refresh();
+      if (!automatic) {
+        advanced.current = null;
+      }
+      try {
+        const nextSnapshot = await player.play(track);
+        if (playRequestId.current === requestId) {
+          // 先用命令返回的即时状态更新，避免 React 在 IPC 返回前再次看到旧快照。
+          setSnapshot(nextSnapshot);
+        }
+        await refresh();
+      } catch (error) {
+        if (playRequestId.current === requestId) {
+          pendingPlay.current = null;
+        }
+        throw error;
+      }
     },
     [refresh],
   );
@@ -122,7 +142,7 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
       }
       const mode = settings?.playback_mode ?? "sequence";
       if (auto && mode === "singleLoop") {
-        await playAt(queue, queueIndex);
+        await playAt(queue, queueIndex, true);
         return;
       }
       let index = queueIndex + delta;
@@ -137,7 +157,7 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
       } else if (index < 0) {
         index = mode === "listLoop" ? queue.length - 1 : 0;
       }
-      await playAt(queue, index);
+      await playAt(queue, index, auto);
     },
     [queue, queueIndex, settings?.playback_mode, playAt],
   );
@@ -148,16 +168,28 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
   // 播完自动切下一首（单曲循环时重播本首）。
   useEffect(() => {
     const track = snapshot?.current;
-    if (!track || !snapshot?.finished) {
+    if (!track) {
       return;
     }
     const key = trackKey(track);
+    if (pendingPlay.current) {
+      // 同一首歌重播时，旧 finished 快照与新目标的 key 相同，必须等到
+      // loading/finished 状态被新命令改写后再放行。
+      if (pendingPlay.current !== key || (snapshot.finished && !snapshot.loading)) {
+        return;
+      }
+      pendingPlay.current = null;
+    }
+    if (!snapshot.finished) {
+      advanced.current = null;
+      return;
+    }
     if (advanced.current === key) {
       return;
     }
     advanced.current = key;
     void step(1, true);
-  }, [snapshot?.finished, snapshot?.current, step]);
+  }, [snapshot?.finished, snapshot?.loading, snapshot?.current, step]);
 
   // 最新的快照与队列：`togglePlayback` 要保持稳定引用，只能通过 ref 读它们。
   const snapshotRef = useRef<PlaybackSnapshot | null>(null);
@@ -180,8 +212,22 @@ export function PlayerProvider({ children, controls = true }: { children: ReactN
       if (index >= 0) {
         await playAt(queueRef.current, index);
       } else {
-        await player.play(track);
-        await refresh();
+        const key = trackKey(track);
+        const requestId = ++playRequestId.current;
+        pendingPlay.current = key;
+        advanced.current = null;
+        try {
+          const nextSnapshot = await player.play(track);
+          if (playRequestId.current === requestId) {
+            setSnapshot(nextSnapshot);
+          }
+          await refresh();
+        } catch (error) {
+          if (playRequestId.current === requestId) {
+            pendingPlay.current = null;
+          }
+          throw error;
+        }
       }
       return;
     }
