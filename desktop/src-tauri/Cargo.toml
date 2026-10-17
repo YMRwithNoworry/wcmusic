@@ -1,6 +1,6 @@
 [package]
 name = "wcmusic-desktop"
-version = "1.2.54"
+version = "1.2.55"
 edition = "2024"
 description = "WCMusic 桌面端（Tauri 2 + React）"
 license = "MIT"
