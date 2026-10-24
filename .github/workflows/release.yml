@@ -140,6 +140,8 @@ jobs:
     # check 阶段已经跑过 analysis + test，这里专注出包。
     runs-on: windows-latest
     steps:
+      - name: 调试版本输出
+        run: echo "build=${{ needs.version-windows.outputs.build }} version=${{ needs.version-windows.outputs.version }} tag=${{ needs.version-windows.outputs.tag }} sha=${{ needs.version-windows.outputs.sha }}"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version-windows.outputs.sha }}
