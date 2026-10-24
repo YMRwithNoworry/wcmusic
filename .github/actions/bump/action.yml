@@ -19,15 +19,15 @@ inputs:
 
 outputs:
   version:
-    value: ${{ steps.source.outputs.version }}
+    value: ${{ steps.bump.outputs.bump_version }}
   previous:
-    value: ${{ steps.source.outputs.previous }}
+    value: ${{ steps.bump.outputs.bump_previous }}
   tag:
-    value: ${{ steps.source.outputs.tag }}
+    value: ${{ steps.bump.outputs.bump_tag }}
   sha:
-    value: ${{ steps.source.outputs.sha }}
+    value: ${{ steps.bump.outputs.bump_sha }}
   build:
-    value: ${{ steps.source.outputs.build }}
+    value: ${{ steps.bump.outputs.bump_build }}
 
 runs:
   using: composite
@@ -47,7 +47,7 @@ runs:
         if [ -n "$tag" ]; then tag="${TAG_PREFIX}${tag}"; fi
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
     - id: bump
-      name: 递增版本（patch / minor / major / none）
+      name: 计算版本（输出统一加 bump_ 前缀，部分版本不支持同名 input/output）
       shell: bash
       env:
         PLATFORM: ${{ inputs.platform }}
@@ -86,12 +86,19 @@ runs:
           git push origin "HEAD:$GITHUB_REF_NAME"
           version=$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+' pubspec.yaml | head -1 | sed -E 's/^version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
         fi
+        compute=$(git rev-parse HEAD)
         {
-          echo "sha=$(git rev-parse HEAD)"
+          echo "sha=$compute"
           echo "build=$BUILD"
           echo "version=$version"
           echo "previous=$version"
           echo "tag=${TAG_PREFIX}$version"
+          # 输出名不能和同名 input 冲突，统一带 bump_ 前缀供 action.yml 的 outputs 引用
+          echo "bump_version=$version"
+          echo "bump_previous=$version"
+          echo "bump_tag=${TAG_PREFIX}$version"
+          echo "bump_sha=$compute"
+          echo "bump_build=$BUILD"
         } >> "$GITHUB_OUTPUT"
         if [ "$BUILD" != "true" ]; then
           echo "本次跳过 $PLATFORM 构建（现有版本 v$version）" >> "$GITHUB_STEP_SUMMARY"
