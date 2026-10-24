@@ -42,6 +42,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          # checkout v4 默认不把 token 写进 remote，机器人提交需要显式带上凭据。
+          token: ${{ github.token }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -87,6 +89,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          # checkout v4 默认不把 token 写进 remote，机器人提交需要显式带上凭据。
+          token: ${{ github.token }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -116,6 +120,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          # checkout v4 默认不把 token 写进 remote，机器人提交需要显式带上凭据。
+          token: ${{ github.token }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
