@@ -1,0 +1,96 @@
+name: 递增版本并锁定构建提交
+description: 按产品线查询最新 tag、递增版本、写回 pubspec 并提交；未选中该平台时只带出当前版本。
+
+inputs:
+  platform:
+    description: windows 或 android
+    required: true
+  tag-prefix:
+    description: 本条产品线的 tag 前缀（v / android-v）
+    required: true
+  target:
+    description: 本次要发布的平台（both / windows / android）
+    required: false
+    default: both
+  bump:
+    description: patch / minor / major / none
+    required: false
+    default: patch
+
+outputs:
+  version:
+    value: ${{ steps.source.outputs.version }}
+  previous:
+    value: ${{ steps.source.outputs.previous }}
+  tag:
+    value: ${{ steps.source.outputs.tag }}
+  sha:
+    value: ${{ steps.source.outputs.sha }}
+  build:
+    value: ${{ steps.source.outputs.build }}
+
+runs:
+  using: composite
+  steps:
+    - id: latest
+      name: 查询本条产品线的最新版本
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        set -euo pipefail
+        # 不用 releases/latest：它跨平台混排，Android 的 android-v 标签会顶掉 Windows 的 v 标签。
+        # gh 的 --jq 不认 jq 的 --arg，所以先列出标签再在 shell 里按前缀挑最新。
+        tags=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+        tag=$(printf '%s\n' "$tags" | sed -n "s/^${TAG_PREFIX}\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p" | sort -V | tail -1)
+        if [ -n "$tag" ]; then tag="${TAG_PREFIX}${tag}"; fi
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+    - id: bump
+      name: 递增版本（patch / minor / major / none）
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        TARGET: ${{ inputs.target }}
+        BUMP: ${{ inputs.bump }}
+        LATEST: ${{ steps.latest.outputs.tag }}
+      # 本次不发布该平台时跳过写回，输出里带出当前版本（不递增）。
+      run: node scripts/release/bump-version.mjs --platform "$PLATFORM" --tag-prefix "$TAG_PREFIX" --target "$TARGET" "$BUMP" "$LATEST"
+    - id: source
+      name: 写回版本并锁定构建提交
+      shell: bash
+      env:
+        TAG: ${{ steps.bump.outputs.tag }}
+        BUILD: ${{ steps.bump.outputs.build }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        version=$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+' pubspec.yaml | head -1 | sed -E 's/^version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+        files="pubspec.yaml pubspec.lock"
+        tag=""
+        if [ "$BUILD" = "true" ]; then
+          # 并发写回时先同步远端（机器人新提交 [skip ci]，不会触发新构建）
+          git fetch --quiet origin "$GITHUB_REF_NAME"
+          git rebase --quiet "origin/$GITHUB_REF_NAME"
+          tag=$TAG
+        fi
+        if [ -n "$tag" ] && ! git diff --quiet -- $files; then
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $files
+          git commit -m "chore(release): $tag [skip ci]"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+          version=$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+' pubspec.yaml | head -1 | sed -E 's/^version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+        fi
+        {
+          echo "sha=$(git rev-parse HEAD)"
+          echo "build=$BUILD"
+          echo "version=$version"
+          echo "previous=$version"
+          echo "tag=${TAG_PREFIX}$version"
+        } >> "$GITHUB_OUTPUT"
+        if [ "$BUILD" != "true" ]; then
+          echo "本次跳过 $PLATFORM 构建（现有版本 v$version）" >> "$GITHUB_STEP_SUMMARY"
+        fi

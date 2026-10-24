@@ -66,33 +66,23 @@ jobs:
           path: test/failures/
           if-no-files-found: ignore
 
-  # 每条产品线各自输出 version / tag，后续构建与发布只认自己那条线。
-  version:
-    name: 确定 ${{ matrix.platform }} 版本与构建提交
+  # 版本任务拆成两个独立 job：两条线顺序执行（共用 concurrency 组），
+  # 后执行的一条能看到前一条刚写的版本提交，各自用自己前缀的 tag 递增版本。
+  # 合并在一个 matrix job 里时，两端会同时 push，先推送的一方会撞上另一方的未提交改动。
+  version-windows:
+    name: 确定 Windows 版本与构建提交
     needs: checks
+    concurrency:
+      group: wcmusic-version-${{ github.ref_name }}
+      cancel-in-progress: false
     if: ${{ always() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')) }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            tag_prefix: v
-            build_when: windows
-          - platform: android
-            tag_prefix: android-v
-            build_when: android
     outputs:
-      windows_version: ${{ steps.bump.outputs.version || steps.source.outputs.version }}
-      windows_previous: ${{ steps.bump.outputs.previous || steps.source.outputs.previous }}
-      windows_tag: ${{ steps.bump.outputs.tag || steps.source.outputs.tag }}
-      windows_sha: ${{ steps.source.outputs.sha }}
-      windows_build: ${{ steps.source.outputs.build }}
-      android_version: ${{ steps.bump.outputs.version || steps.source.outputs.version }}
-      android_previous: ${{ steps.bump.outputs.previous || steps.source.outputs.previous }}
-      android_tag: ${{ steps.bump.outputs.tag || steps.source.outputs.tag }}
-      android_sha: ${{ steps.source.outputs.sha }}
-      android_build: ${{ steps.source.outputs.build }}
+      version: ${{ steps.source.outputs.version }}
+      previous: ${{ steps.source.outputs.previous }}
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+      build: ${{ steps.source.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,71 +91,52 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - id: latest
-        name: 查询本条产品线的最新版本
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_PREFIX: ${{ matrix.tag_prefix }}
-        run: |
-          set -euo pipefail
-          # 不再用 releases/latest：它跨平台混排，Android 的 android-v 标签会顶掉 Windows 的 v 标签。
-          # gh 的 --jq 不认 jq 的 --arg，所以先把按前缀筛好的标签列出来，再在 shell 里挑最新。
-          tags=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
-          tag=$(printf '%s\n' "$tags" | sed -n "s/^${TAG_PREFIX}\\([0-9]*\\.[0-9]*\\.[0-9]*\\)\$/\\1/p" | sort -V | tail -1)
-          if [ -n "$tag" ]; then tag="${TAG_PREFIX}${tag}"; fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-      - id: bump
-        name: 递增版本（patch / minor / major / none）
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          TAG_PREFIX: ${{ matrix.tag_prefix }}
-          TARGET: ${{ inputs.target || 'both' }}
-          BUMP: ${{ inputs.bump || 'patch' }}
-          LATEST: ${{ steps.latest.outputs.tag }}
-        # bump 脚本在本次不需要发布时会跳过写回，并在输出里带出当前版本（不递增）。
-        run: node scripts/release/bump-version.mjs --platform "$PLATFORM" --tag-prefix "$TAG_PREFIX" --target "$TARGET" "$BUMP" "$LATEST"
-      - id: source
-        name: 写回版本并锁定构建提交
-        env:
-          TAG: ${{ steps.bump.outputs.tag }}
-          BUILD: ${{ steps.bump.outputs.build }}
-        run: |
-          set -euo pipefail
-          version=$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+' pubspec.yaml | head -1 | sed -E 's/^version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-          files="pubspec.yaml pubspec.lock"
-          tag=""
-          if [ "$BUILD" = "true" ]; then
-            tag=$TAG
-          fi
-          if [ -n "$tag" ] && ! git diff --quiet -- $files; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add $files
-            git commit -m "chore(release): $tag [skip ci]"
-            git pull --rebase origin "$GITHUB_REF_NAME"
-            git push origin "HEAD:$GITHUB_REF_NAME"
-          fi
-          {
-            echo "sha=$(git rev-parse HEAD)"
-            echo "build=$BUILD"
-            echo "version=$version"
-            echo "previous=$version"
-            echo "tag=${{ matrix.tag_prefix }}$version"
-          } >> "$GITHUB_OUTPUT"
-          if [ "$BUILD" != "true" ]; then
-            echo "本次跳过 ${{ matrix.platform }} 构建（现有版本 v$version）" >> "$GITHUB_STEP_SUMMARY"
-          fi
+      - uses: ./.github/actions/bump
+        with:
+          platform: windows
+          tag-prefix: v
+          target: ${{ inputs.target || 'both' }}
+          bump: ${{ inputs.bump || 'patch' }}
+
+  version-android:
+    name: 确定 Android 版本与构建提交
+    needs: checks
+    concurrency:
+      group: wcmusic-version-${{ github.ref_name }}
+      cancel-in-progress: false
+    if: ${{ always() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')) }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      previous: ${{ steps.source.outputs.previous }}
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+      build: ${{ steps.source.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: ./.github/actions/bump
+        with:
+          platform: android
+          tag-prefix: android-v
+          target: ${{ inputs.target || 'both' }}
+          bump: ${{ inputs.bump || 'patch' }}
 
   windows:
     name: 构建 Windows 包
-    needs: version
-    if: ${{ needs.version.outputs.windows_build == 'true' }}
+    needs: version-windows
+    if: ${{ needs.version-windows.outputs.build == 'true' }}
     # check 阶段已经跑过 analysis + test，这里专注出包。
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.windows_sha }}
+          ref: ${{ needs.version-windows.outputs.sha }}
       # 桌面端 UI 已换成 Flutter + Forui，发布产物是 Flutter Windows 包。
       - uses: subosito/flutter-action@v2
         with:
@@ -195,13 +166,13 @@ jobs:
 
   android:
     name: 构建 Android 包
-    needs: version
-    if: ${{ needs.version.outputs.android_build == 'true' }}
+    needs: version-android
+    if: ${{ needs.version-android.outputs.build == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.android_sha }}
+          ref: ${{ needs.version-android.outputs.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -236,13 +207,13 @@ jobs:
   # 用两个独立 job 引用 needs 输出，因为 matrix 里不能直接引用 needs（YAML 会当成空值）。
   publish-windows:
     name: 发布 Windows Release
-    needs: [version, windows]
-    if: ${{ always() && needs.version.result == 'success' && needs.windows.result == 'success' }}
+    needs: [version-windows, windows]
+    if: ${{ always() && needs.version-windows.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.windows_sha }}
+          ref: ${{ needs.version-windows.outputs.sha }}
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
@@ -252,17 +223,17 @@ jobs:
         run: test -s dist/wcmusic-windows-x64.zip
       - name: 生成 Release 说明
         env:
-          VERSION: ${{ needs.version.outputs.windows_version }}
-          PREVIOUS: ${{ needs.version.outputs.windows_previous }}
+          VERSION: ${{ needs.version-windows.outputs.version }}
+          PREVIOUS: ${{ needs.version-windows.outputs.previous }}
         run: |
           node scripts/release/generate-notes.mjs --platform windows --version "$VERSION" \
             --previous "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --notes release-notes.md
       - name: 发布 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.version.outputs.windows_tag }}
-          VERSION: ${{ needs.version.outputs.windows_version }}
-          SOURCE_SHA: ${{ needs.version.outputs.windows_sha }}
+          TAG: ${{ needs.version-windows.outputs.tag }}
+          VERSION: ${{ needs.version-windows.outputs.version }}
+          SOURCE_SHA: ${{ needs.version-windows.outputs.sha }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -275,13 +246,13 @@ jobs:
 
   publish-android:
     name: 发布 Android Release
-    needs: [version, android]
-    if: ${{ always() && needs.version.result == 'success' && needs.android.result == 'success' }}
+    needs: [version-android, android]
+    if: ${{ always() && needs.version-android.result == 'success' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.android_sha }}
+          ref: ${{ needs.version-android.outputs.sha }}
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
@@ -291,17 +262,17 @@ jobs:
         run: test -s dist/wcmusic-android-arm64.apk
       - name: 生成 Release 说明
         env:
-          VERSION: ${{ needs.version.outputs.android_version }}
-          PREVIOUS: ${{ needs.version.outputs.android_previous }}
+          VERSION: ${{ needs.version-android.outputs.version }}
+          PREVIOUS: ${{ needs.version-android.outputs.previous }}
         run: |
           node scripts/release/generate-notes.mjs --platform android --version "$VERSION" \
             --previous "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --notes release-notes.md
       - name: 发布 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.version.outputs.android_tag }}
-          VERSION: ${{ needs.version.outputs.android_version }}
-          SOURCE_SHA: ${{ needs.version.outputs.android_sha }}
+          TAG: ${{ needs.version-android.outputs.tag }}
+          VERSION: ${{ needs.version-android.outputs.version }}
+          SOURCE_SHA: ${{ needs.version-android.outputs.sha }}
         run: |
           set -euo pipefail
           title="WCMusic $VERSION（Android）"
@@ -316,13 +287,13 @@ jobs:
   # 官网只有在上一次同步之后「两条线都出了新版本」才重写一次，避免只更新一半链接。
   site:
     name: 同步官网源码
-    needs: [version, publish-windows, publish-android]
-    if: ${{ always() && needs.version.result == 'success' && needs.publish-windows.result == 'success' && needs.publish-android.result == 'success' }}
+    needs: [version-windows, version-android, publish-windows, publish-android]
+    if: ${{ always() && needs.version-windows.result == 'success' && needs.version-android.result == 'success' && needs.publish-windows.result == 'success' && needs.publish-android.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.windows_sha }}
+          ref: ${{ needs.version-windows.outputs.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -330,10 +301,10 @@ jobs:
       - name: 生成官网改动
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WINDOWS_VERSION: ${{ needs.version.outputs.windows_version }}
-          WINDOWS_PREVIOUS: ${{ needs.version.outputs.windows_previous }}
-          ANDROID_VERSION: ${{ needs.version.outputs.android_version }}
-          ANDROID_PREVIOUS: ${{ needs.version.outputs.android_previous }}
+          WINDOWS_VERSION: ${{ needs.version-windows.outputs.version }}
+          WINDOWS_PREVIOUS: ${{ needs.version-windows.outputs.previous }}
+          ANDROID_VERSION: ${{ needs.version-android.outputs.version }}
+          ANDROID_PREVIOUS: ${{ needs.version-android.outputs.previous }}
         run: |
           set -euo pipefail
           node scripts/release/sync-site.mjs --platform site \
@@ -347,7 +318,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add site/index.html site/app.js
           if ! git diff --cached --quiet; then
-            git commit -m "chore(site): 同步 Windows ${{ needs.version.outputs.windows_version }} / Android ${{ needs.version.outputs.android_version }} [skip ci]"
+            git commit -m "chore(site): 同步 Windows ${{ needs.version-windows.outputs.version }} / Android ${{ needs.version-android.outputs.version }} [skip ci]"
             git fetch origin "$GITHUB_REF_NAME"
             git rebase "origin/$GITHUB_REF_NAME"
             git push origin "HEAD:$GITHUB_REF_NAME"
@@ -360,8 +331,8 @@ jobs:
 
   deploy:
     name: 部署 Cloudflare Pages 官网
-    needs: [version, site]
-    if: ${{ always() && needs.version.result == 'success' && needs.site.result == 'success' }}
+    needs: [version-windows, site]
+    if: ${{ always() && needs.version-windows.result == 'success' && needs.site.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -386,12 +357,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CF_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
-          SOURCE_SHA: ${{ needs.version.outputs.windows_sha }}
+          SOURCE_SHA: ${{ needs.version-windows.outputs.sha }}
         run: npx --yes wrangler@4.59.2 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$SOURCE_SHA" --commit-dirty=true
       - name: 验证正式站点版本
         env:
-          WINDOWS_VERSION: ${{ needs.version.outputs.windows_version }}
-          ANDROID_VERSION: ${{ needs.version.outputs.android_version }}
+          WINDOWS_VERSION: ${{ needs.version-windows.outputs.version }}
+          ANDROID_VERSION: ${{ needs.version-android.outputs.version }}
         run: |
           for attempt in 1 2 3 4 5 6; do
             page=$(curl --fail --silent --show-error "https://wcmusic.pages.dev/?release=$WINDOWS_VERSION-$ANDROID_VERSION") || page=""
