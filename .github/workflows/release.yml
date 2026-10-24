@@ -102,8 +102,6 @@ jobs:
           tag-prefix: v
           target: ${{ inputs.target || 'both' }}
           bump: ${{ inputs.bump || 'patch' }}
-      - name: 调试版本输出
-        run: echo "step build=${{ steps.bump.outputs.build }} version=${{ steps.bump.outputs.version }} tag=${{ steps.bump.outputs.tag }} sha=${{ steps.bump.outputs.sha }}"
 
   version-android:
     name: 确定 Android 版本与构建提交
@@ -144,10 +142,6 @@ jobs:
     # check 阶段已经跑过 analysis + test，这里专注出包。
     runs-on: windows-latest
     steps:
-      - name: 调试版本输出
-        run: |
-          echo "build=${{ needs.version-windows.outputs.build }} version=${{ needs.version-windows.outputs.version }} tag=${{ needs.version-windows.outputs.tag }} sha=${{ needs.version-windows.outputs.sha }}"
-          echo "bump_build=${{ steps.bump.outputs.bump_build }} bump_version=${{ steps.bump.outputs.bump_version }}"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version-windows.outputs.sha }}
