@@ -72,8 +72,10 @@ runs:
         tag=""
         if [ "$BUILD" = "true" ]; then
           # 并发写回时先同步远端（机器人新提交 [skip ci]，不会触发新构建）
-          git fetch --quiet origin "$GITHUB_REF_NAME"
-          git rebase --quiet "origin/$GITHUB_REF_NAME"
+          # 只更新远端跟踪分支：git fetch origin <branch> 还会写 FETCH_HEAD，
+          # 之后 rebase 会提示工作区有未暂存改动。
+          git fetch --quiet --no-tags origin "+refs/heads/$GITHUB_REF_NAME:refs/remotes/origin/$GITHUB_REF_NAME"
+          git rebase --quiet --autostash "origin/$GITHUB_REF_NAME"
           tag=$TAG
         fi
         if [ -n "$tag" ] && ! git diff --quiet -- $files; then
