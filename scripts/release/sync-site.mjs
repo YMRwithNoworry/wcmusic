@@ -136,18 +136,33 @@ function rewrite(file, transform) {
   return after !== before;
 }
 
-/** 下载地址里「任意 tag」的通用形态：两条线历史 tag 前缀不同，统一改写。 */
-const RELEASE_DOWNLOAD = "https?://github\\.com/[^/]+/[^/]+/releases/download/[^/\"]+/";
-const WINDOWS_LINK = new RegExp("(https?://github\\.com/)[^/]+/[^/]+/releases/download/[^/\"]+/" + WINDOWS_ASSET.replace(".", "\\."), "g");
-const APK_LINK = new RegExp(RELEASE_DOWNLOAD + APK_NAME.replace(".", "\\."), "g");
+/**
+ * 把站点里指向仓库下载地址的链接改写到目标 tag。
+ *
+ * 同时修复历史坏链：2026-10-24 的一次同步把域名整段删掉，站点里残留了
+ * `/releases/download/<tag>/<asset>` 这种相对路径，这里一并还原成完整地址。
+ */
+function rewriteAsset(raw, asset, tag) {
+  const name = asset.replace(".", "\\.");
+  const full = new RegExp("(https?://github\\.com/)[^/]+/[^/]+/releases/download/[^/\"]+/" + name, "g");
+  const broken = new RegExp("(^|[\"'])/?releases/download/[^/\"]+/" + name, "g");
+  return raw
+    .replace(full, (_m, prefix) => prefix + repo + "/releases/download/" + tag + "/" + asset)
+    .replace(broken, (_m, quote) => quote + "https://github.com/" + repo + "/releases/download/" + tag + "/" + asset);
+}
 
 // 1) 下载链接：仓库与 tag 都可能变（历史链接指向过 wcmusic-releases）。
 function rewriteLinks(file) {
-  return rewrite(file, (text) =>
-    text
-      .replace(WINDOWS_LINK, (_m, prefix) => prefix + repo + "/releases/download/" + windowsTag + "/" + WINDOWS_ASSET)
-      .replace(APK_LINK, "/releases/download/" + androidTag + "/" + APK_NAME),
-  );
+  return rewrite(file, (text) => {
+    let out = text;
+    for (const [asset, tag] of [
+      [WINDOWS_ASSET, windowsTag],
+      [APK_NAME, androidTag],
+    ]) {
+      out = rewriteAsset(out, asset, tag);
+    }
+    return out;
+  });
 }
 
 function rewriteVersions() {

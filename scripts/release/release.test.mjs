@@ -117,9 +117,13 @@ test('site points each platform at its own version line', () => fixture(cwd => {
   ]);
   const html = readFileSync(join(cwd, 'site/index.html'), 'utf8');
   const app = readFileSync(join(cwd, 'site/app.js'), 'utf8');
-  assert.ok(html.includes('v1.2.47/wcmusic-windows-x64.zip'));
-  assert.ok(html.includes('android-v1.2.40/wcmusic-android-arm64.apk'));
-  assert.ok(app.includes('android-v1.2.40/wcmusic-android-arm64.apk'));
+  const base = 'https://github.com/YMRwithNoworry/wcmusic/releases/download/';
+  // 必须断言完整地址：只比后半个路径会漏掉「把域名整段删掉」的坏链。
+  assert.ok(html.includes(base + 'v1.2.47/wcmusic-windows-x64.zip'));
+  assert.ok(html.includes(base + 'android-v1.2.40/wcmusic-android-arm64.apk'));
+  assert.ok(app.includes(base + 'android-v1.2.40/wcmusic-android-arm64.apk'));
+  assert.ok(!html.includes('href="/releases/download/'));
+  assert.ok(!app.includes("= '/releases/download/"));
   assert.ok(html.includes('Windows 1.2.47 · Android 1.2.40'));
   assert.ok(html.includes('WCMusic 1.2.47</p>'));
   // 发布同步不能改写旧截图上实际拍摄的版本号或移除软件图标。
