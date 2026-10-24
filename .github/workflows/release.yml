@@ -80,11 +80,11 @@ jobs:
     if: ${{ always() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')) }}
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.bump_version }}
-      previous: ${{ steps.bump.outputs.bump_previous }}
-      tag: ${{ steps.bump.outputs.bump_tag }}
-      sha: ${{ steps.bump.outputs.bump_sha }}
-      build: ${{ steps.bump.outputs.bump_build }}
+      version: ${{ steps.bump.outputs.version }}
+      previous: ${{ steps.bump.outputs.previous }}
+      tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.bump.outputs.sha }}
+      build: ${{ steps.bump.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,11 +114,11 @@ jobs:
     if: ${{ always() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')) }}
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.bump_version }}
-      previous: ${{ steps.bump.outputs.bump_previous }}
-      tag: ${{ steps.bump.outputs.bump_tag }}
-      sha: ${{ steps.bump.outputs.bump_sha }}
-      build: ${{ steps.bump.outputs.bump_build }}
+      version: ${{ steps.bump.outputs.version }}
+      previous: ${{ steps.bump.outputs.previous }}
+      tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.bump.outputs.sha }}
+      build: ${{ steps.bump.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
