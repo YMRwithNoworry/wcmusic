@@ -61,10 +61,13 @@ include(flutter/generated_plugins.cmake)
 # library next to the executable where dart:ffi can load it by name.
 set(WCMUSIC_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../native/wcmusic_core")
 set(WCMUSIC_CORE_DLL "${WCMUSIC_CORE_DIR}/target/release/wcmusic_core.dll")
+# rquickjs 的预编译绑定只有 MSVC 版本，GNU 工具链会直接编译失败；
+# Windows runner 本身也是 MSVC 构建的，所以这里固定使用 MSVC 工具链。
+set(WCMUSIC_CORE_TOOLCHAIN "stable-x86_64-pc-windows-msvc")
 add_custom_target(wcmusic_core ALL
-  COMMAND cargo build --manifest-path "${WCMUSIC_CORE_DIR}/Cargo.toml" --release
+  COMMAND cargo +${WCMUSIC_CORE_TOOLCHAIN} build --manifest-path "${WCMUSIC_CORE_DIR}/Cargo.toml" --release
   WORKING_DIRECTORY "${WCMUSIC_CORE_DIR}"
-  COMMENT "Building WCMusic Rust core")
+  COMMENT "Building WCMusic Rust core (MSVC)")
 add_dependencies(${BINARY_NAME} wcmusic_core)
 
 

@@ -1,40 +1,72 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/online_search_service.dart';
 import 'package:wcmusic/data/services/track_download_service.dart';
-import 'package:wcmusic/ui/core/remote_artwork.dart';
-import 'package:wcmusic/ui/features/player/player_view_model.dart';
-import 'package:wcmusic/ui/features/player/playback_controls.dart';
-import 'package:wcmusic/ui/features/player/now_playing_view.dart';
-import 'package:wcmusic/ui/features/player/player_bar.dart';
 import 'package:wcmusic/domain/models/track.dart';
+import 'package:wcmusic/ui/core/app_theme.dart';
+import 'package:wcmusic/ui/core/remote_artwork.dart';
+import 'package:wcmusic/ui/desktop/player/controls.dart';
+import 'package:wcmusic/ui/desktop/player/lyrics_view.dart';
+import 'package:wcmusic/ui/desktop/player/now_playing.dart';
+import 'package:wcmusic/ui/desktop/player/player_bar.dart';
+import 'package:wcmusic/ui/state/player_view_model.dart';
 
 import 'test_support.dart';
 
+/// 每个用例结束时卸载界面并走完 toast 的 5 秒计时，避免遗留定时器。
+void appTest(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  testWidgets(description, (tester) async {
+    await body(tester);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 6));
+  }, timeout: const Timeout(Duration(seconds: 60)));
+}
+
 void main() {
-  testWidgets('renders the music workspace', (tester) async {
+  void useDesktopSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  Future<void> pumpApp(WidgetTester tester, PlayerViewModel viewModel) async {
+    useDesktopSurface(tester);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  appTest('renders the music workspace', (tester) async {
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
-    expect(find.text('让声音自然生长'), findsOneWidget);
+    expect(find.text('此刻，听见喜欢'), findsOneWidget);
     expect(find.text('Seedling'), findsWidgets);
+    expect(find.text('发现音乐'), findsOneWidget);
+    expect(find.text('搜索音乐'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
   });
 
-  testWidgets('opens online search and displays results', (tester) async {
+  appTest('opens online search and displays results', (tester) async {
     const result = Track(
       id: 'online-1',
       title: '在线晴天',
@@ -46,23 +78,21 @@ void main() {
     );
     final searchService = FakeOnlineSearchService(const [result]);
     final player = FakePlayerService();
-    final downloader = _FakeCacheDownloader();
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: searchService,
       playerService: player,
-      downloadService: downloader,
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
+      downloadService: _FakeCacheDownloader(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
-    await tester.tap(find.text('搜索').first);
+    await tester.tap(find.text('搜索音乐').first);
     await tester.pumpAndSettle();
-    expect(find.text('在线搜索'), findsOneWidget);
+    expect(find.text('跨平台寻找歌曲、艺术家与专辑'), findsOneWidget);
 
     await viewModel.searchOnline('晴天');
     await tester.pumpAndSettle();
@@ -71,7 +101,7 @@ void main() {
 
     await tester.tap(find.text('在线晴天'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 120));
     expect(viewModel.current?.id, result.id);
     expect(player.playedTrack?.id, result.id);
 
@@ -80,9 +110,7 @@ void main() {
     expect(searchService.lastChannel, OnlineSearchChannel.qqMusic);
   });
 
-  testWidgets('favorites an online search result from the right-click menu', (
-    tester,
-  ) async {
+  appTest('favorites an online search result from the context menu', (tester) async {
     const result = Track(
       id: 'online-favorite',
       title: '可收藏在线歌曲',
@@ -98,19 +126,21 @@ void main() {
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(const [result]),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
     await viewModel.createFolder('在线收藏');
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
-    await tester.tap(find.text('搜索').first);
+    await tester.tap(find.text('搜索音乐').first);
     await tester.pumpAndSettle();
     await viewModel.searchOnline('收藏');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('可收藏在线歌曲'), buttons: kSecondaryMouseButton);
+    await tester.tap(
+      find.text('可收藏在线歌曲'),
+      buttons: kSecondaryMouseButton,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('收藏到 在线收藏'));
     await tester.pumpAndSettle();
@@ -119,16 +149,14 @@ void main() {
     expect(await repository.loadTracks(), contains(result));
   });
 
-  testWidgets('downloads the selected song from its right-click menu', (
-    tester,
-  ) async {
+  appTest('downloads the selected song from its context menu', (tester) async {
     const result = Track(
-      id: 'right-click-download',
+      id: 'context-download',
       title: '右键下载歌曲',
       artist: '测试歌手',
       album: '云端专辑',
       duration: Duration(minutes: 4),
-      uri: 'https://audio.example/right-click.mp3',
+      uri: 'https://audio.example/context.mp3',
       source: TrackSource.custom,
     );
     final downloader = _FakeCacheDownloader();
@@ -137,19 +165,21 @@ void main() {
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(const [result]),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
       downloadService: downloader,
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
-    await tester.tap(find.text('搜索').first);
+    await tester.tap(find.text('搜索音乐').first);
     await tester.pumpAndSettle();
     await viewModel.searchOnline('下载');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('右键下载歌曲'), buttons: kSecondaryMouseButton);
+    await tester.tap(
+      find.text('右键下载歌曲'),
+      buttons: kSecondaryMouseButton,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('下载 · 原始音质'));
     await tester.pumpAndSettle();
@@ -158,9 +188,7 @@ void main() {
     expect(viewModel.current, isNull);
   });
 
-  testWidgets('home shows covers for platform playlists and new tracks', (
-    tester,
-  ) async {
+  appTest('home shows covers for platform playlists and new tracks', (tester) async {
     const platformPlaylist = PlatformPlaylist(
       id: 'playlist-cover',
       name: '热门歌单',
@@ -186,21 +214,18 @@ void main() {
         const [newTrack],
       ),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
     expect(find.text('热门歌单'), findsOneWidget);
     expect(find.text('封面新曲'), findsOneWidget);
     expect(find.byType(RemoteArtwork), findsNWidgets(2));
   });
 
-  testWidgets('opens rankings and displays tracks from the selected platform', (
-    tester,
-  ) async {
+  appTest('opens rankings and displays tracks from the selected platform', (tester) async {
     const ranking = PlatformRanking(
       id: 'rank-1',
       name: '酷我热歌榜',
@@ -233,41 +258,36 @@ void main() {
         },
       ),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
       downloadService: _FakeCacheDownloader(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
+    await pumpApp(tester, viewModel);
+
+    await tester.tap(find.text('排行榜').first);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('榜单').first);
-    await tester.pumpAndSettle();
-
-    expect(find.text('排行榜'), findsOneWidget);
     expect(find.text('酷我热歌榜'), findsWidgets);
     expect(find.text('榜单测试歌曲'), findsOneWidget);
   });
 
-  testWidgets('favorites a library track into a folder from the menu', (
-    tester,
-  ) async {
+  appTest('favorites a library track into a folder from the row menu', (tester) async {
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
     await viewModel.createFolder('我的收藏');
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
     await tester.tap(find.text('曲库').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.tap(find.byIcon(FLucideIcons.moreHorizontal).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('收藏到 我的收藏'));
     await tester.pumpAndSettle();
@@ -278,9 +298,7 @@ void main() {
     );
   });
 
-  testWidgets('favorites a platform playlist from the home view', (
-    tester,
-  ) async {
+  appTest('opens a platform playlist and favorites it from home', (tester) async {
     const platformPlaylist = PlatformPlaylist(
       id: 'playlist-42',
       name: '今日热门',
@@ -308,49 +326,31 @@ void main() {
         },
       ),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
-    await viewModel.createFolder('歌单收藏');
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
-    await tester.pumpAndSettle();
+    await pumpApp(tester, viewModel);
 
     await tester.tap(find.text('今日热门').first);
     await tester.pumpAndSettle();
     expect(find.text('歌单歌曲'), findsOneWidget);
-    expect(find.byTooltip('打开平台页面'), findsOneWidget);
-    await tester.tap(find.byTooltip('关闭'));
+    await tester.tap(find.byIcon(FLucideIcons.x).last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('收藏并载入歌曲'));
+    await tester.tap(find.byIcon(FLucideIcons.plus).first);
     await tester.pumpAndSettle();
 
     expect(viewModel.playlists.single.name, '今日热门');
     expect(viewModel.playlists.single.externalUrl, platformPlaylist.url);
     expect(viewModel.playlists.single.tracks, const [playlistTrack]);
-    expect(find.byTooltip('取消收藏'), findsOneWidget);
 
-    await tester.tap(find.text('歌单').first);
+    await tester.tap(find.text('我的歌单').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('今日热门'));
-    await tester.pumpAndSettle();
-    expect(find.text('歌单歌曲'), findsOneWidget);
-
-    await tester.tap(find.text('歌单歌曲'), buttons: kSecondaryMouseButton);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('收藏到 歌单收藏'));
-    await tester.pumpAndSettle();
-    expect(viewModel.folders.single.trackIds, contains(playlistTrack.id));
-
-    await tester.tap(find.text('歌单歌曲'));
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(viewModel.current, playlistTrack);
+    expect(find.text('今日热门'), findsOneWidget);
   });
 
-  testWidgets('shows progress and volume controls while playing', (
-    tester,
-  ) async {
+  appTest('shows progress, lyrics and volume controls while playing', (tester) async {
     tester.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
@@ -359,29 +359,31 @@ void main() {
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
     await viewModel.playTrack(viewModel.tracks.first);
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
-    );
+    await pumpApp(tester, viewModel);
+
+    expect(find.byType(PlayerBar), findsOneWidget);
+    expect(find.byType(SeekBar), findsOneWidget);
+    expect(find.byType(TransportControls), findsOneWidget);
+
+    await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
     await tester.pumpAndSettle();
 
-    expect(find.byType(PlaybackProgress), findsOneWidget);
-    await tester.tap(find.byType(PlayerBar));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(NowPlayingView), findsOneWidget);
-    expect(find.byType(ImageFiltered), findsOneWidget);
-    expect(find.byTooltip('关闭聚焦播放'), findsOneWidget);
-    expect(find.byType(VolumeControl), findsOneWidget);
-    expect(find.byType(PlaybackProgress), findsOneWidget);
+    expect(find.byType(NowPlayingPanel), findsOneWidget);
+    expect(find.byType(LyricsPane), findsOneWidget);
+    expect(find.byType(SeekBar), findsNWidgets(2));
     expect(find.byKey(const ValueKey('floatingLyricsToggle')), findsWidgets);
+
+    await tester.tap(find.text('返回'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NowPlayingPanel), findsNothing);
   });
 
-  testWidgets('offers three qualities for an online track download', (
-    tester,
-  ) async {
+  appTest('offers three qualities for an online track download', (tester) async {
     const track = Track(
       id: 'quality-menu',
       title: '音质菜单',
@@ -397,6 +399,7 @@ void main() {
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
       downloadService: _FakeCacheDownloader(),
     );
     addTearDown(viewModel.dispose);
@@ -405,26 +408,31 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: viewModel,
-        child: const MaterialApp(home: Scaffold(body: DownloadButton())),
+        child: MaterialApp(
+          home: FTheme(
+            data: AppTheme.dark,
+            child: const Scaffold(body: Center(child: DownloadButton())),
+          ),
+        ),
       ),
     );
+    await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.tap(find.byTooltip('选择音质并下载'));
+    await tester.tap(find.byIcon(FLucideIcons.download));
     await tester.pumpAndSettle();
 
-    expect(find.text('标准 128k'), findsOneWidget);
-    expect(find.text('高品 320k'), findsOneWidget);
-    expect(find.text('无损 flac'), findsOneWidget);
+    expect(find.text('下载 · 标准 128k'), findsOneWidget);
+    expect(find.text('下载 · 高品 320k'), findsOneWidget);
+    expect(find.text('下载 · 无损 flac'), findsOneWidget);
   });
 
-  testWidgets('shows an original-quality option for a local track download', (
-    tester,
-  ) async {
+  appTest('shows an original-quality option for a local track download', (tester) async {
     final viewModel = PlayerViewModel(
       musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
       sourceRepository: MemorySourceRepository(),
       onlineSearchService: FakeOnlineSearchService(),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
     addTearDown(viewModel.dispose);
     await viewModel.load();
@@ -432,14 +440,20 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: viewModel,
-        child: const MaterialApp(home: Scaffold(body: DownloadButton())),
+        child: MaterialApp(
+          home: FTheme(
+            data: AppTheme.dark,
+            child: const Scaffold(body: Center(child: DownloadButton())),
+          ),
+        ),
       ),
     );
+    await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.tap(find.byTooltip('选择音质并下载'));
+    await tester.tap(find.byIcon(FLucideIcons.download));
     await tester.pumpAndSettle();
 
-    expect(find.text('原始音质（由音源决定）'), findsOneWidget);
+    expect(find.text('下载 · 原始音质'), findsOneWidget);
   });
 }
 

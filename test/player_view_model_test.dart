@@ -12,7 +12,7 @@ import 'package:wcmusic/domain/models/playback_mode.dart';
 import 'package:wcmusic/domain/models/playback_quality.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/domain/repositories/source_repository.dart';
-import 'package:wcmusic/ui/features/player/player_view_model.dart';
+import 'package:wcmusic/ui/state/player_view_model.dart';
 
 import 'test_support.dart';
 

@@ -2,6 +2,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'app_theme.dart';
+
+/// 程序化封面。
+///
+/// 没有封面图时用种子生成一块安静的渐变，避免列表里出现空洞。绘制用的随机点
+/// 会按种子缓存，动画时只改变相位，不重新生成几何数据。
 class OrganicArtwork extends StatefulWidget {
   const OrganicArtwork({
     super.key,
@@ -24,18 +30,13 @@ class _OrganicArtworkState extends State<OrganicArtwork>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 12),
+    duration: const Duration(seconds: 14),
   );
 
   late final Animation<double> _breathAnimation = CurvedAnimation(
     parent: _controller,
     curve: Curves.easeInOutSine,
   );
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   @override
   void didChangeDependencies() {
@@ -51,14 +52,12 @@ class _OrganicArtworkState extends State<OrganicArtwork>
   }
 
   void _syncAnimation() {
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (MediaQuery.disableAnimationsOf(context) || !widget.playing) {
       _controller
         ..stop()
         ..value = 0;
-    } else if (widget.playing) {
-      if (!_controller.isAnimating) _controller.repeat(reverse: true);
-    } else {
-      _controller.animateBack(0);
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
     }
   }
 
@@ -70,36 +69,75 @@ class _OrganicArtworkState extends State<OrganicArtwork>
 
   @override
   Widget build(BuildContext context) {
-    final fallback = AnimatedBuilder(
-      animation: _breathAnimation,
-      builder: (_, _) => CustomPaint(
-        painter: _ArtworkPainter(widget.seed.hashCode, _breathAnimation.value),
+    final fallback = RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _breathAnimation,
+        builder: (_, _) => CustomPaint(
+          painter: _ArtworkPainter(widget.seed.hashCode, _breathAnimation.value),
+        ),
       ),
     );
     final uri = widget.artworkUri;
-    final artwork = RepaintBoundary(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: uri == null || uri.isEmpty
-            ? fallback
-            : Image.network(
-                uri,
-                width: double.infinity,
-                height: double.infinity,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                headers: const {
-                  'User-Agent': 'Mozilla/5.0',
-                  'Referer': 'https://music.163.com/',
-                },
-                loadingBuilder: (context, child, progress) =>
-                    progress == null ? child : fallback,
-                errorBuilder: (_, _, _) => fallback,
-              ),
-      ),
+    final artwork = ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: uri == null || uri.isEmpty
+          ? fallback
+          : Image.network(
+              uri,
+              width: double.infinity,
+              height: double.infinity,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
+              headers: const {
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://music.163.com/',
+              },
+              loadingBuilder: (context, child, progress) =>
+                  progress == null ? child : fallback,
+              errorBuilder: (_, _, _) => fallback,
+            ),
     );
     if (widget.size.isInfinite) return SizedBox.expand(child: artwork);
     return SizedBox.square(dimension: widget.size, child: artwork);
+  }
+}
+
+class _ArtworkSpec {
+  _ArtworkSpec(int seed) {
+    final random = math.Random(seed);
+    final palettes = AppPalette.artworkPalettes;
+    colors = palettes[seed.abs() % palettes.length];
+    circles = [
+      for (var index = 0; index < 7; index++)
+        (
+          x: random.nextDouble() * .9 + .05,
+          y: random.nextDouble() * .9 + .05,
+          radius: .14 + random.nextDouble() * .32,
+          alpha: .38 + index * .048,
+        ),
+    ];
+    grain = [
+      for (var index = 0; index < 160; index++)
+        (
+          x: random.nextDouble(),
+          y: random.nextDouble(),
+          radius: random.nextDouble() * .8 + .3,
+        ),
+    ];
+  }
+
+  late final List<Color> colors;
+  late final List<({double x, double y, double radius, double alpha})> circles;
+  late final List<({double x, double y, double radius})> grain;
+
+  static final Map<int, _ArtworkSpec> _cache = {};
+
+  static _ArtworkSpec of(int seed) {
+    final cached = _cache[seed];
+    if (cached != null) return cached;
+    if (_cache.length >= 64) _cache.remove(_cache.keys.first);
+    return _cache[seed] = _ArtworkSpec(seed);
   }
 }
 
@@ -111,66 +149,27 @@ class _ArtworkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final random = math.Random(seed);
-    final palettes = <List<Color>>[
-      [
-        const Color(0xFF49624B),
-        const Color(0xFFD9B26F),
-        const Color(0xFFF2E9D8),
-      ],
-      [
-        const Color(0xFF315E64),
-        const Color(0xFFD56F52),
-        const Color(0xFFF2C98B),
-      ],
-      [
-        const Color(0xFF6B5948),
-        const Color(0xFF8FAE8B),
-        const Color(0xFFE7D8C2),
-      ],
-      [
-        const Color(0xFF384957),
-        const Color(0xFFB55D62),
-        const Color(0xFFD8C9A7),
-      ],
-      [
-        const Color(0xFF5C4E47),
-        const Color(0xFFA88C7D),
-        const Color(0xFFE8DDD3),
-      ],
-      [
-        const Color(0xFF2C4A52),
-        const Color(0xFF8B6F5C),
-        const Color(0xFFD4C4B0),
-      ],
-    ];
-    final colors = palettes[seed.abs() % palettes.length];
+    final spec = _ArtworkSpec.of(seed);
+    final colors = spec.colors;
     canvas.drawRect(Offset.zero & size, Paint()..color = colors.first);
-    for (var index = 0; index < 7; index++) {
-      final radius =
-          size.width * (.14 + random.nextDouble() * .32) * (1 + phase * .035);
-      final center = Offset(
-        size.width * (random.nextDouble() * .9 + .05),
-        size.height * (random.nextDouble() * .9 + .05),
+    final circlePaint = Paint();
+    for (final circle in spec.circles) {
+      circlePaint.color = colors[1 + circle.radius.round() % 2].withValues(
+        alpha: (circle.alpha + phase * .08).clamp(0.0, 1.0),
       );
       canvas.drawCircle(
-        center,
-        radius,
-        Paint()
-          ..color = colors[1 + index % 2]
-              .withValues(alpha: .38 + index * .048 + phase * .08),
+        Offset(circle.x * size.width, circle.y * size.height),
+        size.width * circle.radius * (1 + phase * .035),
+        circlePaint,
       );
     }
-    final grain = Paint()
+    final grainPaint = Paint()
       ..color = Colors.white.withValues(alpha: .10 + phase * .04);
-    for (var index = 0; index < 220; index++) {
+    for (final grain in spec.grain) {
       canvas.drawCircle(
-        Offset(
-          random.nextDouble() * size.width,
-          random.nextDouble() * size.height,
-        ),
-        random.nextDouble() * .8 + .3,
-        grain,
+        Offset(grain.x * size.width, grain.y * size.height),
+        grain.radius,
+        grainPaint,
       );
     }
   }

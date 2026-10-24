@@ -55,3 +55,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# 本地临时产物（构建日志、截图、帧探针输出）
+.codex-tmp/
+
+# 本地性能剖析产物与临时验证脚本（不参与发布）
+desktop/src-tauri/target-performance/
+desktop/tmp-*.mjs
+desktop/scripts/.*.mjs
+desktop/shots/
+.taste-skill/

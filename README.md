@@ -1,40 +1,39 @@
 # WCMusic
 
-WCMusic 是面向 Windows 与 Android 的音乐播放器。Windows 桌面端使用 **Tauri 2 + React**，Android 使用 Flutter；Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验。
+WCMusic 是面向 Windows 与 Android 的音乐播放器，**两个平台共用同一套 Flutter 界面**；Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验。
 
 ## 桌面客户端
 
-Windows 桌面端统一使用 **Tauri 2 + React**，后续改动都落在 `desktop/`。
-
-**Tauri 2 + React（`desktop/`）**
-
-Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript，界面用 **Tailwind v4 + shadcn/ui** 搭建，动效由 **motion**（Framer Motion）驱动：侧栏选中胶囊、页面切换淡入、列表逐条入场、播放中的跳动竖条，并随系统「减少动效」设置自动收敛。支持在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
+Windows 桌面端与 Android 使用同一份 Flutter 代码（`lib/`），界面组件来自 **[Forui](https://pub.dev/packages/forui)**（shadcn/ui 风格的 Flutter 组件库），窗口、托盘与自绘标题栏由 `window_manager` / `tray_manager` 驱动。
 
 ```text
-cd desktop && npm install                 # 首次拉前端依赖
-WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu
+flutter pub get
+flutter build windows --release
+# 产物：build/windows/x64/runner/Release/wcmusic.exe（同目录的 wcmusic_core.dll 是 Rust 核心）
 ```
 
-产物在 `desktop/src-tauri/target/release/wcmusic-desktop.exe`。前端 `dist/` 是编译期嵌进 exe 的，改完前端必须重新构建；手工构建时**必须带 `--features custom-protocol`**，否则程序会去连 `http://localhost:1420`，界面提示「无法连接到 localhost」：
+界面结构与性能约定：
 
-```text
-cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
-```
+- `lib/ui/desktop/shell/` 是外壳：自绘标题栏（拖动 / 双击最大化 / 最小化 / 关闭到托盘）、Forui `FSidebar` 分组导航、底部播放条；窄窗口自动退化为单列 + 底部导航。
+- `lib/ui/desktop/pages/` 是七个页面（发现、搜索、排行榜、曲库、歌单、音源、设置），列表用固定 `itemExtent` 的 `ListView.builder`，网格用 `SliverGridDelegate`，滚动时不重复测量。
+- `lib/ui/desktop/player/` 是播放条、聚焦播放与歌词面板。进度条自己订阅 `positionListenable` 并在两次播放器推送之间做 320ms 插值，所以进度是连续移动的；歌词只监听当前行索引，逐字进度用独立 `ValueNotifier`，两者都不会重建整页。
+- 动画只做透明度 / 位移 / 缩放（切页 240ms、聚焦播放 300ms），并统一读取系统「减少动效」；常驻呼吸动画在不可见时通过 `TickerMode` 自动停摆。
+- `lib/ui/core/frame_probe.dart` 是编译期开关的帧探针：`-D WCMUSIC_FRAME_PROBE=true -D WCMUSIC_FRAME_LOG=<path>` 会把 build / raster 耗时的 p50/p95/p99 写到 JSON，用于回归帧预算。实测 Windows profile 构建下 build p95 ≈ 1ms、raster p95 ≈ 4–6ms（预算 16.7ms）。
+
+`desktop/` 下保留的是上一代 Tauri 2 + React 客户端，已不参与发布构建，仅作历史参考。
 
 ## 桌面歌词
 
-桌面歌词由 Tauri 前端 `desktop/src/LyricsWindow.tsx` 绘制，歌词解析与排版计算在 `desktop/src-tauri/src/lyrics.rs`，窗口保持置顶、无边框和透明，并按 LX Music 的交互实现：
+桌面歌词是 Windows runner 里的原生透明置顶窗口：`windows/runner/lyrics_overlay.cpp` 负责绘制与命中测试，Flutter 侧通过 `wcmusic/lyrics_overlay` 通道推送当前行、上下文与逐字进度（`lib/data/services/floating_lyrics_service.dart`）。
 
-- 无边框透明窗口只画歌词：当前行居中放大，已播放部分逐字填充高亮色，上一行与下一行以更小字号淡出，靠近窗口边缘继续减弱
-- 文字描边保证在浅色壁纸上同样清晰，可选上下滚动、缩放或直接切换三种歌词动画
-- 默认锁定：锁定时整扇窗口对鼠标穿透，点击会落到下层应用；解锁后可拖动窗口、滚动滚轮调字号，并显示工具条（字号、面板、单行、翻译、卡拉OK、锁定、关闭）
-- 解锁状态下右键打开设置面板：对齐、动画、单行、翻译、卡拉OK、描边、描边颜色、背景、置顶、暂停隐藏、歌词偏移、重置位置
-- 设置面板与主界面“设置 → 桌面歌词”共用同一份样式，任何一处修改都会立刻同步并写入 `settings.json`
-- 托盘菜单新增“桌面歌词”子菜单：开关歌词、锁定解锁、增减字号、窗口回到默认位置
+- 只画歌词：当前行放大高亮，已播放部分逐字填充，上下句以更小字号淡出
+- 文字描边保证浅色壁纸上同样清晰；默认锁定，锁定时对鼠标穿透
+- 解锁后可拖动窗口，拖动位置会写回 `lyrics_style.json`
+- 设置页「桌面歌词外观」可改字体、字号、对齐、文字/背景颜色、不透明度与圆角，改动立即同步到歌词窗口
 
 ## 当前能力
 
-- 响应式桌面三栏布局与 Android 底部导航
+- 响应式桌面布局（Forui 侧栏 + 播放条）与 Android 底部导航
 - 本地音频托管导入、持久化曲库、播放、暂停、进度跳转、音量控制与队列
 - 顺序播放、列表循环、随机循环、单曲循环四种播放方式，点击图标即可切换
 - 播放音质可选标准 128k、高品 320k 与无损 flac，整曲解析时按所选音质请求
@@ -82,7 +81,7 @@ $env.ANDROID_HOME = "D:/tools/android-sdk"
 flutter analyze
 flutter test
 cargo test --manifest-path native/wcmusic_core/Cargo.toml
-nu build_desktop.nu
+flutter build windows --release
 
 # Android arm64 首次构建需安装 cargo-ndk 与 Rust target。
 cargo install cargo-ndk --locked
@@ -94,7 +93,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。
+Windows 桌面端发布可执行文件为 `build/windows/x64/runner/Release/wcmusic.exe`，用 `flutter build windows --release` 构建；Rust 核心 `wcmusic_core.dll` 由 `windows/CMakeLists.txt` 自动用 MSVC 工具链编译并放到同目录。
 
 自动发布由 [Release 工作流](.github/workflows/release.yml) 完成：普通分支推送 → 递增版本并锁定源码提交 → Windows / Android 构建 → GitHub Release → 同步官网版本、下载链接与日志 → 部署 https://wcmusic.pages.dev/。机器人写回的提交带 `[skip ci]`，避免重复构建。Android 构建失败时仍发布 Windows，官网保留上一个实际可下载的 APK。
 
@@ -113,6 +112,6 @@ GitHub 发布使用内置 `GITHUB_TOKEN`，无需另配 GitHub Token。手动运
 ```text
 lib/data/       平台服务与 Repository 实现
 lib/domain/     领域模型和 Repository 接口
-lib/ui/         主题、ViewModel、功能页面和组件
+lib/ui/         Forui 主题、桌面外壳 / 页面 / 播放组件与 ViewModel
 native/         Rust 曲库、SQLite、歌单和音源运行时
 ```

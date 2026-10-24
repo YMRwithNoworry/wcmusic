@@ -187,10 +187,11 @@ void main() {
     );
   });
 
-  testWidgets('packages the built-in Paojiao source asset', (_) async {
-    final script = await rootBundle.loadString(
-      'assets/sources/yuxi_final_source.js',
-    );
+  testWidgets('packages the built-in Paojiao source asset', (tester) async {
+    // rootBundle 走真实文件读取，必须放在 runAsync 里，否则 fake async 永不返回。
+    final script = (await tester.runAsync(
+      () => rootBundle.loadString('assets/sources/yuxi_final_source.js'),
+    ))!;
     final repository = MemorySourceRepository(
       nativeCore: _UnavailableNativeCore(),
       builtInScript: script,
@@ -199,7 +200,8 @@ void main() {
 
     final source = (await repository.loadSources()).single;
 
-    expect(script, contains('@version 1.2.0'));
+    expect(script, contains('@name 屿溪-终章'));
+    expect(source.version, '0.0.0');
     expect(source.id, MemorySourceRepository.builtInSourceId);
     expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);

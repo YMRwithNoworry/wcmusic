@@ -1,188 +1,141 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:forui/forui.dart';
 
-abstract final class AppColors {
-  static const paper = Color(0xFFF2EFE7);
-  static const paperDeep = Color(0xFFE6E0D4);
-  static const paperLight = Color(0xFFF8F6F2);
-  static const ink = Color(0xFF20231F);
-  static const moss = Color(0xFF68785A);
-  static const mossDark = Color(0xFF3E4C36);
-  static const mossLight = Color(0xFF8FA682);
-  static const clay = Color(0xFFC7654F);
-  static const clayLight = Color(0xFFD48B78);
-  static const mist = Color(0xFF8CA9AA);
-  static const night = Color(0xFF181B18);
-  static const nightSurface = Color(0xFF252A25);
-  static const nightElevated = Color(0xFF2D332D);
+/// WCMusic 的视觉令牌。
+///
+/// 桌面端整体由 Forui 组件构建，这里的 [AppPalette] 同时供 Forui 主题和少量
+/// 自绘组件（封面、歌词、标题栏）使用，避免两套颜色互相漂移。
+abstract final class AppPalette {
+  // 夜间：近黑底 + 暖金强调色，长时间听歌不刺眼。
+  static const nightBackground = Color(0xFF0A0A0B);
+  static const nightSidebar = Color(0xFF0E0E10);
+  static const nightCard = Color(0xFF151517);
+  static const nightElevated = Color(0xFF1C1C1F);
+  static const nightForeground = Color(0xFFF4F1EA);
+  static const nightMuted = Color(0xFF9C978D);
+  static const nightBorder = Color(0x1FFFFFFF);
+  static const amber = Color(0xFFE8B667);
+  static const amberDeep = Color(0xFFC98A34);
+  static const amberSoft = Color(0xFFF3D49B);
+
+  // 日间：暖纸色，保留同一套金色强调。
+  static const paper = Color(0xFFF7F4ED);
+  static const paperSidebar = Color(0xFFF1ECE2);
+  static const paperCard = Color(0xFFFFFFFF);
+  static const paperElevated = Color(0xFFFBF8F2);
+  static const ink = Color(0xFF1B1A17);
+  static const inkMuted = Color(0xFF6E6A61);
+  static const paperBorder = Color(0x1A000000);
+  static const clay = Color(0xFFA9622A);
+  static const clayForeground = Color(0xFFFFF8EE);
+
+  /// 封面占位与渐变使用的色板，和金色强调保持同一色温。
+  static const artworkPalettes = <List<Color>>[
+    [Color(0xFF4A5D4E), Color(0xFFD9B26F), Color(0xFFF2E9D8)],
+    [Color(0xFF33565C), Color(0xFFD0795C), Color(0xFFF2C98B)],
+    [Color(0xFF5C4E47), Color(0xFFA88C7D), Color(0xFFE8DDD3)],
+    [Color(0xFF2C4A52), Color(0xFF8B6F5C), Color(0xFFD4C4B0)],
+    [Color(0xFF3A4A3F), Color(0xFFC7A15F), Color(0xFFEDE3D1)],
+    [Color(0xFF4B3F55), Color(0xFFB06A63), Color(0xFFE6D3C4)],
+  ];
 }
 
 abstract final class AppTheme {
-  static ThemeData get light => _theme(
-    brightness: Brightness.light,
-    background: AppColors.paper,
-    surface: AppColors.paperLight,
-    ink: AppColors.ink,
+  static final FThemeData dark = _build(
+    colors: FColors(
+      brightness: Brightness.dark,
+      systemOverlayStyle: SystemUiOverlayStyle.light,
+      barrier: const Color(0x8A000000),
+      background: AppPalette.nightBackground,
+      foreground: AppPalette.nightForeground,
+      primary: AppPalette.amber,
+      primaryForeground: const Color(0xFF1A1308),
+      secondary: AppPalette.nightElevated,
+      secondaryForeground: AppPalette.nightForeground,
+      muted: const Color(0xFF1A1A1D),
+      mutedForeground: AppPalette.nightMuted,
+      destructive: const Color(0xFFFF6B6E),
+      destructiveForeground: const Color(0xFF2A0607),
+      error: const Color(0xFFFF6B6E),
+      errorForeground: const Color(0xFF2A0607),
+      card: AppPalette.nightCard,
+      border: AppPalette.nightBorder,
+    ),
   );
 
-  static ThemeData get dark => _theme(
-    brightness: Brightness.dark,
-    background: AppColors.night,
-    surface: AppColors.nightSurface,
-    ink: const Color(0xFFF2EFE7),
+  static final FThemeData light = _build(
+    colors: FColors(
+      brightness: Brightness.light,
+      systemOverlayStyle: SystemUiOverlayStyle.dark,
+      barrier: const Color(0x3D000000),
+      background: AppPalette.paper,
+      foreground: AppPalette.ink,
+      primary: AppPalette.clay,
+      primaryForeground: AppPalette.clayForeground,
+      secondary: const Color(0xFFEDE7DB),
+      secondaryForeground: AppPalette.ink,
+      muted: const Color(0xFFF1ECE3),
+      mutedForeground: AppPalette.inkMuted,
+      destructive: const Color(0xFFC33A3D),
+      destructiveForeground: const Color(0xFFFFF8F7),
+      error: const Color(0xFFC33A3D),
+      errorForeground: const Color(0xFFFFF8F7),
+      card: AppPalette.paperCard,
+      border: AppPalette.paperBorder,
+    ),
   );
 
-  static ThemeData _theme({
-    required Brightness brightness,
-    required Color background,
-    required Color surface,
-    required Color ink,
-  }) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.moss,
-      brightness: brightness,
-      surface: surface,
-      surfaceContainerHighest: brightness == Brightness.light
-          ? AppColors.paperDeep
-          : AppColors.nightElevated,
-      primary: brightness == Brightness.light
-          ? AppColors.mossDark
-          : const Color(0xFFA7C58F),
-      secondary: brightness == Brightness.light
-          ? AppColors.clay
-          : AppColors.clayLight,
-      tertiary: AppColors.mist,
+  static FThemeData _build({required FColors colors}) {
+    final typeface = FTypeface(
+      fontFamilyFallback: const [
+        'Microsoft YaHei UI',
+        'Microsoft YaHei',
+        'Segoe UI',
+        'PingFang SC',
+        'Noto Sans CJK SC',
+      ],
     );
-    const radius = BorderRadius.all(Radius.circular(12));
-    const smallRadius = BorderRadius.all(Radius.circular(8));
+    final base = FTypography.inherit(colors: colors, touch: false);
+    return FThemeData(
+      colors: colors,
+      touch: false,
+      typography: base.copyWith(display: typeface, body: typeface),
+    );
+  }
+
+  /// Material 只作为 [MaterialApp] 的宿主与路由容器，视觉全部由 Forui 负责。
+  static ThemeData material(Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    final background = isDark
+        ? AppPalette.nightBackground
+        : AppPalette.paper;
+    final foreground = isDark ? AppPalette.nightForeground : AppPalette.ink;
+    final scheme = ColorScheme.fromSeed(
+      seedColor: AppPalette.amber,
+      brightness: brightness,
+      surface: isDark ? AppPalette.nightCard : AppPalette.paperCard,
+      primary: isDark ? AppPalette.amber : AppPalette.clay,
+      onPrimary: isDark ? const Color(0xFF1A1308) : AppPalette.clayForeground,
+    );
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: background,
-      fontFamily: 'Segoe UI',
-      splashFactory: InkRipple.splashFactory,
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: ZoomPageTransitionsBuilder(),
-          TargetPlatform.iOS: ZoomPageTransitionsBuilder(),
-          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
-        },
-      ),
-      textTheme: TextTheme(
-        displayLarge: TextStyle(
-          fontSize: 52,
-          height: 1.02,
-          fontWeight: FontWeight.w600,
-          color: ink,
-          letterSpacing: -0.5,
-        ),
-        displayMedium: TextStyle(
-          fontSize: 38,
-          height: 1.08,
-          fontWeight: FontWeight.w600,
-          color: ink,
-          letterSpacing: -0.3,
-        ),
-        headlineLarge: TextStyle(
-          fontSize: 28,
-          height: 1.15,
-          fontWeight: FontWeight.w600,
-          color: ink,
-          letterSpacing: -0.2,
-        ),
-        headlineMedium: TextStyle(
-          fontSize: 22,
-          height: 1.2,
-          fontWeight: FontWeight.w600,
-          color: ink,
-        ),
-        titleLarge: TextStyle(
-          fontSize: 18,
-          height: 1.25,
-          fontWeight: FontWeight.w600,
-          color: ink,
-        ),
-        titleMedium: TextStyle(
-          fontSize: 16,
-          height: 1.3,
-          fontWeight: FontWeight.w500,
-          color: ink,
-        ),
-        bodyLarge: TextStyle(fontSize: 16, height: 1.45, color: ink),
-        bodyMedium: TextStyle(
-          fontSize: 14,
-          height: 1.4,
-          color: ink.withValues(alpha: .82),
-        ),
-      ),
-      cardTheme: CardThemeData(
-        elevation: 0,
-        margin: EdgeInsets.zero,
-        color: surface,
-        shape: const RoundedRectangleBorder(borderRadius: smallRadius),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          shape: const RoundedRectangleBorder(borderRadius: smallRadius),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        ),
-      ),
-      iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(
-          shape: const RoundedRectangleBorder(borderRadius: smallRadius),
-        ),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: surface,
-        border: OutlineInputBorder(
-          borderRadius: radius,
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: radius,
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: radius,
-          borderSide: BorderSide(color: scheme.primary, width: 2),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-      ),
-      navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: Colors.transparent,
-        indicatorColor: scheme.primary.withValues(alpha: .15),
-        indicatorShape: const RoundedRectangleBorder(borderRadius: smallRadius),
-        selectedIconTheme: IconThemeData(color: scheme.primary),
-        selectedLabelTextStyle: TextStyle(
-          color: scheme.primary,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        elevation: 0,
-        backgroundColor: surface,
-        indicatorColor: scheme.primary.withValues(alpha: .15),
-        indicatorShape: const RoundedRectangleBorder(borderRadius: smallRadius),
-      ),
-      sliderTheme: SliderThemeData(
-        activeTrackColor: scheme.primary,
-        inactiveTrackColor: scheme.primary.withValues(alpha: .20),
-        thumbColor: scheme.primary,
-        trackHeight: 4,
-        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-        overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
-      ),
-      tooltipTheme: const TooltipThemeData(
-        waitDuration: Duration(milliseconds: 400),
-      ),
-      dividerTheme: DividerThemeData(
-        color: ink.withValues(alpha: .08),
-        thickness: 1,
-        space: 1,
+      canvasColor: background,
+      fontFamily: 'Inter',
+      fontFamilyFallback: const [
+        'Microsoft YaHei UI',
+        'Microsoft YaHei',
+        'Segoe UI',
+      ],
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      textTheme: ThemeData(brightness: brightness).textTheme.apply(
+        bodyColor: foreground,
+        displayColor: foreground,
       ),
     );
   }

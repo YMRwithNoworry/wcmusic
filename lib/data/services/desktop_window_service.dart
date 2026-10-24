@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -11,6 +12,9 @@ abstract interface class WindowLifecycleService {
   Future<void> setCloseToTray(bool value);
 }
 
+/// Windows 桌面窗口：无边框 + 自绘标题栏、最小尺寸、托盘、关闭到托盘。
+///
+/// 窗口状态只在这里维护，UI 通过 [maximized] 监听最大化状态，避免每帧查询原生窗口。
 class DesktopWindowService
     with WindowListener, TrayListener
     implements WindowLifecycleService {
@@ -22,8 +26,13 @@ class DesktopWindowService
   bool _exiting = false;
   File? _settingsFile;
 
+  /// 当前是否最大化，供标题栏切换图标。
+  final ValueNotifier<bool> maximized = ValueNotifier(false);
+
   @override
   bool get closeToTray => _closeToTray;
+
+  bool get isDesktop => Platform.isWindows;
 
   Future<void> initialize() async {
     if (!Platform.isWindows) return;
@@ -31,6 +40,20 @@ class DesktopWindowService
     await windowManager.ensureInitialized();
     windowManager.addListener(this);
     trayManager.addListener(this);
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(
+        size: Size(1320, 860),
+        minimumSize: Size(960, 620),
+        center: true,
+        titleBarStyle: TitleBarStyle.hidden,
+        backgroundColor: Colors.transparent,
+        title: 'WCMusic',
+      ),
+      () async {
+        await windowManager.show();
+        await windowManager.focus();
+      },
+    );
     await windowManager.setPreventClose(_closeToTray);
     await trayManager.setIcon(_trayIcon);
     await trayManager.setToolTip('WCMusic');
@@ -45,12 +68,39 @@ class DesktopWindowService
     );
   }
 
+  Future<void> minimize() async {
+    if (isDesktop) await windowManager.minimize();
+  }
+
+  Future<void> toggleMaximize() async {
+    if (!isDesktop) return;
+    if (await windowManager.isMaximized()) {
+      await windowManager.unmaximize();
+    } else {
+      await windowManager.maximize();
+    }
+  }
+
+  Future<void> close() async {
+    if (isDesktop) await windowManager.close();
+  }
+
+  Future<void> startDragging() async {
+    if (isDesktop) await windowManager.startDragging();
+  }
+
   @override
   Future<void> setCloseToTray(bool value) async {
     _closeToTray = value;
     if (Platform.isWindows) await windowManager.setPreventClose(value);
     await _saveSettings();
   }
+
+  @override
+  void onWindowMaximize() => maximized.value = true;
+
+  @override
+  void onWindowUnmaximize() => maximized.value = false;
 
   @override
   void onWindowClose() {
@@ -112,5 +162,12 @@ class DesktopWindowService
     if (file == null) return;
     await file.parent.create(recursive: true);
     await file.writeAsString(jsonEncode({'closeToTray': _closeToTray}));
+  }
+
+  void dispose() {
+    if (!isDesktop) return;
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    maximized.dispose();
   }
 }

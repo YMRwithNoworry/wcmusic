@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:forui/forui.dart';
 
 import 'organic_artwork.dart';
 
@@ -137,6 +138,11 @@ class ArtworkLoader {
   }
 }
 
+
+/// 带内存缓存的封面。
+///
+/// 同一个 URL 复用同一个 [ImageProvider]，列表滚动或播放进度刷新时不会重复
+/// 解码图片；失败时回退到 [OrganicArtwork] 的渐变封面。
 class RemoteArtwork extends StatefulWidget {
   const RemoteArtwork({
     super.key,
@@ -155,7 +161,9 @@ class RemoteArtwork extends StatefulWidget {
 
 class _RemoteArtworkState extends State<RemoteArtwork> {
   static final _loader = ArtworkLoader();
-  static final Map<String, Future<Uint8List>> _cache = {};
+  static final Map<String, Future<Uint8List>> _bytesCache = {};
+  static final Map<String, MemoryImage> _imageCache = {};
+
   late Future<Uint8List> _bytes;
 
   @override
@@ -171,21 +179,30 @@ class _RemoteArtworkState extends State<RemoteArtwork> {
   }
 
   Future<Uint8List> _load(String url) {
-    final cached = _cache[url];
+    final cached = _bytesCache[url];
     if (cached != null) return cached;
-    if (_cache.length >= 64) _cache.remove(_cache.keys.first);
+    if (_bytesCache.length >= 96) _bytesCache.remove(_bytesCache.keys.first);
     late final Future<Uint8List> tracked;
     tracked = _loader
         .load(url)
         .then(
           (bytes) => bytes,
           onError: (Object error, StackTrace stackTrace) {
-            if (identical(_cache[url], tracked)) _cache.remove(url);
+            if (identical(_bytesCache[url], tracked)) _bytesCache.remove(url);
             Error.throwWithStackTrace(error, stackTrace);
           },
         );
-    _cache[url] = tracked;
+    _bytesCache[url] = tracked;
     return tracked;
+  }
+
+  MemoryImage _provider(String url, Uint8List bytes) {
+    final cached = _imageCache[url];
+    if (cached != null && identical(cached.bytes, bytes)) return cached;
+    if (_imageCache.length >= 96) _imageCache.remove(_imageCache.keys.first);
+    final provider = MemoryImage(bytes);
+    _imageCache[url] = provider;
+    return provider;
   }
 
   @override
@@ -199,23 +216,23 @@ class _RemoteArtworkState extends State<RemoteArtwork> {
             return OrganicArtwork(seed: widget.seed, size: double.infinity);
           }
           return ColoredBox(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            color: context.theme.colors.muted,
             child: const Center(
-              child: SizedBox.square(
-                dimension: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: FCircularProgress.loader(size: FCircularProgressSizeVariant.sm),
             ),
           );
         }
-        return Image.memory(
-          bytes,
-          width: double.infinity,
-          height: double.infinity,
-          fit: widget.fit,
-          gaplessPlayback: true,
-          errorBuilder: (_, _, _) =>
-              OrganicArtwork(seed: widget.seed, size: double.infinity),
+        return RepaintBoundary(
+          child: Image(
+            image: _provider(widget.url, bytes),
+            width: double.infinity,
+            height: double.infinity,
+            fit: widget.fit,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, _, _) =>
+                OrganicArtwork(seed: widget.seed, size: double.infinity),
+          ),
         );
       },
     );

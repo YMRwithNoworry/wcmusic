@@ -47,9 +47,12 @@ dependencies:
   url_launcher: ^6.3.2
   tray_manager: ^0.5.3
   window_manager: ^0.5.2
+  forui: 0.25.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -71,6 +74,7 @@ flutter:
   uses-material-design: true
   assets:
     - windows/runner/resources/app_icon.ico
+    - assets/icons/app_icon.png
     - assets/sources/yuxi_final_source.js
 
   # To add assets to your application, add an assets section, like this:

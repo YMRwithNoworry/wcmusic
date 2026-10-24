@@ -1,14 +1,15 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/domain/models/track.dart';
-import 'package:wcmusic/ui/features/player/player_view_model.dart';
-import 'package:wcmusic/ui/features/player/player_bar.dart';
+import 'package:wcmusic/ui/state/player_view_model.dart';
 
 import 'test_support.dart';
 
@@ -20,7 +21,6 @@ void main() {
     Size size,
     String golden, {
     Future<void> Function(WidgetTester tester)? beforeCapture,
-    bool disableAnimations = false,
   }) async {
     if (!fontLoaded) {
       final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
@@ -35,13 +35,11 @@ void main() {
     }
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
-    if (disableAnimations) {
-      tester.platformDispatcher.accessibilityFeaturesTestValue =
-          const FakeAccessibilityFeatures(disableAnimations: true);
-      addTearDown(
-        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
-      );
-    }
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(
+      tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+    );
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -74,7 +72,9 @@ void main() {
         ),
       ),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
+    addTearDown(viewModel.dispose);
     await viewModel.load();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
@@ -86,18 +86,18 @@ void main() {
   }
 
   testWidgets(
-    'desktop home has a stable three-column composition',
+    'desktop home has a stable composition',
     (tester) async {
       await render(tester, const Size(1440, 900), 'goldens/home_desktop.png');
     },
     skip: !Platform.isWindows,
   );
 
-  testWidgets('mobile home fits a compact Android viewport', (tester) async {
+  testWidgets('mobile home fits a compact viewport', (tester) async {
     await render(tester, const Size(390, 844), 'goldens/home_mobile.png');
   }, skip: !Platform.isWindows);
 
-  testWidgets('desktop search channels have a stable tab layout', (
+  testWidgets('desktop search channels have a stable layout', (
     tester,
   ) async {
     await render(
@@ -105,29 +105,25 @@ void main() {
       const Size(1440, 900),
       'goldens/search_desktop.png',
       beforeCapture: (tester) async {
-        await tester.tap(find.text('搜索').first);
+        await tester.tap(find.text('搜索音乐').first);
       },
     );
   }, skip: !Platform.isWindows);
 
-  testWidgets(
-    'desktop focused player has a stable immersive layout',
-    (tester) async {
-      await render(
-        tester,
-        const Size(1440, 900),
-        'goldens/now_playing_desktop.png',
-        disableAnimations: true,
-        beforeCapture: (tester) async {
-          final context = tester.element(find.byType(MaterialApp));
-          final viewModel = context.read<PlayerViewModel>();
-          await viewModel.playTrack(viewModel.tracks.first);
-          await tester.pump();
-          await tester.tap(find.byType(PlayerBar));
-          await tester.pumpAndSettle();
-        },
-      );
-    },
-    skip: !Platform.isWindows,
-  );
+  testWidgets('desktop focused player has a stable immersive layout', (
+    tester,
+  ) async {
+    await render(
+      tester,
+      const Size(1440, 900),
+      'goldens/now_playing_desktop.png',
+      beforeCapture: (tester) async {
+        final context = tester.element(find.byType(MaterialApp));
+        final viewModel = context.read<PlayerViewModel>();
+        await viewModel.playTrack(viewModel.tracks.first);
+        await tester.pump();
+        await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
+      },
+    );
+  }, skip: !Platform.isWindows);
 }

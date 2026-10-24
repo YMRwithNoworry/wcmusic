@@ -16,24 +16,27 @@ jdk在这里D:\MC\jdk
 <!-- END dsh-global-system-prompt -->
 
 ## Project Name + Purpose
-**WCMusic** — a Flutter/Rust music player for Windows and Android, with a Tauri desktop client.
+**WCMusic** — a Flutter/Rust music player for Windows and Android. Both platforms share one Flutter UI built with Forui; the legacy Tauri client in `desktop/` is no longer shipped.
 
 ## Tech Stack
-- Dart and Flutter for the mobile app and Flutter Windows runner.
-- Rust 2024 with Cargo for the shared core and Tauri 2 backend.
-- TypeScript, React 19, Vite, Tailwind CSS 4, and Tauri 2 in `desktop/`.
+- Dart and Flutter for the Windows desktop app, the Flutter Windows runner, and Android.
+- Forui (`forui` on pub.dev) for all desktop UI components and theming.
+- Rust 2024 with Cargo for the shared core (`native/wcmusic_core`).
+- TypeScript, React 19, Vite, Tailwind CSS 4, and Tauri 2 in `desktop/` (legacy, not shipped).
 - SQLite and QuickJS integration are provided by the Rust core.
 
 ## Package Manager + Common Commands
 - Package managers: Flutter Pub, npm (`desktop/package-lock.json`), and Cargo.
 - Install: `flutter pub get`; `npm --prefix desktop ci`.
-- Build: `nu build_desktop.nu`; `npm --prefix desktop run build`; `flutter build apk --release --target-platform android-arm64`.
-- Test: `flutter test`; `cargo test --manifest-path native/wcmusic_core/Cargo.toml`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib`.
+- Build: `flutter build windows --release` (desktop, outputs `build/windows/x64/runner/Release/wcmusic.exe`); `flutter build apk --release --target-platform android-arm64`.
+- Legacy Tauri client only: `nu build_desktop.nu`.
+- Test: `flutter test`; `flutter test integration_test/desktop_shell_test.dart -d windows` (real-engine desktop smoke + frame probe); `cargo test --manifest-path native/wcmusic_core/Cargo.toml`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib`.
 - Lint: `flutter analyze`; desktop npm and Rust lint commands are not configured.
 
 ## Repository Structure
-- `desktop/`: Tauri 2 + React/Vite frontend and Rust backend.
-- `lib/`, `android/`, `windows/`, `assets/`, `test/`: Flutter code, platform runners, assets, and Dart tests.
+- `desktop/`: legacy Tauri 2 + React/Vite client, kept for reference only.
+- `lib/`: Flutter app. `lib/ui/desktop/` holds the Forui shell, pages and player widgets; `lib/ui/state/` holds view models.
+- `android/`, `windows/`, `assets/`, `test/`, `integration_test/`: platform runners, assets, Dart tests and real-engine desktop tests.
 - `native/`: shared Rust core, vendored dependencies, and native tools.
 - `scripts/`: release/version/site scripts; `site/`: static Cloudflare Pages site; `tool/`: project tools.
 - `build*.nu`: NuShell build scripts for the Tauri desktop client and Flutter/Android targets.
@@ -46,5 +49,7 @@ jdk在这里D:\MC\jdk
 ## Conventions
 - Dart tests live in `test/`; Rust unit tests use inline `#[cfg(test)]` modules.
 - Dart analysis extends `package:flutter_lints/flutter.yaml`; desktop TypeScript uses React `.tsx` components.
-- Desktop pages live in `desktop/src/pages`, shared UI components in `desktop/src/components/ui`, and Rust core APIs are re-exported from `lib.rs`.
+- Desktop pages live in `lib/ui/desktop/pages`, shared widgets in `lib/ui/desktop/widgets`, shell/nav in `lib/ui/desktop/shell`, and Rust core APIs are re-exported from `lib.rs`.
+- Keep the desktop UI on Forui components; avoid introducing a second design system.
+- Performance invariants: lists use fixed `itemExtent`, high-frequency playback state goes through the `ValueNotifier`s on `PlayerViewModel` (never `notifyListeners` per tick), and looping animations must be gated by `TickerMode`/reduce-motion.
 - Keep existing Chinese comments and user-facing text when modifying localized code.

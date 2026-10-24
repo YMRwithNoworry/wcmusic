@@ -9,11 +9,14 @@ import 'data/repositories/memory_source_repository.dart';
 import 'data/services/source_storage.dart';
 import 'data/services/online_search_service.dart';
 import 'data/services/desktop_window_service.dart';
-import 'ui/features/player/player_view_model.dart';
+import 'ui/core/frame_probe.dart';
+import 'ui/state/player_view_model.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  // 仅在 --dart-define=WCMUSIC_FRAME_PROBE=true 时启用，用于量化帧预算。
+  FrameProbe.fromEnvironment()?.start();
   final windowService = DesktopWindowService();
   await windowService.initialize();
   final builtInSourceScript = await rootBundle.loadString(

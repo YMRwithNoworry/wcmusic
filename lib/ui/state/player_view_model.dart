@@ -3,22 +3,22 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
-import '../../../data/services/audio_effect_settings_store.dart';
-import '../../../data/services/player_service.dart';
-import '../../../data/services/online_search_service.dart';
-import '../../../data/services/desktop_window_service.dart';
-import '../../../data/services/floating_lyrics_service.dart';
-import '../../../data/services/lyric_service.dart';
-import '../../../data/services/track_download_service.dart';
-import '../../../domain/models/lyric_line.dart';
-import '../../../domain/models/lyrics_overlay_style.dart';
-import '../../../domain/models/music_folder.dart';
-import '../../../domain/models/playback_mode.dart';
-import '../../../domain/models/playback_quality.dart';
-import '../../../domain/models/source_import_result.dart';
-import '../../../domain/models/track.dart';
-import '../../../domain/repositories/music_repository.dart';
-import '../../../domain/repositories/source_repository.dart';
+import '../../data/services/audio_effect_settings_store.dart';
+import '../../data/services/player_service.dart';
+import '../../data/services/online_search_service.dart';
+import '../../data/services/desktop_window_service.dart';
+import '../../data/services/floating_lyrics_service.dart';
+import '../../data/services/lyric_service.dart';
+import '../../data/services/track_download_service.dart';
+import '../../domain/models/lyric_line.dart';
+import '../../domain/models/lyrics_overlay_style.dart';
+import '../../domain/models/music_folder.dart';
+import '../../domain/models/playback_mode.dart';
+import '../../domain/models/playback_quality.dart';
+import '../../domain/models/source_import_result.dart';
+import '../../domain/models/track.dart';
+import '../../domain/repositories/music_repository.dart';
+import '../../domain/repositories/source_repository.dart';
 
 class PlayerViewModel extends ChangeNotifier {
   PlayerViewModel({
@@ -46,17 +46,22 @@ class PlayerViewModel extends ChangeNotifier {
     });
     _positionSubscription = this.playerService.position.listen((value) {
       position = value;
+      // 高频进度只推给专门的可监听对象，页面骨架不跟着每 100ms 重建。
+      positionListenable.value = value;
       _syncLyrics(value);
-      notifyListeners();
     });
     _durationSubscription = this.playerService.duration.listen((value) {
-      duration = value > Duration.zero
+      final next = value > Duration.zero
           ? value
           : current?.duration ?? Duration.zero;
+      if (next == duration) return;
+      duration = next;
+      durationListenable.value = duration;
       notifyListeners();
     });
     _volumeSubscription = this.playerService.volume.listen((value) {
       volume = value.clamp(0.0, 1.0);
+      volumeListenable.value = volume;
       notifyListeners();
     });
     _completedSubscription = this.playerService.completed.listen((_) {
@@ -139,6 +144,29 @@ class PlayerViewModel extends ChangeNotifier {
   StreamSubscription<double>? _volumeSubscription;
   StreamSubscription<void>? _completedSubscription;
   StreamSubscription<String>? _errorSubscription;
+
+  /// 播放进度。只给进度条 / 歌词这类高频组件使用。
+  final ValueNotifier<Duration> positionListenable = ValueNotifier(
+    Duration.zero,
+  );
+  final ValueNotifier<Duration> durationListenable = ValueNotifier(
+    Duration.zero,
+  );
+  final ValueNotifier<double> volumeListenable = ValueNotifier(1);
+
+  /// 当前歌词行与行内进度（0-1），供歌词视图做无重建高亮。
+  final ValueNotifier<int> lyricIndexListenable = ValueNotifier(-1);
+  final ValueNotifier<double> lyricProgressListenable = ValueNotifier(0);
+
+  bool isLoadingLyrics = false;
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    // 异步刷新（歌单、新曲、歌词）可能在页面销毁后才返回。
+    if (_disposed) return;
+    super.notifyListeners();
+  }
 
   Duration get playbackDuration =>
       duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
@@ -509,9 +537,15 @@ class PlayerViewModel extends ChangeNotifier {
     current = track;
     position = Duration.zero;
     duration = track.duration;
+    positionListenable.value = Duration.zero;
+    durationListenable.value = track.duration;
+    lyricIndexListenable.value = -1;
+    lyricProgressListenable.value = 0;
     message = null;
     notifyListeners();
     unawaited(playerService.stop());
+    // 歌词与整曲解析并行：先显示歌词，解析慢也不会让聚焦页空着。
+    unawaited(_loadLyrics(track));
 
     var playbackTrack = track;
     if (track.source != TrackSource.local && sources.isNotEmpty) {
@@ -591,7 +625,6 @@ class PlayerViewModel extends ChangeNotifier {
         isPlaying = true;
         current = finalTrack;
         message = null;
-        if (floatingLyricsEnabled) unawaited(_loadLyrics(finalTrack));
       } on Object catch (error) {
         if (generation != _playGeneration) return;
         message = '播放失败：$error';
@@ -737,6 +770,7 @@ class PlayerViewModel extends ChangeNotifier {
       await playerService.stop();
       isPlaying = false;
       position = Duration.zero;
+      positionListenable.value = Duration.zero;
       notifyListeners();
       return;
     }
@@ -779,6 +813,7 @@ class PlayerViewModel extends ChangeNotifier {
     final next = value.clamp(0.0, 1.0);
     if (next > .001) _volumeBeforeMute = next;
     volume = next;
+    volumeListenable.value = next;
     notifyListeners();
     await playerService.setVolume(next);
   }
@@ -879,11 +914,17 @@ class PlayerViewModel extends ChangeNotifier {
     final generation = ++_lyricGeneration;
     lyrics = const [];
     currentLyricIndex = -1;
-    await floatingLyricsService.update(
-      title: '${track.title} · ${track.artist}',
-      currentLine: '正在加载歌词...',
-      nextLine: '',
-    );
+    lyricIndexListenable.value = -1;
+    lyricProgressListenable.value = 0;
+    isLoadingLyrics = true;
+    notifyListeners();
+    if (floatingLyricsEnabled) {
+      await floatingLyricsService.update(
+        title: '${track.title} · ${track.artist}',
+        currentLine: '正在加载歌词...',
+        nextLine: '',
+      );
+    }
     try {
       var lyricTrack = track;
       if (track.source == TrackSource.local ||
@@ -898,38 +939,61 @@ class PlayerViewModel extends ChangeNotifier {
       final loaded = await lyricService.loadLyrics(lyricTrack);
       if (generation != _lyricGeneration || current?.id != track.id) return;
       lyrics = loaded;
-      if (loaded.isEmpty) {
+      if (floatingLyricsEnabled) {
         await floatingLyricsService.update(
           title: '${track.title} · ${track.artist}',
-          currentLine: '暂无歌词',
+          currentLine: loaded.isEmpty ? '暂无歌词' : '准备播放',
           nextLine: '',
         );
-      } else {
-        _syncLyrics(position);
       }
+      if (loaded.isNotEmpty) _syncLyrics(position);
     } on Object {
       if (generation != _lyricGeneration || current?.id != track.id) return;
-      await floatingLyricsService.update(
-        title: '${track.title} · ${track.artist}',
-        currentLine: '歌词暂时不可用',
-        nextLine: '',
-      );
+      if (floatingLyricsEnabled) {
+        await floatingLyricsService.update(
+          title: '${track.title} · ${track.artist}',
+          currentLine: '歌词暂时不可用',
+          nextLine: '',
+        );
+      }
+    } finally {
+      if (generation == _lyricGeneration && current?.id == track.id) {
+        isLoadingLyrics = false;
+        notifyListeners();
+      }
     }
-    notifyListeners();
   }
 
   void _syncLyrics(Duration value) {
-    if (!floatingLyricsEnabled || lyrics.isEmpty) return;
+    if (lyrics.isEmpty) {
+      if (currentLyricIndex != -1) {
+        currentLyricIndex = -1;
+        lyricIndexListenable.value = -1;
+      }
+      return;
+    }
     var nextIndex = -1;
     for (var index = 0; index < lyrics.length; index++) {
       if (lyrics[index].time > value) break;
       nextIndex = index;
     }
     currentLyricIndex = nextIndex;
+    lyricIndexListenable.value = nextIndex;
+    final followingIndex = nextIndex + 1;
+    final lineStart = nextIndex >= 0 ? lyrics[nextIndex].time : Duration.zero;
+    final lineEnd = followingIndex < lyrics.length
+        ? lyrics[followingIndex].time
+        : playbackDuration;
+    final lineSpan = lineEnd - lineStart;
+    final lineProgress = lineSpan.inMilliseconds <= 0
+        ? 0.0
+        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds)
+              .clamp(0.0, 1.0);
+    lyricProgressListenable.value = lineProgress;
+    if (!floatingLyricsEnabled) return;
     final track = current;
     if (track == null) return;
     final currentLine = nextIndex < 0 ? track.title : lyrics[nextIndex].text;
-    final followingIndex = nextIndex + 1;
     final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
         ? lyrics[followingIndex].text
         : '';
@@ -940,17 +1004,6 @@ class PlayerViewModel extends ChangeNotifier {
       for (var index = windowStart; index < windowEnd; index++)
         lyrics[index].text,
     ];
-    final lineStart = nextIndex >= 0 ? lyrics[nextIndex].time : Duration.zero;
-    final lineEnd = followingIndex < lyrics.length
-        ? lyrics[followingIndex].time
-        : playbackDuration;
-    final lineSpan = lineEnd - lineStart;
-    final lineProgress = lineSpan.inMilliseconds <= 0
-        ? 0.0
-        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds).clamp(
-            0.0,
-            1.0,
-          );
     unawaited(
       floatingLyricsService.update(
         title: '${track.title} · ${track.artist}',
@@ -1126,6 +1179,7 @@ class PlayerViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _lyricGeneration++;
     unawaited(_playingSubscription?.cancel());
     unawaited(_positionSubscription?.cancel());
@@ -1133,6 +1187,11 @@ class PlayerViewModel extends ChangeNotifier {
     unawaited(_volumeSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
     unawaited(_errorSubscription?.cancel());
+    positionListenable.dispose();
+    durationListenable.dispose();
+    volumeListenable.dispose();
+    lyricIndexListenable.dispose();
+    lyricProgressListenable.dispose();
     unawaited(playerService.dispose());
     unawaited(floatingLyricsService.dispose());
     super.dispose();

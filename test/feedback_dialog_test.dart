@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:wcmusic/data/services/feedback_service.dart';
-import 'package:wcmusic/ui/features/settings/feedback_dialog.dart';
+import 'package:wcmusic/ui/core/app_theme.dart';
+import 'package:wcmusic/ui/desktop/pages/feedback_dialog.dart';
 
 void main() {
   testWidgets('validates and sends feedback from the in-app form', (
@@ -10,22 +12,35 @@ void main() {
     final service = _FakeFeedbackService();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: FeedbackDialog(feedbackService: service)),
+        home: FTheme(
+          data: AppTheme.dark,
+          child: Scaffold(
+            body: FeedbackForm(feedbackService: service),
+          ),
+        ),
       ),
     );
 
-    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    final selects = find.byWidgetPredicate((widget) => widget is FSelect<String>);
+    await tester.tap(selects.first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('播放问题').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.tap(selects.last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Windows 11').last);
     await tester.pumpAndSettle();
 
-    final fields = find.byType(TextFormField);
-    await tester.enterText(fields.first, 'user@example.com');
-    await tester.enterText(fields.last, '播放歌曲时无法获取完整的歌曲地址。');
+    final emailField = find.descendant(
+      of: find.widgetWithText(FTextField, '联系邮箱（选填）'),
+      matching: find.byType(EditableText),
+    );
+    final descriptionField = find.descendant(
+      of: find.widgetWithText(FTextField, '问题描述'),
+      matching: find.byType(EditableText),
+    );
+    await tester.enterText(emailField, 'user@example.com');
+    await tester.enterText(descriptionField, '播放歌曲时无法获取完整的歌曲地址。');
     await tester.ensureVisible(find.text('发送反馈'));
     await tester.tap(find.text('发送反馈'));
     await tester.pumpAndSettle();

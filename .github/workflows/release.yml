@@ -79,31 +79,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.sha }}
-      - uses: actions/setup-node@v4
+      # 桌面端 UI 已换成 Flutter + Forui，发布产物是 Flutter Windows 包。
+      - uses: subosito/flutter-action@v2
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          flutter-version: "3.44.8"
+          channel: stable
+          cache: true
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
-      - name: 安装前端依赖
-        working-directory: desktop
-        run: npm ci
-      - name: 构建前端
-        working-directory: desktop
-        run: npm run build
-      - name: Rust 测试
-        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib
-      - name: 构建 Tauri 桌面端
-        run: cargo build --locked --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
+          workspaces: native/wcmusic_core
+      - run: flutter pub get
+      - name: 静态分析与测试
+        run: |
+          flutter analyze
+          flutter test
+      - name: 构建 Flutter 桌面端
+        run: flutter build windows --release
       - name: 打包 ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item desktop\src-tauri\target\release\wcmusic-desktop.exe dist\wcmusic-desktop.exe
-          Compress-Archive -Path dist\wcmusic-desktop.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* dist\
+          Compress-Archive -Path dist\* -DestinationPath dist\wcmusic-windows-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows
