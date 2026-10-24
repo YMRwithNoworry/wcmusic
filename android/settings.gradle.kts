@@ -11,12 +11,14 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/public")
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        // 官方仓库优先：CI runner 在海外，阿里云镜像反而更容易超时或 502。
         google()
         mavenCentral()
         gradlePluginPortal()
+        // 国内开发机镜像作为兜底。
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
+        maven("https://maven.aliyun.com/repository/gradle-plugin")
     }
 }
 

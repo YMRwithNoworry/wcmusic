@@ -240,7 +240,7 @@ jobs:
           VERSION: ${{ needs.version-windows.outputs.version }}
           PREVIOUS: ${{ needs.version-windows.outputs.previous }}
         run: |
-          node scripts/release/generate-notes.mjs --platform windows --version "$VERSION" \
+          node scripts/release/sync-site.mjs --platform windows --version "$VERSION" \
             --previous "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --notes release-notes.md
       - name: 发布 Release
         env:
@@ -279,7 +279,7 @@ jobs:
           VERSION: ${{ needs.version-android.outputs.version }}
           PREVIOUS: ${{ needs.version-android.outputs.previous }}
         run: |
-          node scripts/release/generate-notes.mjs --platform android --version "$VERSION" \
+          node scripts/release/sync-site.mjs --platform android --version "$VERSION" \
             --previous "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --notes release-notes.md
       - name: 发布 Release
         env:

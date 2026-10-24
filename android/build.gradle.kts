@@ -1,9 +1,11 @@
 allprojects {
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/public")
+        // 官方仓库优先：CI runner 在海外，阿里云镜像反而更容易超时或 502。
         google()
         mavenCentral()
+        // 国内开发机镜像作为兜底。
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
     }
 }
 
