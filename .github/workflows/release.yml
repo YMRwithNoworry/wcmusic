@@ -109,8 +109,10 @@ jobs:
         run: |
           set -euo pipefail
           # 不再用 releases/latest：它跨平台混排，Android 的 android-v 标签会顶掉 Windows 的 v 标签。
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq --arg prefix "$TAG_PREFIX" '[.[] | .tag_name | select(startswith($prefix)) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first // ""')
+          # gh 的 --jq 不认 jq 的 --arg，所以先把按前缀筛好的标签列出来，再在 shell 里挑最新。
+          tags=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+          tag=$(printf '%s\n' "$tags" | sed -n "s/^${TAG_PREFIX}\\([0-9]*\\.[0-9]*\\.[0-9]*\\)\$/\\1/p" | sort -V | tail -1)
+          if [ -n "$tag" ]; then tag="${TAG_PREFIX}${tag}"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - id: bump
         name: 递增版本（patch / minor / major / none）
