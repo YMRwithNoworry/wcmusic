@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +16,26 @@ import 'test_support.dart';
 
 void main() {
   var fontsLoaded = false;
+
+  /// 快照的像素对比默认容忍 2% 差异。
+  ///
+  /// Windows 与 Linux 的字体光栅化（抗锯齿、字形嵌入的 bold 描边）不完全相同，
+  /// 同一份 Ahem 字体在两端也会有 1% 左右的边缘差异；布局与颜色完全一致的截图
+  /// 远低于这个阈值，真正的排版问题（换行、缺失元素）会显著超过它。
+  const tolerance = 0.02;
+
+  Future<void> renderInto(Future<void> Function() body) async {
+    final previous = goldenFileComparator;
+    final local = previous is LocalFileComparator ? previous : null;
+    goldenFileComparator = local == null
+        ? previous
+        : _TolerantComparator(local, tolerance);
+    try {
+      await body();
+    } finally {
+      goldenFileComparator = previous;
+    }
+  }
 
   Future<void> render(
     WidgetTester tester,
@@ -81,11 +103,13 @@ void main() {
     await beforeCapture?.call(tester);
     await tester.pumpAndSettle();
     // 失败时把实际渲染结果写到 test/failures/，CI 上传后可直接对比 Windows 与 Linux 的差异。
-    await expectLater(
-      find.byType(MaterialApp),
-      matchesGoldenFile(golden),
-      reason: '快照 $golden',
-    );
+    await renderInto(() async {
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile(golden),
+        reason: '快照 $golden',
+      );
+    });
   }
 
   testWidgets('desktop home has a stable composition', (tester) async {
@@ -125,4 +149,37 @@ void main() {
       },
     );
   });
+}
+
+/// 允许一定比例像素差异的 golden 比较器。
+///
+/// 只接受 [LocalFileComparator]（Windows 与 Linux 都在本地跑快照），沿用它的差异图
+/// 输出；它的 getGoldenBytes 是受保护成员，外部不可见，所以这里直接读快照文件。
+class _TolerantComparator extends GoldenFileComparator {
+  _TolerantComparator(this._inner, this._tolerance);
+
+  final LocalFileComparator _inner;
+  final double _tolerance;
+
+  Uri get basedir => _inner.basedir;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final file = File.fromUri(basedir.resolveUri(golden));
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await file.readAsBytes(),
+    );
+    if (result.passed || result.diffPercent <= _tolerance) {
+      result.dispose();
+      return true;
+    }
+    final error = await _inner.generateFailureOutput(result, golden, basedir);
+    result.dispose();
+    throw FlutterError(error);
+  }
+
+  @override
+  Future<void> update(Uri golden, Uint8List imageBytes) =>
+      _inner.update(golden, imageBytes);
 }
