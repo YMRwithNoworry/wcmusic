@@ -17,12 +17,13 @@ import 'test_support.dart';
 void main() {
   var fontsLoaded = false;
 
-  /// 快照的像素对比默认容忍 2% 差异。
+  /// 快照的像素对比容忍 5% 差异。
   ///
-  /// Windows 与 Linux 的字体光栅化（抗锯齿、字形嵌入的 bold 描边）不完全相同，
-  /// 同一份 Ahem 字体在两端也会有 1% 左右的边缘差异；布局与颜色完全一致的截图
-  /// 远低于这个阈值，真正的排版问题（换行、缺失元素）会显著超过它。
-  const tolerance = 0.02;
+  /// Windows（DirectWrite/ClearType）与 Linux（FreeType）的字体光栅化不同：同一份
+  /// Noto Sans SC 在 Linux 上会被当作合成粗体描边，小字号逐字加粗，全屏文字区域
+  /// 的像素差异可达 3~4%。取舍：宁可容忍这种系统级差异，也不维护两份平台快照；
+  /// 结构性变化（换行、元素缺失、配色改动）通常远超这个阈值。
+  const tolerance = 0.05;
 
   Future<void> renderInto(Future<void> Function() body) async {
     final previous = goldenFileComparator;
