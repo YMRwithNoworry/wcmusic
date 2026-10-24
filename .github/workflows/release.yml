@@ -60,7 +60,7 @@ jobs:
           flutter test
       # golden 在 Windows / Linux 上解析字体度量略有差异，失败时保留差异图便于排查。
       - uses: actions/upload-artifact@v4
-        if: ${{ steps.check.outcome == 'failure' }}
+        if: ${{ failure() }}
         with:
           name: golden-failures
           path: test/failures/
