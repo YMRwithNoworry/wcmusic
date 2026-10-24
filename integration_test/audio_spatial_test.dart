@@ -1,0 +1,113 @@
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:media_kit/media_kit.dart' hide Track;
+import 'package:wcmusic/data/services/player_service.dart';
+import 'package:wcmusic/domain/models/track.dart';
+
+/// 在真实 libmpv 上验证“切换音质后还能播放”。
+///
+/// 回归的是这个 bug：空间音效用的滤镜名在当前 libmpv 里不存在，
+/// 重新 open 媒体时抛 “Audio filter initialized failed!”，导致切完音质就播不了。
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('keeps playing after switching quality with spatial audio on', (
+    tester,
+  ) async {
+    MediaKit.ensureInitialized();
+    final wav = await tester.runAsync(_writeTestTone);
+    expect(wav, isNotNull);
+
+    final service = PlayerService();
+    addTearDown(service.dispose);
+    final errors = <String>[];
+    final sub = service.errors.listen(errors.add);
+    addTearDown(sub.cancel);
+
+    final played = <String>[];
+    final playingSub = service.playing.listen((value) {
+      if (value) played.add('playing');
+    });
+    addTearDown(playingSub.cancel);
+
+    await tester.runAsync(() => service.setSpatialAudioEnabled(true));
+
+    final track = Track(
+      id: 'tone',
+      title: '测试音',
+      artist: 'WCMusic',
+      album: '测试',
+      duration: const Duration(seconds: 2),
+      uri: wav!,
+    );
+
+    // 第一次播放。
+    await tester.runAsync(() => service.play(track));
+    await _pumpFor(tester, const Duration(milliseconds: 900));
+    expect(errors, isEmpty, reason: '第一次播放不应有错误：$errors');
+    expect(played, isNotEmpty, reason: '第一次播放没有真正开始');
+
+    // 模拟“切换音质”：同一个播放器重新 open（这正是原来失败的地方）。
+    played.clear();
+    await tester.runAsync(() => service.play(track));
+    await _pumpFor(tester, const Duration(milliseconds: 900));
+    expect(errors, isEmpty, reason: '切音质后不应有错误：$errors');
+    expect(played, isNotEmpty, reason: '切音质后没有真正播放');
+
+    // 暂停 / 继续也必须正常。
+    await tester.runAsync(service.toggle);
+    await _pumpFor(tester, const Duration(milliseconds: 300));
+    await tester.runAsync(service.toggle);
+    await _pumpFor(tester, const Duration(milliseconds: 300));
+    expect(errors, isEmpty, reason: '暂停/继续不应有错误：$errors');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+}
+
+Future<void> _pumpFor(WidgetTester tester, Duration duration) async {
+  final deadline = DateTime.now().add(duration);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 50));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+}
+
+/// 生成一段 1 秒的 440Hz WAV，避免测试依赖网络。
+Future<String> _writeTestTone() async {
+  const sampleRate = 44100;
+  const seconds = 1;
+  const samples = sampleRate * seconds;
+  final data = ByteData(44 + samples * 2);
+  void ascii(int offset, String value) {
+    for (var i = 0; i < value.length; i++) {
+      data.setUint8(offset + i, value.codeUnitAt(i));
+    }
+  }
+
+  ascii(0, 'RIFF');
+  data.setUint32(4, 36 + samples * 2, Endian.little);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  data.setUint32(16, 16, Endian.little);
+  data.setUint16(20, 1, Endian.little);
+  data.setUint16(22, 1, Endian.little);
+  data.setUint32(24, sampleRate, Endian.little);
+  data.setUint32(28, sampleRate * 2, Endian.little);
+  data.setUint16(32, 2, Endian.little);
+  data.setUint16(34, 16, Endian.little);
+  ascii(36, 'data');
+  data.setUint32(40, samples * 2, Endian.little);
+  for (var i = 0; i < samples; i++) {
+    final value = (3200 * math.sin(i * 440 * 2 * math.pi / sampleRate))
+        .round();
+    data.setInt16(44 + i * 2, value, Endian.little);
+  }
+  final file = File(
+    '${Directory.systemTemp.path}${Platform.pathSeparator}wcmusic-test-tone.wav',
+  );
+  await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
+  return file.path;
+}

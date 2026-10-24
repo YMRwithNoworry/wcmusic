@@ -89,29 +89,12 @@ class DesktopSidebar extends StatelessWidget {
           const SizedBox(height: 10),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: .8),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    appVersion.isEmpty
-                        ? 'Flutter · Forui'
-                        : 'WCMusic $appVersion',
-                    style: type.body.xs.copyWith(
-                      color: colors.mutedForeground.withValues(alpha: .75),
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-              ],
+            child: Text(
+              appVersion.isEmpty ? '' : 'WCMusic $appVersion',
+              style: type.body.xs.copyWith(
+                color: colors.mutedForeground.withValues(alpha: .75),
+                fontSize: 11,
+              ),
             ),
           ),
         ],
@@ -220,14 +203,6 @@ class _NowPlayingCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    track == null ? '尚未播放' : '正在播放',
-                    style: type.body.xs.copyWith(
-                      color: colors.mutedForeground,
-                      fontSize: 10.5,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
                     track?.title ?? '挑一首开始',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -236,6 +211,18 @@ class _NowPlayingCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (track != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      track.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: type.body.xs.copyWith(
+                        color: colors.mutedForeground,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

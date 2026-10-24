@@ -10,7 +10,6 @@ import '../../state/player_view_model.dart';
 import '../widgets/artwork.dart';
 import 'controls.dart';
 import 'lyrics_view.dart';
-import 'player_bar.dart';
 
 /// 聚焦播放：大封面、歌词、完整控制。
 ///
@@ -110,10 +109,6 @@ class _TopBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
-          const FloatingLyricsButton(),
-          const SizedBox(width: 2),
-          const DownloadButton(),
-          const SizedBox(width: 4),
           FButton.icon(
             variant: FButtonVariant.ghost,
             size: FButtonSizeVariant.sm,
