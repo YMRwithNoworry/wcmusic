@@ -102,6 +102,8 @@ jobs:
           tag-prefix: v
           target: ${{ inputs.target || 'both' }}
           bump: ${{ inputs.bump || 'patch' }}
+      - name: 调试版本输出
+        run: echo "step build=${{ steps.bump.outputs.build }} version=${{ steps.bump.outputs.version }} tag=${{ steps.bump.outputs.tag }} sha=${{ steps.bump.outputs.sha }}"
 
   version-android:
     name: 确定 Android 版本与构建提交
