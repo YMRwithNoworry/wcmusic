@@ -19,15 +19,15 @@ inputs:
 
 outputs:
   version:
-    value: ${{ steps.bump.outputs.bump_version }}
+    value: ${{ steps.source.outputs.bump_version }}
   previous:
-    value: ${{ steps.bump.outputs.bump_previous }}
+    value: ${{ steps.source.outputs.bump_previous }}
   tag:
-    value: ${{ steps.bump.outputs.bump_tag }}
+    value: ${{ steps.source.outputs.bump_tag }}
   sha:
-    value: ${{ steps.bump.outputs.bump_sha }}
+    value: ${{ steps.source.outputs.bump_sha }}
   build:
-    value: ${{ steps.bump.outputs.bump_build }}
+    value: ${{ steps.source.outputs.bump_build }}
 
 runs:
   using: composite
