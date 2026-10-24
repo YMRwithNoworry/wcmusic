@@ -80,7 +80,12 @@ void main() {
     await tester.pumpAndSettle();
     await beforeCapture?.call(tester);
     await tester.pumpAndSettle();
-    await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
+    // 失败时把实际渲染结果写到 test/failures/，CI 上传后可直接对比 Windows 与 Linux 的差异。
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile(golden),
+      reason: '快照 $golden',
+    );
   }
 
   testWidgets('desktop home has a stable composition', (tester) async {
