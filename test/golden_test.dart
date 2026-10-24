@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
+import 'package:golden_toolkit/golden_toolkit.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
@@ -14,7 +13,7 @@ import 'package:wcmusic/ui/state/player_view_model.dart';
 import 'test_support.dart';
 
 void main() {
-  var fontLoaded = false;
+  var fontsLoaded = false;
 
   Future<void> render(
     WidgetTester tester,
@@ -22,16 +21,15 @@ void main() {
     String golden, {
     Future<void> Function(WidgetTester tester)? beforeCapture,
   }) async {
-    if (!fontLoaded) {
-      final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
-      if (fontFile.existsSync()) {
-        final bytes = await tester.runAsync(fontFile.readAsBytes);
-        if (bytes == null) throw StateError('无法加载 golden 测试字体');
-        final loader = FontLoader('Segoe UI')
-          ..addFont(Future.value(ByteData.sublistView(bytes)));
-        await loader.load();
-      }
-      fontLoaded = true;
+    // 固定加载随包分发的 Noto Sans SC：CI 的 Linux/Windows runner 都没有中文字体，
+    // 之前读本机 C:\Windows\Fonts\simhei.ttf 会让 CI 的像素对比必然失败。
+    // 测试环境的默认字体 Ahem 只画方块，中文字体必须显式注册。
+    if (!fontsLoaded) {
+      await loadAppFonts();
+      final loader = FontLoader('Noto Sans SC')
+        ..addFont(rootBundle.load('assets/fonts/NotoSansSC-Bold.otf'));
+      await loader.load();
+      fontsLoaded = true;
     }
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -85,17 +83,13 @@ void main() {
     await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
   }
 
-  testWidgets(
-    'desktop home has a stable composition',
-    (tester) async {
-      await render(tester, const Size(1440, 900), 'goldens/home_desktop.png');
-    },
-    skip: !Platform.isWindows,
-  );
+  testWidgets('desktop home has a stable composition', (tester) async {
+    await render(tester, const Size(1440, 900), 'goldens/home_desktop.png');
+  });
 
   testWidgets('mobile home fits a compact viewport', (tester) async {
     await render(tester, const Size(390, 844), 'goldens/home_mobile.png');
-  }, skip: !Platform.isWindows);
+  });
 
   testWidgets('desktop search channels have a stable layout', (
     tester,
@@ -108,7 +102,7 @@ void main() {
         await tester.tap(find.text('搜索音乐').first);
       },
     );
-  }, skip: !Platform.isWindows);
+  });
 
   testWidgets('desktop focused player has a stable immersive layout', (
     tester,
@@ -125,5 +119,5 @@ void main() {
         await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
       },
     );
-  }, skip: !Platform.isWindows);
+  });
 }

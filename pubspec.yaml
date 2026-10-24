@@ -52,20 +52,11 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # 只在 golden 测试里加载固定字体（Ahem），保证快照在任何机器上渲染一致。
+  golden_toolkit: ^0.15.0
   integration_test:
     sdk: flutter
 
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
-  flutter_lints: ^6.0.0
-
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
-
-# The following section is specific to Flutter packages.
 flutter:
 
   # The following line ensures that the Material Icons font is
@@ -76,6 +67,13 @@ flutter:
     - windows/runner/resources/app_icon.ico
     - assets/icons/app_icon.png
     - assets/sources/yuxi_final_source.js
+  # Noto Sans SC 只给 golden 测试兜底：CI 的 Linux/Windows runner 都没有中文字体，
+  # 固定随包分发的字体才能保证不同机器渲染一致。
+  fonts:
+    - family: Noto Sans SC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Bold.otf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -94,6 +94,8 @@ abstract final class AppTheme {
         'Segoe UI',
         'PingFang SC',
         'Noto Sans CJK SC',
+        // 随包分发，保证 golden 测试与无中文字体的 CI runner 也有一致的字形
+        'Noto Sans SC',
       ],
     );
     final base = FTypography.inherit(colors: colors, touch: false);
@@ -129,6 +131,7 @@ abstract final class AppTheme {
         'Microsoft YaHei UI',
         'Microsoft YaHei',
         'Segoe UI',
+        'Noto Sans SC',
       ],
       splashFactory: NoSplash.splashFactory,
       highlightColor: Colors.transparent,

@@ -1,45 +1,52 @@
 #!/usr/bin/env node
 // 让官网跟上最新发布：下载链接、版本号、发布日期与更新日志一次性重写。
 //
+// Windows 与 Android 是两条独立的版本线（tag 分别为 vX.Y.Z 和 android-vX.Y.Z），
+// 所以版本号、下载地址、更新日志都按平台分别传入。
+//
 // 用法：
-//   node scripts/release/sync-site.mjs --version 1.2.4 --repo YMRwithNoworry/wcmusic \
-//     [--previous v1.2.3] [--android true] [--android-url <apk 地址>] [--notes release-notes.md]
+//   # 只生成某个平台的 Release 说明
+//   node scripts/release/sync-site.mjs --platform windows --version 1.2.4 [--previous 1.2.3] \
+//     --repo YMRwithNoworry/wcmusic --notes release-notes.md
+//   node scripts/release/sync-site.mjs --platform android --version 1.2.4 ...
+//
+//   # 重写官网（两条线都已发布后调用）
+//   node scripts/release/sync-site.mjs --platform site \
+//     --windows-version 1.2.4 --windows-previous 1.2.3 \
+//     --android-version 1.2.4 --android-previous 1.2.3 --notes release-notes.md
 //
 // 只在发布成功之后调用：官网的下载链接必须指向已经存在的 Release。
-// Android 任务在 CI 里是「尽力而为」，没出包时用 --android-url 传上一个真的带 APK 的
-// Release 地址，官网的 Android 按钮就不会指到一个不存在的文件上。
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const INDEX = "site/index.html";
 const APP_JS = "site/app.js";
+const WINDOWS_ASSET = "wcmusic-windows-x64.zip";
+const APK_NAME = "wcmusic-android-arm64.apk";
 
 function arg(name, fallback = null) {
   const index = process.argv.indexOf("--" + name);
   return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : fallback;
 }
 
-const version = arg("version");
+const platform = arg("platform", "site");
 const repo = arg("repo", "YMRwithNoworry/wcmusic");
-const previous = arg("previous");
-const withAndroid = arg("android", "true") === "true";
-const androidUrl = arg("android-url", "");
 const notesPath = arg("notes");
-if (!version) throw new Error("缺少 --version");
-
-const tag = "v" + version;
-const downloadBase = "https://github.com/" + repo + "/releases/download/" + tag + "/";
-const APK_NAME = "wcmusic-android-arm64.apk";
-
-/** Android 按钮指向哪个版本：本轮出包就是新版本，否则沿用那个 Release 的版本号。 */
-function androidReleaseVersion() {
-  if (withAndroid) return version;
-  const match = /\/download\/v([0-9]+\.[0-9]+\.[0-9]+)\//.exec(androidUrl);
-  return match ? match[1] : null;
+const windowsVersion = platform === "site" ? arg("windows-version") : platform === "windows" ? arg("version") : null;
+const androidVersion = platform === "site" ? arg("android-version") : platform === "android" ? arg("version") : null;
+const windowsPrevious = platform === "site" ? arg("windows-previous") : arg("previous");
+const androidPrevious = platform === "site" ? arg("android-previous") : arg("previous");
+if (platform === "site" && (!windowsVersion || !androidVersion)) {
+  throw new Error("同步官网需要同时提供 --windows-version 与 --android-version");
 }
-const androidVersion = androidReleaseVersion();
-const targetAndroidUrl = withAndroid ? downloadBase + APK_NAME : androidUrl;
+const notesVersion = platform === "windows" ? windowsVersion : platform === "android" ? androidVersion : null;
+
+const windowsTag = "v" + windowsVersion;
+const androidTag = "android-v" + androidVersion;
+const releaseUrl = (tag, asset) => "https://github.com/" + repo + "/releases/download/" + tag + "/" + asset;
+const windowsUrl = releaseUrl(windowsTag, WINDOWS_ASSET);
+const androidUrl = releaseUrl(androidTag, APK_NAME);
 
 function escapeHtml(text) {
   return text
@@ -62,7 +69,7 @@ function tagExists(candidate) {
 }
 
 /** 从上一个 tag 到 HEAD 的提交；没有 tag（或 tag 不存在）时退回最近若干条。 */
-function commits() {
+function commits(previous) {
   const usable = previous && tagExists(previous) ? previous : null;
   const args = ["log", "--no-merges", "--pretty=format:%s%x1f%b%x1e"];
   args.splice(1, 0, usable ? usable + "..HEAD" : "-15");
@@ -85,10 +92,8 @@ function commits() {
     .slice(0, 12);
 }
 
-const items = commits();
-
 /** 更新日志区块：官网与 Release 说明共用同一份内容。 */
-function changelogHtml() {
+function changelogHtml(items) {
   if (items.length === 0) {
     return '<div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>本次更新</h3><p>细节见仓库提交记录。</p></div></div>';
   }
@@ -108,7 +113,7 @@ function changelogHtml() {
     .join("\n            ");
 }
 
-function changelogMarkdown() {
+function changelogMarkdown(items) {
   if (items.length === 0) return "- 细节见仓库提交记录。";
   return items.map((item) => "- " + item.subject).join("\n");
 }
@@ -131,90 +136,92 @@ function rewrite(file, transform) {
   return after !== before;
 }
 
-// 1) Windows 下载链接：仓库与 tag 都可能变（历史链接指向过 wcmusic-releases）。
-rewrite(INDEX, (html) =>
-  html.replace(
-    /(https:\/\/github\.com\/)[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/(wcmusic-windows-x64\.zip)/g,
-    "$1" + repo + "/releases/download/" + tag + "/$2",
-  ),
-);
+/** 下载地址里「任意 tag」的通用形态：两条线历史 tag 前缀不同，统一改写。 */
+const RELEASE_DOWNLOAD = "https?://github\\.com/[^/]+/[^/]+/releases/download/[^/\"]+/";
+const WINDOWS_LINK = new RegExp("(https?://github\\.com/)[^/]+/[^/]+/releases/download/[^/\"]+/" + WINDOWS_ASSET.replace(".", "\\."), "g");
+const APK_LINK = new RegExp(RELEASE_DOWNLOAD + APK_NAME.replace(".", "\\."), "g");
 
-// 2) Android 下载链接：只有确实知道该指向哪个 Release 时才改。
-if (targetAndroidUrl) {
-  rewrite(INDEX, (html) =>
-    html.replace(
-      /(href=")https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk(")/g,
-      "$1" + targetAndroidUrl + "$2",
-    ),
-  );
-  rewrite(APP_JS, (js) =>
-    js.replace(
-      /https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk/g,
-      targetAndroidUrl,
-    ),
+// 1) 下载链接：仓库与 tag 都可能变（历史链接指向过 wcmusic-releases）。
+function rewriteLinks(file) {
+  return rewrite(file, (text) =>
+    text
+      .replace(WINDOWS_LINK, (_m, prefix) => prefix + repo + "/releases/download/" + windowsTag + "/" + WINDOWS_ASSET)
+      .replace(APK_LINK, "/releases/download/" + androidTag + "/" + APK_NAME),
   );
 }
 
-// 3) 版本号与首屏文案。
-rewrite(INDEX, (html) => {
-  let out = html
-    .replace(/(<p class="eyebrow"><span><\/span> WCMusic )[0-9.]+(<\/p>)/, "$1" + version + "$2")
-    .replace(/(<p class="file-meta">版本 )[0-9.]+( · x64<\/p>)/, "$1" + version + "$2")
-    .replace(/(<p class="version">)v[0-9.]+(<\/p>)/, "$1" + tag + "$2")
-    .replace(/(<p class="hero-note">[^<]*Windows )[0-9.]+/, "$1" + version)
-    .replace(/(<p>)\d{4} 年 \d{1,2} 月 \d{1,2} 日(<\/p>)/, "$1" + chineseDate() + "$2");
-  if (androidVersion) {
-    out = out
+function rewriteVersions() {
+  return rewrite(INDEX, (html) =>
+    html
+      .replace(/(<p class="eyebrow"><span><\/span> WCMusic )[0-9.]+(<\/p>)/, "$1" + windowsVersion + "$2")
+      .replace(/(<p class="file-meta">版本 )[0-9.]+( · x64<\/p>)/, "$1" + windowsVersion + "$2")
+      .replace(/(<p class="version">)v[0-9.]+(<\/p>)/, "$1" + windowsTag + "$2")
+      .replace(/(<p class="hero-note">[^<]*Windows )[0-9.]+/, "$1" + windowsVersion)
+      .replace(/(<p class="hero-note">[^<]*· Android )[0-9.]+/, "$1" + androidVersion)
       .replace(/(<p class="file-meta">版本 )[0-9.]+( · arm64-v8a<\/p>)/, "$1" + androidVersion + "$2")
-      .replace(/(<p class="hero-note">[^<]*· Android )[0-9.]+/, "$1" + androidVersion);
-  }
-  return out;
-});
+      .replace(/(<p>)\d{4} 年 \d{1,2} 月 \d{1,2} 日(<\/p>)/, "$1" + chineseDate() + "$2"),
+  );
+}
 
-// 4) 更新日志：按上一版到本次的提交重新生成。
-rewrite(INDEX, (html) => {
-  const lines = html.split("\n");
-  const start = lines.findIndex((line) => line.includes('<div class="changelog reveal">'));
-  if (start < 0) return html;
-  let end = -1;
-  for (let i = start + 1; i + 2 < lines.length; i++) {
-    if (
-      lines[i].trim() === "</div>" &&
-      lines[i + 1].trim() === "</div>" &&
-      lines[i + 2].trim() === "</section>"
-    ) {
-      end = i;
-      break;
+function rewriteChangelog(items) {
+  return rewrite(INDEX, (html) => {
+    const lines = html.split("\n");
+    const start = lines.findIndex((line) => line.includes('<div class="changelog reveal">'));
+    if (start < 0) return html;
+    let end = -1;
+    for (let i = start + 1; i + 2 < lines.length; i++) {
+      if (
+        lines[i].trim() === "</div>" &&
+        lines[i + 1].trim() === "</div>" &&
+        lines[i + 2].trim() === "</section>"
+      ) {
+        end = i;
+        break;
+      }
     }
-  }
-  if (end < 0) return html;
-  const indent = "            ";
-  const block = (indent + changelogHtml().split("\n").join("\n" + indent)).split("\n");
-  return lines.slice(0, start + 1).concat(block, lines.slice(end)).join("\n");
-});
+    if (end < 0) return html;
+    const indent = "            ";
+    const block = (indent + changelogHtml(items).split("\n").join("\n" + indent)).split("\n");
+    return lines.slice(0, start + 1).concat(block, lines.slice(end)).join("\n");
+  });
+}
 
-// 5) Release 说明。
-if (notesPath) {
-  const androidLine = withAndroid
-    ? "- **Android arm64**：[wcmusic-android-arm64.apk](" + downloadBase + APK_NAME + ") — Android 8.0+"
-    : "- **Android arm64**：本次未产出新的 APK，官网仍指向 " + (androidUrl || "上一个带 APK 的版本");
+/** Release 说明：每个 Release 只列自己平台的下载，两条线互不混淆。 */
+function writeNotes(platformName, version, previous) {
+  if (!notesPath) return;
+  const items = commits(previous);
+  const tag = platformName === "windows" ? windowsTag : androidTag;
+  const versionLine =
+    platformName === "windows"
+      ? "- **Windows x64**：[" + WINDOWS_ASSET + "](" + windowsUrl + ") — 解压后运行单个 exe，无需安装"
+      : "- **Android arm64**：[" + APK_NAME + "](" + androidUrl + ") — Android 8.0+";
   const notes = [
-    "## WCMusic " + version,
+    "## WCMusic " + version + (platformName === "windows" ? "" : "（Android）"),
     "",
-    changelogMarkdown(),
+    changelogMarkdown(items),
     "",
     "### 下载",
-    "- **Windows x64**：[wcmusic-windows-x64.zip](" + downloadBase + "wcmusic-windows-x64.zip) — 解压后运行单个 exe，无需安装",
-    androidLine,
+    versionLine,
     "",
   ];
-  if (previous) {
-    notes.push("**完整改动**：https://github.com/" + repo + "/compare/" + previous + "..." + tag, "");
+  if (previous && previous !== version && /^\d+\.\d+\.\d+$/.test(previous)) {
+    const from = platformName === "android" ? "android-v" : "v";
+    notes.push("**完整改动**：https://github.com/" + repo + "/compare/" + from + previous + "..." + tag, "");
   }
   writeFileSync(notesPath, notes.join("\n"));
+  console.log("已生成 " + platformName + " Release 说明（" + items.length + " 条提交）");
 }
 
-console.log(
-  "官网已同步到 " + tag + "（仓库 " + repo + "，提交 " + items.length + " 条，Android " +
-    (androidVersion || "保持原样") + "）",
-);
+if (platform === "site") {
+  const windowsItems = commits(windowsPrevious && windowsPrevious !== windowsVersion ? "v" + windowsPrevious : null);
+  rewriteLinks(INDEX);
+  rewriteLinks(APP_JS);
+  rewriteVersions();
+  // 官网的更新日志以 Windows 线的提交为准（两条线共享同一份提交历史）。
+  rewriteChangelog(windowsItems);
+  console.log(
+    "官网已同步：Windows " + windowsTag + " / Android " + androidTag + "（仓库 " + repo + "，提交 " + windowsItems.length + " 条）",
+  );
+} else {
+  writeNotes(platform, notesVersion, platform === "windows" ? windowsPrevious : androidPrevious);
+}
