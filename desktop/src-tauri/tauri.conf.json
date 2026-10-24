@@ -20,7 +20,8 @@
         "resizable": true,
         "center": true,
         "decorations": false,
-        "shadow": true
+        "shadow": true,
+        "additionalBrowserArgs": "--remote-debugging-port=9222 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
       }
     ],
     "security": {

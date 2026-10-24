@@ -33,7 +33,8 @@ class LyricsOverlay {
   void Show();
   void Hide();
   void Update(const std::vector<std::wstring>& lines, int current_index,
-              float line_progress);
+              float line_progress, const std::wstring& current_translation,
+              const std::wstring& next_translation);
   void ApplyStyle(const LyricsOverlayStyle& style);
   void SetPositionCallback(PositionCallback callback);
   void Destroy();
@@ -52,6 +53,9 @@ class LyricsOverlay {
   int displayed_index_ = 0;
   float animation_t_ = 1.0f;
   float line_progress_ = 0.0f;
+  // 当前行与下一行的中文翻译
+  std::wstring current_translation_;
+  std::wstring next_translation_;
   LyricsOverlayStyle style_;
   PositionCallback position_callback_;
 };

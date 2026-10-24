@@ -303,6 +303,7 @@ fn start(
     player: &mut Option<AudioPlayer>,
     shared: &Arc<Mutex<Shared>>,
 ) {
+    let started = std::time::Instant::now();
     set(shared, |state| {
         state.loading = true;
         state.error = None;
@@ -324,6 +325,7 @@ fn start(
             return;
         }
     };
+    eprintln!("[timing] 解析整曲地址 {:?}", started.elapsed());
     // 播放器按需创建：没播过歌就不占用音频设备。
     if player.is_none() {
         match AudioPlayer::new() {
@@ -341,9 +343,17 @@ fn start(
     active.set_spatial_audio_enabled(spatial);
     // 优先边下边播；连接或格式不支持时退回整曲下载，与旧端行为一致。
     let result = match open_streaming_source(&url, use_proxy) {
-        Ok(stream) => active.play_stream(stream),
+        Ok(stream) => {
+            let played = active.play_stream(stream);
+            eprintln!("[timing] 打开音频流后总计 {:?}", started.elapsed());
+            played
+        }
         Err(_) => match download_audio_with_proxy(&url, use_proxy) {
-            Ok(bytes) => active.play(bytes),
+            Ok(bytes) => {
+                let played = active.play(bytes);
+                eprintln!("[timing] 整曲下载后总计 {:?}", started.elapsed());
+                played
+            }
             Err(error) => Err(error),
         },
     };

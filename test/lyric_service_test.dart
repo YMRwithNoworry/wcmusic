@@ -55,6 +55,7 @@ void main() {
           request.response.write(
             jsonEncode({
               'lrc': {'lyric': '[00:04.00]网易歌词'},
+              'tlyric': {'lyric': '[00:04.00]网易翻译'},
             }),
           );
       }
@@ -79,6 +80,31 @@ void main() {
     expect(kugou.single.text, '酷狗歌词');
     expect(qq.single.text, 'QQ 歌词');
     expect(netease.single.text, '网易歌词');
+    expect(netease.single.translation, '网易翻译');
+  });
+
+  test('merges translation lines by nearest timestamp', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'lyric': '[00:01.00]Hello\n[00:05.00]World',
+          'trans': '[00:01.02]你好\n[00:05.50]世界',
+        }),
+      );
+      await request.response.close();
+    });
+    final service = OnlineLyricService(
+      qqEndpoint: Uri.parse('http://127.0.0.1:${server.port}/qq'),
+    );
+
+    final lines = await service.loadLyrics(_track(TrackSource.tx));
+
+    expect(lines.first.translation, '你好');
+    // 偏差超过 300ms 的句子不回退到错误的翻译
+    expect(lines.last.translation, isNull);
   });
 }
 

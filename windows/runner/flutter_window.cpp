@@ -129,7 +129,12 @@ bool FlutterWindow::OnCreate() {
               FindArgument(arguments, "currentIndex"), 0));
           const float line_progress = static_cast<float>(DoubleValue(
               FindArgument(arguments, "lineProgress"), 0));
-          lyrics_overlay_->Update(lines, current_index, line_progress);
+          const std::wstring current_translation = Utf8ToWide(
+              StringValue(FindArgument(arguments, "currentTranslation"), ""));
+          const std::wstring next_translation = Utf8ToWide(
+              StringValue(FindArgument(arguments, "nextTranslation"), ""));
+          lyrics_overlay_->Update(lines, current_index, line_progress,
+                                  current_translation, next_translation);
           result->Success();
           return;
         }

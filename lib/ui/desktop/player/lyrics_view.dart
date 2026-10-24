@@ -117,6 +117,7 @@ class _LyricsPaneState extends State<LyricsPane> {
           itemBuilder: (context, index) => _LyricLine(
             index: index,
             text: lyrics[index].text,
+            translation: lyrics[index].translation,
             active: index == _index,
             compact: widget.compact,
           ),
@@ -130,12 +131,14 @@ class _LyricLine extends StatelessWidget {
   const _LyricLine({
     required this.index,
     required this.text,
+    required this.translation,
     required this.active,
     required this.compact,
   });
 
   final int index;
   final String text;
+  final String? translation;
   final bool active;
   final bool compact;
 
@@ -144,6 +147,7 @@ class _LyricLine extends StatelessWidget {
     final colors = context.theme.colors;
     final type = context.theme.typography;
     final baseSize = compact ? 17.0 : 22.0;
+    final translation = this.translation;
     return Align(
       alignment: Alignment.centerLeft,
       child: Column(
@@ -162,8 +166,25 @@ class _LyricLine extends StatelessWidget {
                   : colors.foreground.withValues(alpha: .34),
               letterSpacing: active ? -.2 : 0,
             ),
-            child: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis),
+            child: Text(
+              text,
+              maxLines: translation == null ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
+          if (translation != null && translation != text)
+            Text(
+              translation,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: type.body.sm.copyWith(
+                fontSize: (active ? baseSize : baseSize * .84) * .62,
+                height: 1.4,
+                color: active
+                    ? colors.foreground.withValues(alpha: .82)
+                    : colors.foreground.withValues(alpha: .24),
+              ),
+            ),
           if (active) ...[
             const SizedBox(height: 5),
             SizedBox(

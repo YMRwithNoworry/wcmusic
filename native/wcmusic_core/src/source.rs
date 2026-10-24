@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 use md5::{Digest, Md5};
@@ -148,34 +149,165 @@ pub fn resolve_source_url_with_proxy(
     quality: &str,
     use_proxy: bool,
 ) -> Result<String, CoreError> {
-    let metadata = parse_script_metadata(script)?;
-    let script = script.to_owned();
-    let source = source.to_owned();
-    let song_id = song_id.to_owned();
-    let quality = quality.to_owned();
-    run_script_task(move || {
-        resolve_source_url_inner(
-            &script,
+    let (reply_tx, reply_rx) = mpsc::channel();
+    source_worker()
+        .send(SourceJob::Resolve {
+            script: script.to_owned(),
             environment,
-            &source,
-            &song_id,
-            &quality,
+            source: source.to_owned(),
+            song_id: song_id.to_owned(),
+            quality: quality.to_owned(),
             use_proxy,
-            metadata,
-        )
+            reply: reply_tx,
+        })
+        .map_err(|_| CoreError::SourceInitialization("音源执行线程已退出".into()))?;
+    reply_rx
+        .recv()
+        .map_err(|_| CoreError::SourceInitialization("音源执行线程没有返回结果".into()))?
+}
+
+/// 常驻音源线程收到的一次请求。
+enum SourceJob {
+    Resolve {
+        script: String,
+        environment: SourceEnvironment,
+        source: String,
+        song_id: String,
+        quality: String,
+        use_proxy: bool,
+        reply: Sender<Result<String, CoreError>>,
+    },
+    /// 预加载：先把运行时建好放进缓存，第一次点播放就不用再等脚本求值。
+    WarmUp {
+        script: String,
+        environment: SourceEnvironment,
+        use_proxy: bool,
+    },
+}
+
+/// 提前把音源脚本加载进缓存（启动时调一次，失败不影响后续使用）。
+pub fn warm_up_source_script(script: &str, environment: SourceEnvironment, use_proxy: bool) {
+    let _ = source_worker().send(SourceJob::WarmUp {
+        script: script.to_owned(),
+        environment,
+        use_proxy,
+    });
+}
+
+/// 已经加载好脚本的 QuickJS 运行时。
+///
+/// `context` 写在 `runtime` 前面：字段按声明顺序析构，让上下文先释放。
+struct CachedRuntime {
+    script: String,
+    environment: SourceEnvironment,
+    use_proxy: bool,
+    context: Context,
+    runtime: Runtime,
+}
+
+/// 常驻的音源工作线程。
+///
+/// 建运行时 + 执行整份音源脚本要 250–400ms，占「点播放到出声」的一半左右。
+/// 按「脚本 + 环境 + 代理设置」把运行时缓存下来，同一份脚本后续直接复用，
+/// 只有换音源或改代理设置时才重新加载。
+fn source_worker() -> &'static Sender<SourceJob> {
+    static WORKER: OnceLock<Sender<SourceJob>> = OnceLock::new();
+    WORKER.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("wcmusic-source".into())
+            .stack_size(SCRIPT_THREAD_STACK)
+            .spawn(move || source_worker_loop(rx))
+            .expect("启动音源执行线程失败");
+        tx
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn resolve_source_url_inner(
+fn source_worker_loop(rx: Receiver<SourceJob>) {
+    let mut cache: Option<CachedRuntime> = None;
+    while let Ok(job) = rx.recv() {
+        match job {
+            SourceJob::Resolve {
+                script,
+                environment,
+                source,
+                song_id,
+                quality,
+                use_proxy,
+                reply,
+            } => {
+                let result = resolve_with_cache(
+                    &mut cache,
+                    &script,
+                    environment,
+                    &source,
+                    &song_id,
+                    &quality,
+                    use_proxy,
+                );
+                let _ = reply.send(result);
+            }
+            SourceJob::WarmUp {
+                script,
+                environment,
+                use_proxy,
+            } => {
+                if let Err(error) = ensure_cached(&mut cache, &script, environment, use_proxy) {
+                    eprintln!("预加载音源脚本失败：{error}");
+                }
+            }
+        }
+    }
+}
+
+/// 确保缓存里装的是「这份脚本 + 这套环境/代理」的运行时，不是就重建。
+fn ensure_cached(
+    cache: &mut Option<CachedRuntime>,
+    script: &str,
+    environment: SourceEnvironment,
+    use_proxy: bool,
+) -> Result<(), CoreError> {
+    let hit = cache.as_ref().is_some_and(|cached| {
+        cached.script == script
+            && cached.environment == environment
+            && cached.use_proxy == use_proxy
+    });
+    if hit {
+        return Ok(());
+    }
+    let metadata = parse_script_metadata(script)?;
+    let (runtime, context) = build_runtime(script, environment, use_proxy, &metadata)?;
+    *cache = Some(CachedRuntime {
+        script: script.to_owned(),
+        environment,
+        use_proxy,
+        context,
+        runtime,
+    });
+    Ok(())
+}
+
+fn resolve_with_cache(
+    cache: &mut Option<CachedRuntime>,
     script: &str,
     environment: SourceEnvironment,
     source: &str,
     song_id: &str,
     quality: &str,
     use_proxy: bool,
-    metadata: SourceScriptMetadata,
 ) -> Result<String, CoreError> {
+    ensure_cached(cache, script, environment, use_proxy)?;
+    let cached = cache.as_ref().expect("刚刚确保过缓存");
+    invoke_music_url(&cached.runtime, &cached.context, source, song_id, quality)
+}
+
+/// 建一个装好脚本的 QuickJS 运行时。只在缓存未命中时调用（较慢）。
+fn build_runtime(
+    script: &str,
+    environment: SourceEnvironment,
+    use_proxy: bool,
+    metadata: &SourceScriptMetadata,
+) -> Result<(Runtime, Context), CoreError> {
     let runtime =
         Runtime::new().map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT);
@@ -184,14 +316,24 @@ fn resolve_source_url_inner(
         .map_err(|error| CoreError::SourceInitialization(error.to_string()))?;
     install_http_guest(&context, use_proxy)?;
     install_crypto_guest(&context)?;
-    let bootstrap = source_bootstrap(script, environment, &metadata)?;
+    let bootstrap = source_bootstrap(script, environment, metadata)?;
     context.with(|ctx| {
         eval_expression_with_message(&ctx, &bootstrap)
             .and_then(|_| eval_script_with_message(&ctx, script))
             .map_err(|error| CoreError::SourceInitialization(format!("脚本执行失败：{error}")))
     })?;
     drain_jobs(&runtime, &context)?;
+    Ok((runtime, context))
+}
 
+/// 在已加载脚本的运行时里解析一首歌的播放地址。
+fn invoke_music_url(
+    runtime: &Runtime,
+    context: &Context,
+    source: &str,
+    song_id: &str,
+    quality: &str,
+) -> Result<String, CoreError> {
     let source_json = serde_json::to_string(source)?;
     let song_id_json = serde_json::to_string(song_id)?;
     let quality_json = serde_json::to_string(quality)?;
@@ -221,7 +363,7 @@ fn resolve_source_url_inner(
     context.with(|ctx| {
         eval_invoke_with_message(&ctx, &invoke).map_err(CoreError::SourceInitialization)
     })?;
-    drain_jobs(&runtime, &context)?;
+    drain_jobs(runtime, context)?;
     context.with(|ctx| {
         let state_json: String = ctx
             .eval(

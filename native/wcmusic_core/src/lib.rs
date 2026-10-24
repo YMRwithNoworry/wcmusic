@@ -19,5 +19,5 @@ pub use online_search::{
 pub use playlist::{parse_lx_backup, parse_m3u};
 pub use source::{
     parse_script_metadata, resolve_source_url, resolve_source_url_with_proxy,
-    validate_source_script,
+    validate_source_script, warm_up_source_script,
 };

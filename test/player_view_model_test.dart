@@ -150,7 +150,7 @@ void main() {
 
     expect(style.alignment, 'right');
     expect(style.fontSize, 24);
-    expect(style.backgroundColor, 0xFF141416);
+    expect(style.backgroundColor, 0x00000000);
     expect(style.opacity, 0.92);
     expect(style.cornerRadius, 0);
     expect(style.positionX, isNull);
@@ -518,6 +518,51 @@ void main() {
     expect(viewModel.current?.quality, contains('无损 flac'));
   });
 
+  test('keeps playing after the quality is switched mid-track', () async {
+    const track = Track(
+      id: 'quality-switch',
+      title: '切音质歌曲',
+      artist: '切音质歌手',
+      album: '切音质专辑',
+      duration: Duration(minutes: 3),
+      uri: 'https://audio.example/preview.m4a',
+      source: TrackSource.wy,
+      sourceId: 'switch-42',
+    );
+    final player = FakePlayerService();
+    final downloader = _FakeTrackDownloadService();
+    final sourceRepository = _FullTrackSourceRepository();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+      sourceRepository: sourceRepository,
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: player,
+      downloadService: downloader,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    await viewModel.playTrack(track);
+    expect(viewModel.isPlaying, isTrue);
+
+    // 切换音质会重新解析并重新播放一次。
+    await viewModel.setPlaybackQuality(PlaybackQuality.lossless);
+    expect(sourceRepository.resolvedQuality, 'flac');
+    expect(viewModel.isPlaying, isTrue);
+
+    // 之后再按播放/暂停必须还能工作：本地缓存文件名要与音质绑定，
+    // 否则会把旧的 320k 缓存当成无损文件播出去。
+    await viewModel.togglePlayback();
+    expect(viewModel.isPlaying, isFalse);
+    await viewModel.togglePlayback();
+    expect(viewModel.isPlaying, isTrue);
+
+    // 再次播放当前歌曲（例如从列表重新点播）仍然能出声音。
+    await viewModel.playTrack(viewModel.current!);
+    expect(viewModel.isPlaying, isTrue);
+    expect(player.playedTrack?.uri, isNotEmpty);
+  });
+
   test('downloads the current online track to a local file', () async {
     const track = Track(
       id: 'download',
@@ -823,6 +868,7 @@ class _FakeLyricService implements LyricService {
 class _FakeFloatingLyricsService implements FloatingLyricsService {
   String currentLine = '';
   String nextLine = '';
+  String? currentTranslation;
   List<String> lines = const [];
   int currentIndex = -1;
   double lineProgress = 0;
@@ -843,9 +889,12 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
     List<String> lines = const [],
     int currentIndex = -1,
     double lineProgress = 0,
+    String? currentTranslation,
+    String? nextTranslation,
   }) async {
     this.currentLine = currentLine;
     this.nextLine = nextLine;
+    this.currentTranslation = currentTranslation;
     this.lines = lines;
     this.currentIndex = currentIndex;
     this.lineProgress = lineProgress;

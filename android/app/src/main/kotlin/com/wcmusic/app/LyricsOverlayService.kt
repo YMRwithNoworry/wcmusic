@@ -30,6 +30,8 @@ class LyricsOverlayService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_CURRENT_LINE = "currentLine"
         const val EXTRA_NEXT_LINE = "nextLine"
+        const val EXTRA_CURRENT_TRANSLATION = "currentTranslation"
+        const val EXTRA_NEXT_TRANSLATION = "nextTranslation"
 
         private const val CHANNEL_ID = "wcmusic_lyrics"
         private const val NOTIFICATION_ID = 3012
@@ -39,6 +41,7 @@ class LyricsOverlayService : Service() {
     private var overlayView: View? = null
     private var currentText: TextView? = null
     private var nextText: TextView? = null
+    private var translationText: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
     override fun onCreate() {
@@ -67,7 +70,14 @@ class LyricsOverlayService : Service() {
                 val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
                 val current = intent.getStringExtra(EXTRA_CURRENT_LINE).orEmpty()
                 currentText?.text = current.ifBlank { title }
-                nextText?.text = intent.getStringExtra(EXTRA_NEXT_LINE).orEmpty()
+                val translation = intent.getStringExtra(EXTRA_CURRENT_TRANSLATION).orEmpty()
+                translationText?.apply {
+                    text = translation
+                    visibility = if (translation.isBlank()) View.GONE else View.VISIBLE
+                }
+                val next = intent.getStringExtra(EXTRA_NEXT_LINE).orEmpty()
+                val nextTranslation = intent.getStringExtra(EXTRA_NEXT_TRANSLATION).orEmpty()
+                nextText?.text = if (nextTranslation.isBlank()) next else "$next · $nextTranslation"
             }
             else -> return START_NOT_STICKY
         }
@@ -104,6 +114,13 @@ class LyricsOverlayService : Service() {
             maxLines = 1
             text = "播放歌曲后将在这里显示歌词"
         }
+        translationText = TextView(this).apply {
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(245, 243, 236))
+            textSize = 15f
+            maxLines = 1
+            visibility = View.GONE
+        }
         nextText = TextView(this).apply {
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(167, 197, 143))
@@ -111,6 +128,7 @@ class LyricsOverlayService : Service() {
             maxLines = 1
         }
         container.addView(currentText)
+        container.addView(translationText)
         container.addView(nextText)
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -163,6 +181,7 @@ class LyricsOverlayService : Service() {
         overlayView = null
         currentText = null
         nextText = null
+        translationText = null
         layoutParams = null
     }
 

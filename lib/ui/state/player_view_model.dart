@@ -21,6 +21,9 @@ import '../../domain/repositories/music_repository.dart';
 import '../../domain/repositories/source_repository.dart';
 
 class PlayerViewModel extends ChangeNotifier {
+  /// 调试构建下保留最近创建的实例，便于用 VM Service 现场排查（release 下为 null）。
+  static PlayerViewModel? debugLatest;
+
   PlayerViewModel({
     required this.musicRepository,
     required this.sourceRepository,
@@ -40,13 +43,15 @@ class PlayerViewModel extends ChangeNotifier {
        floatingLyricsService =
            floatingLyricsService ?? PlatformFloatingLyricsService(),
        downloadService = downloadService ?? TrackDownloadService() {
+    if (kDebugMode) debugLatest = this;
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
     });
     _positionSubscription = this.playerService.position.listen((value) {
       position = value;
-      // 高频进度只推给专门的可监听对象，页面骨架不跟着每 100ms 重建。
+      // 拖动进度条期间 mpv 可能还在上报旧位置，以拖动目标为准，避免滑块回弹
+      if (_pendingSeek != null) return;
       positionListenable.value = value;
       _syncLyrics(value);
     });
@@ -144,6 +149,9 @@ class PlayerViewModel extends ChangeNotifier {
   StreamSubscription<double>? _volumeSubscription;
   StreamSubscription<void>? _completedSubscription;
   StreamSubscription<String>? _errorSubscription;
+
+  /// seek 尚未生效时记录目标位置，丢弃期间上报的旧进度
+  Duration? _pendingSeek;
 
   /// 播放进度。只给进度条 / 歌词这类高频组件使用。
   final ValueNotifier<Duration> positionListenable = ValueNotifier(
@@ -805,8 +813,18 @@ class PlayerViewModel extends ChangeNotifier {
     if (maximum <= 0) return;
     final target = Duration(milliseconds: value.round().clamp(0, maximum));
     position = target;
-    await playerService.seek(target);
+    _pendingSeek = target;
+    // 高频进度只推给专门的可监听对象，页面骨架不跟着每 100ms 重建。
+    positionListenable.value = target;
     notifyListeners();
+    try {
+      await playerService.seek(target);
+    } finally {
+      // 给 mpv 一点时间把新位置推回来；期间丢弃旧位置的迟到上报
+      Timer(const Duration(milliseconds: 600), () {
+        _pendingSeek = null;
+      });
+    }
   }
 
   Future<void> setVolume(double value) async {
@@ -1004,11 +1022,17 @@ class PlayerViewModel extends ChangeNotifier {
       for (var index = windowStart; index < windowEnd; index++)
         lyrics[index].text,
     ];
+    final translation = nextIndex < 0 ? null : lyrics[nextIndex].translation;
+    final nextTranslation = followingIndex >= 0 && followingIndex < lyrics.length
+        ? lyrics[followingIndex].translation
+        : null;
     unawaited(
       floatingLyricsService.update(
         title: '${track.title} · ${track.artist}',
         currentLine: currentLine,
         nextLine: nextLine,
+        currentTranslation: translation,
+        nextTranslation: nextTranslation,
         lines: windowLines,
         currentIndex: nextIndex - windowStart,
         lineProgress: lineProgress,

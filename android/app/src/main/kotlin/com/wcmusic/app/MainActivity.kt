@@ -26,6 +26,8 @@ class MainActivity : FlutterActivity() {
                             call.argument<String>("title").orEmpty(),
                             call.argument<String>("currentLine").orEmpty(),
                             call.argument<String>("nextLine").orEmpty(),
+                            call.argument<String>("currentTranslation").orEmpty(),
+                            call.argument<String>("nextTranslation").orEmpty(),
                         )
                         result.success(null)
                     }
@@ -55,13 +57,21 @@ class MainActivity : FlutterActivity() {
         return true
     }
 
-    private fun updateLyrics(title: String, currentLine: String, nextLine: String) {
+    private fun updateLyrics(
+        title: String,
+        currentLine: String,
+        nextLine: String,
+        currentTranslation: String,
+        nextTranslation: String,
+    ) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) return
         ContextCompat.startForegroundService(this, Intent(this, LyricsOverlayService::class.java).apply {
             action = LyricsOverlayService.ACTION_UPDATE
             putExtra(LyricsOverlayService.EXTRA_TITLE, title)
             putExtra(LyricsOverlayService.EXTRA_CURRENT_LINE, currentLine)
             putExtra(LyricsOverlayService.EXTRA_NEXT_LINE, nextLine)
+            putExtra(LyricsOverlayService.EXTRA_CURRENT_TRANSLATION, currentTranslation)
+            putExtra(LyricsOverlayService.EXTRA_NEXT_TRANSLATION, nextTranslation)
         })
     }
 }

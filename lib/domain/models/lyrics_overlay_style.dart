@@ -4,7 +4,7 @@ class LyricsOverlayStyle {
     this.fontSize = 24,
     this.alignment = 'right',
     this.textColor = 0xFFF3F3F3,
-    this.backgroundColor = 0xFF141416,
+    this.backgroundColor = 0x00000000,
     this.opacity = 0.92,
     this.cornerRadius = 0,
     this.locked = true,
@@ -78,8 +78,8 @@ class LyricsOverlayStyle {
           ? 0xFFF3F3F3
           : textColor ?? 0xFFF3F3F3,
       backgroundColor: needsAppleMusicMigration
-          ? 0xFF141416
-          : backgroundColor ?? 0xFF141416,
+          ? 0x00000000
+          : backgroundColor ?? 0x00000000,
       opacity: needsAppleMusicMigration ? 0.92 : opacity ?? 0.92,
       cornerRadius: needsAppleMusicMigration ? 0 : cornerRadius ?? 0,
       locked: json['locked'] as bool? ?? true,

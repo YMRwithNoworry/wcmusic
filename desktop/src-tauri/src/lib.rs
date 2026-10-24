@@ -35,6 +35,16 @@ pub fn run() {
             }
             // 设置里开着桌面歌词就把窗口建出来（与旧桌面端一致）。
             let settings = app.state::<state::AppState>().settings();
+            // 提前在后台把音源脚本加载进 QuickJS 缓存：脚本求值要 250–400ms，
+            // 不预热的话第一次点播放就得白等这一下。
+            let warm_script = app
+                .state::<state::AppState>()
+                .with_sources(|sources| sources.active_script().to_owned());
+            wcmusic_core::warm_up_source_script(
+                &warm_script,
+                wcmusic_core::SourceEnvironment::Desktop,
+                settings.use_network_proxy,
+            );
             if settings.lyrics_enabled {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

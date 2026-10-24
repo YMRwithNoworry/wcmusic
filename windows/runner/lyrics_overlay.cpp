@@ -13,6 +13,7 @@ constexpr int kOverlayWidth = 480;
 constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
 constexpr float kLyricsAnimationSeconds = 0.38f;
+const std::wstring kEmptyText;
 
 float EaseInOutCubic(float value) {
   return value < 0.5f
@@ -97,13 +98,17 @@ void LyricsOverlay::Hide() {
 }
 
 void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
-                           int current_index, float line_progress) {
+                           int current_index, float line_progress,
+                           const std::wstring& current_translation,
+                           const std::wstring& next_translation) {
   const int next_index = lines.empty()
       ? 0
       : std::clamp(current_index, 0, static_cast<int>(lines.size()) - 1);
   const bool index_changed = next_index != current_index_;
   lines_ = lines;
   line_progress_ = std::clamp(line_progress, 0.0f, 1.0f);
+  current_translation_ = current_translation;
+  next_translation_ = next_translation;
   if (lines_.empty()) {
     if (window_) InvalidateRect(window_, nullptr, TRUE);
     return;
@@ -345,6 +350,14 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
 
     Gdiplus::RectF text_rect(left_padding, y - line_height / 2.0f,
                              line_width, line_height);
+    // 当前行和下一行若带有翻译，将原文上移，下方挤出翻译行
+    const std::wstring& translation = index == current_index_
+        ? current_translation_
+        : index == current_index_ + 1 ? next_translation_ : kEmptyText;
+    const bool has_translation = !translation.empty();
+    if (has_translation) {
+      text_rect.Y -= font_size * 0.28f;
+    }
     graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
                         &base_brush);
 
@@ -353,13 +366,28 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
       Gdiplus::RectF measured;
       graphics.MeasureString(lines_[index].c_str(), -1, &font, text_rect,
                              &format, &measured);
-      Gdiplus::RectF clip_rect(measured.X, y - line_height / 2.0f,
+      Gdiplus::RectF clip_rect(measured.X, text_rect.Y,
                               measured.Width * line_progress_, line_height);
       graphics.SetClip(clip_rect);
       Gdiplus::SolidBrush accent_brush(accent_color);
       graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
                           &accent_brush);
       graphics.Restore(state);
+    }
+
+    if (has_translation) {
+      Gdiplus::Font translation_font(&font_family, font_size * 0.62f,
+                                     Gdiplus::FontStyleRegular,
+                                     Gdiplus::UnitPixel);
+      const BYTE translation_alpha = static_cast<BYTE>(alpha * 0.78f);
+      Gdiplus::SolidBrush translation_brush(Gdiplus::Color(
+          translation_alpha, text_color.GetRed(), text_color.GetGreen(),
+          text_color.GetBlue()));
+      Gdiplus::RectF translation_rect(
+          left_padding, y + line_height * 0.16f, line_width,
+          line_height * 0.8f);
+      graphics.DrawString(translation.c_str(), -1, &translation_font,
+                          translation_rect, &format, &translation_brush);
     }
   }
 }

@@ -139,20 +139,66 @@ class _SeekBarState extends State<SeekBar> with SingleTickerProviderStateMixin {
                   : null,
               child: SizedBox(
                 height: height,
-                child: AnimatedBuilder(
-                  animation: _ticker,
-                  builder: (context, _) => CustomPaint(
-                    painter: _SeekPainter(
-                      fraction: _displayed,
-                      active: hasDuration,
-                      hovered: _hovered || _dragFraction != null,
-                      trackColor: colors.border,
-                      activeColor: colors.primary,
-                      thumbColor: colors.primary,
-                      glowColor: colors.primary.withValues(alpha: .25),
-                      trackHeight: widget.compact ? 3 : 4,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _ticker,
+                      builder: (context, _) => CustomPaint(
+                        size: Size(constraints.maxWidth, height),
+                        painter: _SeekPainter(
+                          fraction: _displayed,
+                          active: hasDuration,
+                          hovered: _hovered || _dragFraction != null,
+                          trackColor: colors.border,
+                          activeColor: colors.primary,
+                          thumbColor: colors.primary,
+                          glowColor: colors.primary.withValues(alpha: .25),
+                          trackHeight: widget.compact ? 3 : 4,
+                        ),
+                      ),
                     ),
-                  ),
+                    // 拖动时在滑块旁显示目标时间
+                    if (_dragFraction != null)
+                      Positioned(
+                        left: _displayed * constraints.maxWidth - 34,
+                        top: -18,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: colors.primary,
+                              borderRadius: const BorderRadius.all(
+                                Radius.circular(6),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              child: Text(
+                                formatDuration(
+                                  Duration(
+                                    milliseconds:
+                                        (duration.inMilliseconds *
+                                                _displayed)
+                                            .round(),
+                                  ),
+                                ),
+                                style: type.body.xs.copyWith(
+                                  color: colors.primaryForeground,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),

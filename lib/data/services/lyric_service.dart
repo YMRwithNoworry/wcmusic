@@ -62,6 +62,43 @@ class OnlineLyricService implements LyricService {
     return lines;
   }
 
+  /// 逐句合并翻译歌词：按时间就近匹配（允许 300ms 偏差），匹配不到的句子保持原文
+  List<LyricLine> _mergeTranslation(
+    List<LyricLine> lines,
+    List<LyricLine> translations,
+  ) {
+    if (lines.isEmpty || translations.isEmpty) return lines;
+    const tolerance = Duration(milliseconds: 300);
+    return [
+      for (final line in lines)
+        switch (_closestTranslation(line.time, translations, tolerance)) {
+          final translation? => line.copyWith(translation: translation),
+          _ => line,
+        },
+    ];
+  }
+
+  String? _closestTranslation(
+    Duration time,
+    List<LyricLine> translations,
+    Duration tolerance,
+  ) {
+    String? best;
+    var bestDelta = tolerance + const Duration(milliseconds: 1);
+    for (final candidate in translations) {
+      final delta = candidate.time - time;
+      final distance = delta.isNegative ? -delta : delta;
+      if (distance < bestDelta) {
+        bestDelta = distance;
+        best = candidate.text;
+      } else if (candidate.time > time) {
+        // 时间已排序，后续句子只会更远
+        break;
+      }
+    }
+    return best;
+  }
+
   Future<List<LyricLine>> _loadKuwo(String sourceId) async {
     final decoded = await _getJson(
       _kuwoEndpoint.replace(
@@ -110,22 +147,35 @@ class OnlineLyricService implements LyricService {
     final id = candidate['id']?.toString();
     final accessKey = _text(candidate['accesskey']);
     if (id == null || accessKey == null) return const [];
-    final download = await _getJson(
-      _kugouDownloadEndpoint.replace(
-        queryParameters: {
-          ..._kugouDownloadEndpoint.queryParameters,
-          'ver': '1',
-          'client': 'pc',
-          'id': id,
-          'accesskey': accessKey,
-          'fmt': 'lrc',
-          'charset': 'utf8',
-        },
-      ),
-    );
-    final content = download is Map ? _text(download['content']) : null;
+
+    // 拉取酷狗歌词；翻译轨可能不存在，失败时返回空
+    Future<String?> fetch(String fmt) async {
+      try {
+        final decoded = await _getJson(
+          _kugouDownloadEndpoint.replace(
+            queryParameters: {
+              ..._kugouDownloadEndpoint.queryParameters,
+              'ver': '1',
+              'client': 'pc',
+              'id': id,
+              'accesskey': accessKey,
+              'fmt': fmt,
+              'charset': 'utf8',
+            },
+          ),
+        );
+        final content = decoded is Map ? _text(decoded['content']) : null;
+        return content == null ? null : utf8.decode(base64Decode(content));
+      } on Object {
+        return null;
+      }
+    }
+
+    final results = await Future.wait([fetch('lrc'), fetch('krc')]);
+    final content = results[0];
     if (content == null) return const [];
-    return parseLrc(utf8.decode(base64Decode(content)));
+    final lines = parseLrc(content);
+    return _mergeTranslation(lines, parseLrc(results[1] ?? ''));
   }
 
   Future<List<LyricLine>> _loadQq(String sourceId) async {
@@ -140,7 +190,12 @@ class OnlineLyricService implements LyricService {
       ),
     );
     final lyric = decoded is Map ? _text(decoded['lyric']) : null;
-    return lyric == null ? const [] : parseLrc(lyric);
+    final translation = decoded is Map ? _text(decoded['trans']) : null;
+    if (lyric == null) return const [];
+    return _mergeTranslation(
+      parseLrc(lyric),
+      translation == null ? const [] : parseLrc(translation),
+    );
   }
 
   Future<List<LyricLine>> _loadNetease(String sourceId) async {
@@ -155,10 +210,16 @@ class OnlineLyricService implements LyricService {
         },
       ),
     );
-    final lrc = decoded is Map ? decoded['lrc'] : null;
-    final lyric = lrc is Map ? _text(lrc['lyric']) : null;
-    return lyric == null ? const [] : parseLrc(lyric);
+    final lyric = decoded is Map ? _text(_lrcField(decoded['lrc'])) : null;
+    final translation = decoded is Map ? _text(_lrcField(decoded['tlyric'])) : null;
+    if (lyric == null) return const [];
+    return _mergeTranslation(
+      parseLrc(lyric),
+      translation == null ? const [] : parseLrc(translation),
+    );
   }
+
+  String? _lrcField(Object? value) => value is Map ? _text(value['lyric']) : null;
 
   Future<dynamic> _getJson(Uri uri) async {
     final proxy = _proxyResolver(uri);
