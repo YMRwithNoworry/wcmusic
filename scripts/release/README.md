@@ -1,21 +1,28 @@
 # 发布流程
 
-Windows 与 Android 是两条独立的版本线，各自递增版本号、各自出一个 GitHub Release：
+Windows 与 Android **合并发布**：共用一个版本号，出一个 GitHub Release，里面同时挂上两端的安装包。
 
-| 平台 | tag | 资产 | 版本来源 |
-| --- | --- | --- | --- |
-| Windows | `vX.Y.Z` | `wcmusic-windows-x64.zip` | `pubspec.yaml` |
-| Android | `android-vX.Y.Z` | `wcmusic-android-arm64.apk` | `pubspec.yaml` + 构建号 `+N` |
+| 平台 | 资产 |
+| --- | --- |
+| Windows | `wcmusic-windows-x64.zip` |
+| Android | `wcmusic-android-arm64.apk` |
+
+- tag：`vX.Y.Z`（只有一个）
+- 版本来源：`pubspec.yaml` 的 `version: X.Y.Z+N`
+  - `X.Y.Z` 同时是 Windows 包版本与 Android `versionName`
+  - `+N` 是 Android `versionCode`，每次发布 +1
+
+> 早期曾用过「Windows 发 `vX.Y.Z`、Android 单独发 `android-vX.Y.Z`」的两条版本线，现已取消。应用内的「检查更新」仍能识别历史 `android-v` 标签，但只用于给老用户提示升级。
 
 推送到任意分支会触发 `.github/workflows/release.yml`：
 
 1. `checks` — Ubuntu 上跑 `flutter analyze`、`flutter test` 和本目录的脚本测试（含 golden 快照，快照使用随包分发的 Noto Sans SC，不依赖机器字体）。
-2. `version` — 按平台查询各自 tag 前缀下的最新 Release，递增版本并写回 `pubspec.yaml`，提交信息带 `[skip ci]`。
-3. `windows` / `android` — 两端并行构建，一端失败不影响另一端出包。
-4. `publish-windows` / `publish-android` — 各自发布 Release，说明里只列本平台的下载。
-5. `site` + `deploy` — 两端都发布成功后重写官网（按平台写各自的版本号与下载链接），再部署到 Cloudflare Pages。
+2. `version` — 查询最新 `vX.Y.Z` Release、递增版本、写回 `pubspec.yaml` 并提交（提交信息带 `[skip ci]`）。
+3. `windows` / `android` — 两端并行构建；Windows 用 `--build-name` 把发布版本写进产物，应用靠它判断「有没有更新」。
+4. `publish` — 两端都出包后才发布：一个 Release、两个资产、说明里同时列出两种下载。**任一端失败就整次不发版**，不会留下半个 Release。
+5. `site` + `deploy` — 重写官网（两端版本号相同，下载链接指向同一个 tag），再部署到 Cloudflare Pages 并校验线上版本。
 
-手动触发（workflow_dispatch）时可以选择 `target`（`both` / `windows` / `android`）与 `bump`。
+手动触发（workflow_dispatch）时可以选择 `bump`（`patch` / `minor` / `major` / `none`；`none` 用于重新发布当前版本）。
 
 ## 本地验证脚本
 

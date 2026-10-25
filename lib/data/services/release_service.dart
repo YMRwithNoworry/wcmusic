@@ -72,7 +72,8 @@ class GitHubReleaseService implements ReleaseService {
   /// 当前运行版本（例如 1.2.82）；为空时退回到 pubspec 版本，都没有就按平台查最新发布。
   final String? currentVersion;
 
-  // 与发布脚本约定的两条版本线：vX.Y.Z（桌面端）与 android-vX.Y.Z
+  // 发布标签：合并发布后 Windows 与 Android 共用 vX.Y.Z；早期历史上还出现过
+  // 独立的 android-vX.Y.Z 版本线，这里仍然识别，避免给老用户报错版本。
   static const windowsTagPrefix = 'v';
   static const androidTagPrefix = 'android-v';
 
@@ -84,12 +85,11 @@ class GitHubReleaseService implements ReleaseService {
   /// 上次一键更新写入的版本记录，文件名固定在 exe 旁边。
   static const updateInfoSuffix = '.update-info.json';
 
-  String get _platformTagPrefix =>
-      Platform.isAndroid ? androidTagPrefix : windowsTagPrefix;
-
-  /// 另一种平台的 tag 前缀；Windows 端不能把 android-v1.2.81 当成新版本
-  String get _otherPlatformTagPrefix =>
-      Platform.isAndroid ? windowsTagPrefix : androidTagPrefix;
+  /// 当前平台能接受的 tag 前缀：合并发布的 vX.Y.Z，以及 Android 历史上单独的
+  /// android-vX.Y.Z。Windows 不能把 android-v 的发布当成自己的版本。
+  List<String> get _platformTagPrefixes => Platform.isAndroid
+      ? const [androidTagPrefix, windowsTagPrefix]
+      : const [windowsTagPrefix];
 
   String get _platformAssetSuffix => Platform.isAndroid ? '.apk' : '.zip';
 
@@ -212,13 +212,12 @@ class GitHubReleaseService implements ReleaseService {
         if (item is! Map<String, dynamic>) continue;
         if (item['draft'] == true || item['prerelease'] == true) continue;
         final tag = item['tag_name'] as String? ?? '';
-        if (!tag.startsWith(_platformTagPrefix) ||
-            tag.startsWith(_otherPlatformTagPrefix)) {
-          continue;
+        String? version;
+        for (final prefix in _platformTagPrefixes) {
+          if (!tag.startsWith(prefix)) continue;
+          version = _normalizeVersion(tag.substring(prefix.length));
+          if (version != null) break;
         }
-        final version = _normalizeVersion(
-          tag.substring(_platformTagPrefix.length),
-        );
         if (version == null) continue;
         final assets = item['assets'];
         if (assets is! List || assets.isEmpty) continue;

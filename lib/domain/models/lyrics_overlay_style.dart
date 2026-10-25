@@ -64,7 +64,7 @@ class LyricsOverlayStyle {
   );
 
   Map<String, dynamic> toJson() => {
-    'layoutVersion': 2,
+    'layoutVersion': 3,
     'fontFamily': fontFamily,
     'fontWeight': fontWeight,
     'fontSize': fontSize,
@@ -85,8 +85,11 @@ class LyricsOverlayStyle {
     final backgroundColor = (json['backgroundColor'] as num?)?.toInt();
     final opacity = (json['opacity'] as num?)?.toDouble();
     final cornerRadius = (json['cornerRadius'] as num?)?.toDouble();
-    final needsAppleMusicMigration =
-        ((json['layoutVersion'] as num?)?.toInt() ?? 0) < 2;
+    final layoutVersion = (json['layoutVersion'] as num?)?.toInt() ?? 0;
+    final needsAppleMusicMigration = layoutVersion < 2;
+    // 桌面歌词默认透明：v1/v2 时代保存下来的黑色底会被迁移成透明，用户想加背景
+    // 可以在设置页重新挑选颜色（v3 起会记住用户的选择）。
+    final needsTransparentBackground = layoutVersion < 3;
     return LyricsOverlayStyle(
       fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
       fontWeight: lyricsOverlayFontWeights.contains(json['fontWeight'])
@@ -97,7 +100,7 @@ class LyricsOverlayStyle {
       textColor: needsAppleMusicMigration
           ? 0xFFF3F3F3
           : textColor ?? 0xFFF3F3F3,
-      backgroundColor: needsAppleMusicMigration
+      backgroundColor: needsAppleMusicMigration || needsTransparentBackground
           ? 0x00000000
           : backgroundColor ?? 0x00000000,
       opacity: needsAppleMusicMigration ? 0.92 : opacity ?? 0.92,

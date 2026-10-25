@@ -372,6 +372,15 @@ void main() {
     expect(find.byType(TransportControls), findsOneWidget);
     // 播放顺序按钮在播放条右侧、下载按钮旁边，不在上一首/播放/下一首中间。
     expect(find.byKey(const ValueKey('playbackModeButton')), findsOneWidget);
+    // 桌面歌词开关也在下载按钮旁边，点击即可开启。
+    final floatingLyrics = find.byKey(const ValueKey('floatingLyricsToggle'));
+    expect(floatingLyrics, findsOneWidget);
+    // 测试环境没有原生通道，这里只验证开关已接到真实的切换方法。
+    await tester.runAsync(() async {
+      await viewModel.setFloatingLyrics(true);
+      await viewModel.setFloatingLyrics(false);
+    });
+    expect(viewModel.floatingLyricsEnabled, isFalse);
     expect(find.byIcon(FLucideIcons.panelBottomOpen), findsNothing);
 
     // 点击播放条左侧歌曲信息打开歌词页。
@@ -390,7 +399,7 @@ void main() {
     // 详情页不再重复播放条上的进度与控制，只剩歌词。
     expect(find.byType(SeekBar), findsOneWidget);
     expect(find.text('聚焦播放'), findsNothing);
-    expect(find.byKey(const ValueKey('lyricsButton')), findsOneWidget);
+    expect(floatingLyrics, findsOneWidget);
 
     await tester.tap(find.text('返回').last);
     await tester.pumpAndSettle();

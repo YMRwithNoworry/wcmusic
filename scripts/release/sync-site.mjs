@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 // 让官网跟上最新发布：下载链接、版本号、发布日期与更新日志一次性重写。
 //
-// Windows 与 Android 是两条独立的版本线（tag 分别为 vX.Y.Z 和 android-vX.Y.Z），
-// 所以版本号、下载地址、更新日志都按平台分别传入。
+// Windows 与 Android 合并发布：同一个版本号 vX.Y.Z，同一个 Release 里同时有
+// Windows 的 zip 与 Android 的 apk，所以官网两处版本号通常相同。
 //
 // 用法：
-//   # 只生成某个平台的 Release 说明
-//   node scripts/release/sync-site.mjs --platform windows --version 1.2.4 [--previous 1.2.3] \
+//   # 生成 Release 说明（Windows / Android 两个产物都列出来）
+//   node scripts/release/sync-site.mjs --version 1.2.4 [--previous 1.2.3] \
 //     --repo YMRwithNoworry/wcmusic --notes release-notes.md
-//   node scripts/release/sync-site.mjs --platform android --version 1.2.4 ...
 //
-//   # 重写官网（两条线都已发布后调用）
-//   node scripts/release/sync-site.mjs --platform site \
-//     --windows-version 1.2.4 --windows-previous 1.2.3 \
-//     --android-version 1.2.4 --android-previous 1.2.3 --notes release-notes.md
+//   # 重写官网（--windows-version / --android-version 可省略，默认同 --version）
+//   node scripts/release/sync-site.mjs --platform site --version 1.2.4 \
+//     [--windows-version 1.2.4] [--android-version 1.2.4] [--windows-previous 1.2.3]
 //
 // 只在发布成功之后调用：官网的下载链接必须指向已经存在的 Release。
 
@@ -30,20 +28,22 @@ function arg(name, fallback = null) {
   return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : fallback;
 }
 
-const platform = arg("platform", "site");
+const platform = arg("platform", "release");
 const repo = arg("repo", "YMRwithNoworry/wcmusic");
 const notesPath = arg("notes");
-const windowsVersion = platform === "site" ? arg("windows-version") : platform === "windows" ? arg("version") : null;
-const androidVersion = platform === "site" ? arg("android-version") : platform === "android" ? arg("version") : null;
-const windowsPrevious = platform === "site" ? arg("windows-previous") : arg("previous");
-const androidPrevious = platform === "site" ? arg("android-previous") : arg("previous");
+const version = arg("version");
+const sharedTag = version ? "v" + version : null;
+const windowsVersion = arg("windows-version", version);
+const androidVersion = arg("android-version", version);
+const windowsPrevious = arg("windows-previous", arg("previous"));
+const androidPrevious = arg("android-previous", arg("previous"));
 if (platform === "site" && (!windowsVersion || !androidVersion)) {
-  throw new Error("同步官网需要同时提供 --windows-version 与 --android-version");
+  throw new Error("同步官网需要 --version，或同时提供 --windows-version 与 --android-version");
 }
-const notesVersion = platform === "windows" ? windowsVersion : platform === "android" ? androidVersion : null;
 
+// 合并发布时两处用同一个 tag；旧存档只发布了一端的版本仍能单独指定版本号。
 const windowsTag = "v" + windowsVersion;
-const androidTag = "android-v" + androidVersion;
+const androidTag = sharedTag && androidVersion === version ? sharedTag : "android-v" + androidVersion;
 const releaseUrl = (tag, asset) => "https://github.com/" + repo + "/releases/download/" + tag + "/" + asset;
 const windowsUrl = releaseUrl(windowsTag, WINDOWS_ASSET);
 const androidUrl = releaseUrl(androidTag, APK_NAME);
@@ -201,42 +201,38 @@ function rewriteChangelog(items) {
   });
 }
 
-/** Release 说明：每个 Release 只列自己平台的下载，两条线互不混淆。 */
-function writeNotes(platformName, version, previous) {
-  if (!notesPath) return;
-  const items = commits(previous);
-  const tag = platformName === "windows" ? windowsTag : androidTag;
-  const versionLine =
-    platformName === "windows"
-      ? "- **Windows x64**：[" + WINDOWS_ASSET + "](" + windowsUrl + ") — 解压后运行单个 exe，无需安装"
-      : "- **Android arm64**：[" + APK_NAME + "](" + androidUrl + ") — Android 8.0+";
+/** Release 说明：合并发布，一个 Release 同时列出 Windows 与 Android 的下载。 */
+function writeNotes() {
+  if (!notesPath || !version) return;
+  const items = commits(windowsPrevious);
   const notes = [
-    "## WCMusic " + version + (platformName === "windows" ? "" : "（Android）"),
+    "## WCMusic " + version + "（Windows + Android）",
     "",
     changelogMarkdown(items),
     "",
     "### 下载",
-    versionLine,
+    "- **Windows x64**：[" + WINDOWS_ASSET + "](" + windowsUrl + ") — 解压后运行单个 exe，无需安装",
+    "- **Android arm64**：[" + APK_NAME + "](" + androidUrl + ") — Android 8.0+",
     "",
   ];
-  if (previous && previous !== version && /^\d+\.\d+\.\d+$/.test(previous)) {
-    const from = platformName === "android" ? "android-v" : "v";
-    notes.push("**完整改动**：https://github.com/" + repo + "/compare/" + from + previous + "..." + tag, "");
+  if (windowsPrevious && windowsPrevious !== version && /^\d+\.\d+\.\d+$/.test(windowsPrevious)) {
+    notes.push("**完整改动**：https://github.com/" + repo + "/compare/v" + windowsPrevious + "..." + windowsTag, "");
   }
   writeFileSync(notesPath, notes.join("\n"));
-  console.log("已生成 " + platformName + " Release 说明（" + items.length + " 条提交）");
+  console.log("已生成 Release 说明（" + items.length + " 条提交）");
 }
 
 if (platform === "site") {
-  const windowsItems = commits(windowsPrevious && windowsPrevious !== windowsVersion ? "v" + windowsPrevious : null);
+  const items = commits(
+    windowsPrevious && windowsPrevious !== windowsVersion ? "v" + windowsPrevious : null,
+  );
   rewriteLinks(INDEX);
   rewriteLinks(APP_JS);
   rewriteVersions();
-  // 官网的更新日志以 Windows 线的提交为准（两条线共享同一份提交历史）。
-  rewriteChangelog(windowsItems);
+  rewriteChangelog(items);
   console.log(
-    "官网已同步：Windows " + windowsTag + " / Android " + androidTag + "（仓库 " + repo + "，提交 " + windowsItems.length + " 条）",
+    "官网已同步：Windows " + windowsTag + " / Android " + androidTag + "（仓库 " + repo + "，提交 " + items.length + " 条）",
   );
 } else {
-  writeNotes(platform, notesVersion, platform === "windows" ? windowsPrevious : androidPrevious);
+  writeNotes();
 }

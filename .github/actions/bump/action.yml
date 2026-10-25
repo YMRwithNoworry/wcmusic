@@ -1,17 +1,11 @@
 name: 递增版本并锁定构建提交
-description: 按产品线查询最新 tag、递增版本、写回 pubspec 并提交；未选中该平台时只带出当前版本。
+description: 查询最新 vX.Y.Z 发布、递增版本（Windows 与 Android 共用同一版本号）、写回 pubspec 并提交。
 
 inputs:
-  platform:
-    description: windows 或 android
-    required: true
   tag-prefix:
-    description: 本条产品线的 tag 前缀（v / android-v）
-    required: true
-  target:
-    description: 本次要发布的平台（both / windows / android）
+    description: 发布 tag 前缀（合并发布固定为 v）
     required: false
-    default: both
+    default: v
   bump:
     description: patch / minor / major / none
     required: false
@@ -33,14 +27,14 @@ runs:
   using: composite
   steps:
     - id: latest
-      name: 查询本条产品线的最新版本
+      name: 查询最新发布版本
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
       run: |
         set -euo pipefail
-        # 不用 releases/latest：它跨平台混排，Android 的 android-v 标签会顶掉 Windows 的 v 标签。
+        # 不用 releases/latest：历史上有 android-v 标签混在其中。
         # gh 的 --jq 不认 jq 的 --arg，所以先列出标签再在 shell 里按前缀挑最新。
         tags=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
         tag=$(printf '%s\n' "$tags" | sed -n "s/^${TAG_PREFIX}\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p" | sort -V | tail -1)
@@ -50,13 +44,10 @@ runs:
       name: 递增版本（patch / minor / major / none）
       shell: bash
       env:
-        PLATFORM: ${{ inputs.platform }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
-        TARGET: ${{ inputs.target }}
         BUMP: ${{ inputs.bump }}
         LATEST: ${{ steps.latest.outputs.tag }}
-      # 本次不发布该平台时跳过写回，输出里带出当前版本（不递增）。
-      run: node scripts/release/bump-version.mjs --platform "$PLATFORM" --tag-prefix "$TAG_PREFIX" --target "$TARGET" "$BUMP" "$LATEST"
+      run: node scripts/release/bump-version.mjs --tag-prefix "$TAG_PREFIX" "$BUMP" "$LATEST"
     - id: source
       name: 写回版本并锁定构建提交
       shell: bash
@@ -65,7 +56,6 @@ runs:
         BUILD: ${{ steps.bump.outputs.build }}
         PREVIOUS: ${{ steps.bump.outputs.previous }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
-        PLATFORM: ${{ inputs.platform }}
       run: |
         set -euo pipefail
         version=$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+' pubspec.yaml | head -1 | sed -E 's/^version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
@@ -95,6 +85,3 @@ runs:
           echo "sha=$compute"
           echo "build=$BUILD"
         } >> "$GITHUB_OUTPUT"
-        if [ "$BUILD" != "true" ]; then
-          echo "本次跳过 $PLATFORM 构建（现有版本 v$version）" >> "$GITHUB_STEP_SUMMARY"
-        fi

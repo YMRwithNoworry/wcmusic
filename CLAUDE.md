@@ -30,5 +30,5 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 保留已有中文注释和面向用户的中文文案；新增代码注释也用中文。
 - Dart 测试在 `test/`，Rust 单测是内联 `#[cfg(test)]` 模块；测试里的 fake 服务须随 `FloatingLyricsService` 等接口签名同步更新。
-- CI 在 `.github/workflows/release.yml`（流程说明见 `scripts/release/README.md`）：推送到任意分支会跑检查，然后 Windows 与 Android **两条独立版本线**各自递增版本、各自发布 Release（tag 分别为 `vX.Y.Z` 与 `android-vX.Y.Z`），两端都成功后再同步 `site/` 并部署 Cloudflare Pages。
+- CI 在 `.github/workflows/release.yml`（流程说明见 `scripts/release/README.md`）：推送到任意分支会跑检查，然后 Windows 与 Android **合并发布**——共用一个版本号 `vX.Y.Z`（`pubspec.yaml` 的 `version:`，Android 构建号 `+N` 同时 +1），两端并行构建，成功后合成一个同时含 zip 与 apk 的 Release，再同步 `site/` 并部署 Cloudflare Pages。任一端构建失败就整次不发版。
 - 每次任务结束时把改动提交并推送到 GitHub 远程仓库。

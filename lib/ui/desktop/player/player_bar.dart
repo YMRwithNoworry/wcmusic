@@ -212,27 +212,35 @@ class _NowPlayingInfo extends StatelessWidget {
   }
 }
 
-/// 歌词按钮：播放条上紧随下载按钮的歌词入口。
+/// 桌面歌词开关：放在下载按钮旁边，一键显示 / 隐藏桌面歌词。
 ///
-/// 图标是「文本行 + 音符」，与「顺序播放」模式的 listMusic 区分开。原先占用
-/// 这个位置的是桌面歌词开关，现已移到设置页；这里只做状态展示，点击行为
-/// 交给聚焦播放页的歌词面板。
+/// 图标沿用 listEnd（文本行 + 音符），开启时高亮。平台不支持时按钮置灰；
+/// 设置页里也有同一个开关。
 class LyricsButton extends StatelessWidget {
   const LyricsButton({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final hasLyrics = context.select<PlayerViewModel, bool>(
-      (model) => model.lyrics.isNotEmpty,
+    final enabled = context.select<PlayerViewModel, bool>(
+      (model) => model.floatingLyricsEnabled,
+    );
+    final supported = context.select<PlayerViewModel, bool>(
+      (model) => model.floatingLyricsService.isSupported,
     );
     return RoundIconButton(
-      key: const ValueKey('lyricsButton'),
+      key: const ValueKey('floatingLyricsToggle'),
       icon: FLucideIcons.listEnd,
-      tooltip: hasLyrics ? '歌词已加载' : '暂无歌词',
-      selected: hasLyrics,
+      tooltip: !supported
+          ? '当前平台不支持桌面歌词'
+          : enabled
+          ? '关闭桌面歌词'
+          : '开启桌面歌词',
+      selected: enabled,
       size: 34,
       iconSize: 17,
-      onPress: null,
+      onPress: supported
+          ? () => context.read<PlayerViewModel>().setFloatingLyrics(!enabled)
+          : null,
     );
   }
 }

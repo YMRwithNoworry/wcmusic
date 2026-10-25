@@ -218,7 +218,29 @@ void main() {
     expect(style.cornerRadius, 0);
     expect(style.positionX, isNull);
     expect(style.positionY, isNull);
-    expect(style.toJson()['layoutVersion'], 2);
+    expect(style.toJson()['layoutVersion'], 3);
+  });
+
+  test('forces a transparent background for saved v2 lyrics styles', () {
+    // v2 时代保存的深色底属于旧的默认值，升级后桌面歌词必须是透明的。
+    final style = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 2,
+      'fontFamily': 'Microsoft YaHei UI',
+      'fontSize': 24,
+      'alignment': 'right',
+      'textColor': 0xFFF3F3F3,
+      'backgroundColor': 0xFF141416,
+      'opacity': 0.92,
+      'cornerRadius': 0,
+    });
+
+    expect(style.backgroundColor, 0x00000000);
+    // 用户在新版本里主动选的背景色要保留。
+    final chosen = LyricsOverlayStyle.fromJson({
+      ...LyricsOverlayStyle.fromJson(const {'layoutVersion': 3}).toJson(),
+      'backgroundColor': 0xFF1C1F1B,
+    });
+    expect(chosen.backgroundColor, 0xFF1C1F1B);
   });
 
   test('prefers a full track url resolved by an imported source', () async {
