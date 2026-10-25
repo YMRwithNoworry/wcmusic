@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../data/services/audio_effect_settings_store.dart';
 import '../../data/services/player_service.dart';
 import '../../data/services/online_search_service.dart';
+import '../../data/services/release_service.dart';
 import '../../data/services/desktop_window_service.dart';
 import '../../data/services/floating_lyrics_service.dart';
 import '../../data/services/lyric_service.dart';
@@ -15,6 +18,7 @@ import '../../domain/models/lyrics_overlay_style.dart';
 import '../../domain/models/music_folder.dart';
 import '../../domain/models/playback_mode.dart';
 import '../../domain/models/playback_quality.dart';
+import '../../domain/models/release_info.dart';
 import '../../domain/models/source_import_result.dart';
 import '../../domain/models/track.dart';
 import '../../domain/repositories/music_repository.dart';
@@ -32,6 +36,7 @@ class PlayerViewModel extends ChangeNotifier {
     AudioPlayerService? playerService,
     LyricService? lyricService,
     FloatingLyricsService? floatingLyricsService,
+    ReleaseService? releaseService,
     TrackDownloadService? downloadService,
     AudioEffectSettingsStore? audioEffectSettingsStore,
   }) : onlineSearchService =
@@ -42,6 +47,7 @@ class PlayerViewModel extends ChangeNotifier {
        lyricService = lyricService ?? OnlineLyricService(),
        floatingLyricsService =
            floatingLyricsService ?? PlatformFloatingLyricsService(),
+       releaseService = releaseService ?? GitHubReleaseService(),
        downloadService = downloadService ?? TrackDownloadService() {
     if (kDebugMode) debugLatest = this;
     _playingSubscription = this.playerService.playing.listen((value) {
@@ -86,6 +92,23 @@ class PlayerViewModel extends ChangeNotifier {
   final AudioEffectSettingsStore audioEffectSettingsStore;
   final LyricService lyricService;
   final FloatingLyricsService floatingLyricsService;
+  final ReleaseService releaseService;
+
+  /// 当前运行版本，例如 1.2.82；读取失败时为空
+  String? appVersion;
+
+  /// 最近一次检测到的发布记录（不论是否比当前版本新）
+  ReleaseInfo? latestRelease;
+
+  /// 有更新时指向 GitHub 上的最新发布
+  ReleaseInfo? availableUpdate;
+  bool isCheckingUpdate = false;
+  bool isInstallingUpdate = false;
+
+  /// 一键更新下载进度 0~1，大小未知时为空
+  double? updateDownloadProgress;
+  String? updateError;
+  DateTime? lastUpdateCheck;
   final TrackDownloadService downloadService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
@@ -105,6 +128,12 @@ class PlayerViewModel extends ChangeNotifier {
   bool floatingLyricsEnabled = false;
   bool spatialAudioEnabled = false;
   LyricsOverlayStyle lyricsStyle = const LyricsOverlayStyle();
+
+  /// 系统已安装字体（来自原生端），为空时界面使用内置字体列表
+  List<String> systemFonts = const [];
+
+  /// 系统默认界面字体，用于「系统默认」项与内置默认字体的显示名
+  String? defaultSystemFont;
   PlaybackMode playbackMode = PlaybackMode.listLoop;
   PlaybackQuality playbackQuality = PlaybackQuality.high;
   bool isDownloading = false;
@@ -168,6 +197,7 @@ class PlayerViewModel extends ChangeNotifier {
 
   bool isLoadingLyrics = false;
   bool _disposed = false;
+  Timer? _updateCheckTimer;
 
   @override
   void notifyListeners() {
@@ -206,6 +236,12 @@ class PlayerViewModel extends ChangeNotifier {
       unawaited(refreshRecentTracks());
       unawaited(_upgradeEmptyPlatformFavorites());
       unawaited(_loadLyricsStyle());
+      // 启动后延迟静默检查更新，避免和首屏加载抢网络；用可取消的 Timer，
+      // 页面销毁后不会留下挂起的计时器。
+      _updateCheckTimer?.cancel();
+      _updateCheckTimer = Timer(const Duration(seconds: 4), () {
+        if (!_disposed) unawaited(checkForUpdate(silent: true));
+      });
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
@@ -907,12 +943,113 @@ class PlayerViewModel extends ChangeNotifier {
     }
   }
 
+  /// 检查 GitHub 上的最新版本；[silent] 为真时用于启动时的静默检查，失败不弹提示
+  Future<void> checkForUpdate({bool silent = false}) async {
+    if (isCheckingUpdate || isInstallingUpdate) return;
+    isCheckingUpdate = true;
+    updateError = null;
+    notifyListeners();
+    try {
+      final release = await releaseService.fetchLatestRelease();
+      latestRelease = release;
+      final current = await _resolveAppVersion();
+      availableUpdate =
+          current == null || ReleaseInfo.isNewer(release.version, current)
+          ? release
+          : null;
+      lastUpdateCheck = DateTime.now();
+    } on Object catch (error) {
+      updateError = silent ? null : '检查更新失败：$error';
+    } finally {
+      isCheckingUpdate = false;
+      notifyListeners();
+    }
+  }
+
+  /// 一键更新：下载当前平台安装包并安装。
+  /// Windows 会启动后台脚本替换文件并重启；Android 唤起系统安装器。
+  Future<void> installUpdate() async {
+    final release = availableUpdate;
+    if (release == null || isInstallingUpdate) return;
+    isInstallingUpdate = true;
+    updateDownloadProgress = 0;
+    updateError = null;
+    message = null;
+    notifyListeners();
+    try {
+      final result = await releaseService.installUpdate(
+        release,
+        onProgress: (progress) {
+          updateDownloadProgress = progress;
+          notifyListeners();
+        },
+      );
+      if (result != null) {
+        // Android：把 APK 交给系统安装器
+        const channel = MethodChannel('wcmusic/lyrics_overlay');
+        final launched = await channel.invokeMethod<bool>('installApk', {
+          'path': result.apkPath,
+        });
+        message = (launched ?? false)
+            ? '已启动安装程序，按提示完成更新'
+            : '请允许 WCMusic 安装未知应用后，再点击「一键更新」';
+        availableUpdate = null;
+      } else {
+        // Windows：更新脚本已启动，退出后自动解压替换并重启
+        message = '正在更新到 ${release.version}，程序即将重启…';
+        availableUpdate = null;
+        updateDownloadProgress = 1;
+        notifyListeners();
+        await windowLifecycleService?.exitForUpdate();
+      }
+    } on Object catch (error) {
+      updateError = '更新失败：$error';
+    } finally {
+      isInstallingUpdate = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> _resolveAppVersion() async {
+    if (appVersion != null) return appVersion;
+    // PackageInfo（--app-version）只是第一来源：GitHubReleaseService 还会参考
+    // pubspec 以及上次更新写入的版本记录，避免装上了新版本却一直提示更新。
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (info.version.isNotEmpty) appVersion = info.version;
+    } on Object {
+      // 退回到 ReleaseService 提供的来源
+    }
+    try {
+      final resolved = await releaseService.currentVersionName();
+      if (resolved != null) appVersion = resolved;
+    } on Object {
+      // 保持 PackageInfo 的结果
+    }
+    return appVersion;
+  }
+
   Future<void> _loadLyricsStyle() async {
     try {
       lyricsStyle = await floatingLyricsService.loadStyle();
       notifyListeners();
     } on Object {
       // 使用默认样式
+    }
+    // 读取系统字体较慢，放到样式就绪之后再异步加载
+    unawaited(_loadSystemFonts());
+  }
+
+  Future<void> _loadSystemFonts() async {
+    try {
+      final fonts = await floatingLyricsService.listSystemFonts();
+      final defaultFont = await floatingLyricsService.defaultSystemFont();
+      if (fonts.isEmpty) return;
+      systemFonts = fonts;
+      defaultSystemFont = defaultFont;
+      notifyListeners();
+    } on Object {
+      // 保留内置字体列表
     }
   }
 
@@ -1005,8 +1142,10 @@ class PlayerViewModel extends ChangeNotifier {
     final lineSpan = lineEnd - lineStart;
     final lineProgress = lineSpan.inMilliseconds <= 0
         ? 0.0
-        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds)
-              .clamp(0.0, 1.0);
+        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds).clamp(
+            0.0,
+            1.0,
+          );
     lyricProgressListenable.value = lineProgress;
     if (!floatingLyricsEnabled) return;
     final track = current;
@@ -1023,7 +1162,8 @@ class PlayerViewModel extends ChangeNotifier {
         lyrics[index].text,
     ];
     final translation = nextIndex < 0 ? null : lyrics[nextIndex].translation;
-    final nextTranslation = followingIndex >= 0 && followingIndex < lyrics.length
+    final nextTranslation =
+        followingIndex >= 0 && followingIndex < lyrics.length
         ? lyrics[followingIndex].translation
         : null;
     unawaited(
@@ -1204,6 +1344,7 @@ class PlayerViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _updateCheckTimer?.cancel();
     _lyricGeneration++;
     unawaited(_playingSubscription?.cancel());
     unawaited(_positionSubscription?.cancel());

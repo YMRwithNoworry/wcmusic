@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/data/services/floating_lyrics_service.dart';
 import 'package:wcmusic/data/services/lyric_service.dart';
+import 'package:wcmusic/data/services/release_service.dart';
 import 'package:wcmusic/data/services/track_download_service.dart';
 import 'package:wcmusic/domain/models/lyric_line.dart';
 import 'package:wcmusic/domain/models/lyrics_overlay_style.dart';
 import 'package:wcmusic/domain/models/playback_mode.dart';
 import 'package:wcmusic/domain/models/playback_quality.dart';
+import 'package:wcmusic/domain/models/release_info.dart';
 import 'package:wcmusic/domain/models/track.dart';
 import 'package:wcmusic/domain/repositories/source_repository.dart';
 import 'package:wcmusic/ui/state/player_view_model.dart';
@@ -94,6 +97,7 @@ void main() {
     expect(settings.spatialAudioEnabled, isFalse);
   });
 
+
   test('synchronizes floating lyrics with playback position', () async {
     final player = _PositionPlayerService();
     final overlay = _FakeFloatingLyricsService();
@@ -134,6 +138,65 @@ void main() {
     expect(overlay.currentLine, '第二句');
     expect(overlay.nextLine, isEmpty);
     expect(overlay.currentIndex, 1);
+  });
+
+  test('persists the font variant and rejects unknown values', () {
+    const style = LyricsOverlayStyle(fontWeight: lyricsOverlayFontWeightLight);
+    expect(
+      LyricsOverlayStyle.fromJson(style.toJson()).fontWeight,
+      lyricsOverlayFontWeightLight,
+    );
+    // 旧配置没有 fontVariant 字段：默认粗体，保持原有高亮效果
+    expect(
+      LyricsOverlayStyle.fromJson(const {}).fontWeight,
+      lyricsOverlayFontWeightBold,
+    );
+    expect(
+      LyricsOverlayStyle.fromJson(const {
+        'fontWeight': 'italic',
+      }).fontWeight,
+      lyricsOverlayFontWeightBold,
+    );
+  });
+
+  test('compares release versions numerically', () {
+    expect(ReleaseInfo.isNewer('1.10.0', '1.9.9'), isTrue);
+    expect(ReleaseInfo.isNewer('1.2.82', '1.2.82'), isFalse);
+    expect(ReleaseInfo.compareVersions('1.2.82+86', '1.2.82'), 0);
+    expect(ReleaseInfo.isNewer('1.2.83', '1.2.82'), isTrue);
+  });
+
+  test('detects an available update and closes the app after install', () async {
+    final window = FakeWindowLifecycleService();
+    final releases = FakeReleaseService(
+      release: const ReleaseInfo(
+        tag: 'v1.2.83',
+        version: '1.2.83',
+        name: 'WCMusic 1.2.83',
+        notes: '新功能',
+        assetName: 'wcmusic-windows-x64.zip',
+        assetUrl: 'https://example.com/wcmusic-windows-x64.zip',
+        assetSize: 1024,
+        pageUrl: 'https://example.com/releases/v1.2.83',
+      ),
+    );
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(initialTracks: testLibraryTracks),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      windowLifecycleService: window,
+      releaseService: releases,
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.checkForUpdate();
+    expect(viewModel.availableUpdate?.version, '1.2.83');
+
+    await viewModel.installUpdate();
+    expect(releases.installed?.version, '1.2.83');
+    expect(window.exitedForUpdate, isTrue);
+    expect(viewModel.availableUpdate, isNull);
   });
 
   test('migrates the legacy desktop lyrics defaults', () {
@@ -865,6 +928,7 @@ class _FakeLyricService implements LyricService {
   ];
 }
 
+
 class _FakeFloatingLyricsService implements FloatingLyricsService {
   String currentLine = '';
   String nextLine = '';
@@ -916,7 +980,51 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
   }
 
   @override
+  Future<List<String>> listSystemFonts() async => const [];
+
+  @override
+  Future<String?> defaultSystemFont() async => 'Microsoft YaHei UI';
+
+  @override
   Future<void> dispose() async {}
+}
+
+class FakeReleaseService implements ReleaseService {
+  FakeReleaseService({required this.release});
+
+  final ReleaseInfo release;
+  ReleaseInfo? installed;
+
+  /// 模拟本机已安装版本，默认比测试里的发布版本旧，保证能检测到更新
+  String? currentVersion = '1.2.82';
+
+  @override
+  Future<String?> currentVersionName() async => currentVersion;
+
+  @override
+  Future<ReleaseInfo> fetchLatestRelease() async => release;
+
+  @override
+  Future<void> download(
+    String url,
+    File target, {
+    void Function(double? progress)? onProgress,
+  }) async {
+    onProgress?.call(1);
+  }
+
+  @override
+  Future<UpdateInstallResult?> installUpdate(
+    ReleaseInfo release, {
+    void Function(double? progress)? onProgress,
+  }) async {
+    installed = release;
+    // 模拟 Windows：脚本已在后台启动，需要退出当前进程
+    return null;
+  }
+
+  @override
+  Future<void> openExternal(String url) async {}
 }
 
 class _FullTrackSourceRepository implements SourceRepository {

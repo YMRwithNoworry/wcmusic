@@ -1,4 +1,4 @@
-#ifndef RUNNER_LYRICS_OVERLAY_H_
+﻿#ifndef RUNNER_LYRICS_OVERLAY_H_
 #define RUNNER_LYRICS_OVERLAY_H_
 
 #include <windows.h>
@@ -8,8 +8,13 @@
 #include <string>
 #include <vector>
 
+// 系统已安装字体的字族名（UTF-16），可在歌词窗口创建前调用
+std::vector<std::wstring> InstalledFontFamilies();
+
 struct LyricsOverlayStyle {
   std::wstring font_family = L"Microsoft YaHei UI";
+  // 字体变体：regular / bold / light，对应 GDI+ 的常规、粗体、细体字面
+  std::wstring font_weight = L"bold";
   int font_size = 24;
   int align = DT_RIGHT;
   COLORREF text_color = RGB(243, 243, 243);

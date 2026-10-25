@@ -1,4 +1,4 @@
-#include "lyrics_overlay.h"
+﻿#include "lyrics_overlay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +41,59 @@ void AddRoundedRectangle(Gdiplus::GraphicsPath& path,
               90);
   path.CloseFigure();
 }
+
+// 列出系统已安装字体的字族名，结果在进程内缓存
+std::vector<std::wstring> CollectInstalledFontFamilies() {
+  static const std::vector<std::wstring> families = [] {
+    std::vector<std::wstring> result;
+    ULONG_PTR token = 0;
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) {
+      return result;
+    }
+    Gdiplus::InstalledFontCollection collection;
+    const int count = collection.GetFamilyCount();
+    if (count <= 0) return result;
+    std::vector<Gdiplus::FontFamily> buffer(static_cast<size_t>(count));
+    int found = 0;
+    collection.GetFamilies(count, buffer.data(), &found);
+    result.reserve(static_cast<size_t>(found));
+    for (int index = 0; index < found; ++index) {
+      WCHAR name[LF_FACESIZE] = {};
+      if (buffer[static_cast<size_t>(index)].GetFamilyName(name) ==
+              Gdiplus::Ok &&
+          name[0] != L'\0') {
+        result.emplace_back(name);
+      }
+    }
+    // 启动令牌不释放：GDI+ 在整个进程生命周期内保持可用
+    return result;
+  }();
+  return families;
+}
+
+// 把界面上的字体变体映射为 GDI+ 字面；want_regular 为真时忽略变体，使用常规字面
+Gdiplus::FontStyle ResolveFontStyle(Gdiplus::FontFamily& family,
+                                    const std::wstring& weight,
+                                    bool want_regular) {
+  const auto can = [&family](Gdiplus::FontStyle style) {
+    return family.IsStyleAvailable(style) == Gdiplus::Ok;
+  };
+  const bool want_bold = !want_regular && weight == L"bold";
+  // 字体未必提供全部字面，缺失时退回另一种字重，避免回落到系统字体
+  const Gdiplus::FontStyle primary = want_bold ? Gdiplus::FontStyleBold
+                                               : Gdiplus::FontStyleRegular;
+  const Gdiplus::FontStyle fallback = want_bold ? Gdiplus::FontStyleRegular
+                                                : Gdiplus::FontStyleBold;
+  if (can(primary)) return primary;
+  if (can(fallback)) return fallback;
+  return Gdiplus::FontStyleRegular;
+}
+}  // namespace
+
+// 头文件里声明的公共接口，必须放在匿名命名空间之外，否则其它编译单元链接不到
+std::vector<std::wstring> InstalledFontFamilies() {
+  return CollectInstalledFontFamilies();
 }
 
 LyricsOverlay::LyricsOverlay() = default;
@@ -330,10 +383,11 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                        edge_fade,
                    0.0f, 255.0f));
 
+    // 字体变体只作用于当前行；未选中的行使用同字族的常规字面，保证层级清晰
+    const Gdiplus::FontStyle font_style = ResolveFontStyle(
+        font_family, style_.font_weight, /*want_regular=*/!is_center);
     Gdiplus::Font font(&font_family, static_cast<float>(font_size),
-                       is_center ? Gdiplus::FontStyleBold
-                                 : Gdiplus::FontStyleRegular,
-                       Gdiplus::UnitPixel);
+                       font_style, Gdiplus::UnitPixel);
     const Gdiplus::Color base_color(
         alpha, text_color.GetRed(), text_color.GetGreen(), text_color.GetBlue());
     const Gdiplus::Color accent_color(alpha, 0, 198, 91);
@@ -376,9 +430,12 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
     }
 
     if (has_translation) {
+      // 翻译行固定使用常规字面，不跟随当前/非当前行的字重。
+      // 参数先取出来再传：GDI+ 的 FontStyle 是枚举，MSVC 不接受叫 style 的局部变量。
+      const Gdiplus::FontStyle translation_weight = ResolveFontStyle(
+          font_family, style_.font_weight, true);
       Gdiplus::Font translation_font(&font_family, font_size * 0.62f,
-                                     Gdiplus::FontStyleRegular,
-                                     Gdiplus::UnitPixel);
+                                     translation_weight, Gdiplus::UnitPixel);
       const BYTE translation_alpha = static_cast<BYTE>(alpha * 0.78f);
       Gdiplus::SolidBrush translation_brush(Gdiplus::Color(
           translation_alpha, text_color.GetRed(), text_color.GetGreen(),

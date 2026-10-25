@@ -190,4 +190,11 @@ class FakeWindowLifecycleService implements WindowLifecycleService {
   Future<void> setCloseToTray(bool value) async {
     closeToTray = value;
   }
+
+  bool exitedForUpdate = false;
+
+  @override
+  Future<void> exitForUpdate() async {
+    exitedForUpdate = true;
+  }
 }

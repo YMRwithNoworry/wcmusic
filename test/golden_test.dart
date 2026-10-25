@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart';
 import 'package:golden_toolkit/golden_toolkit.dart';
 import 'package:provider/provider.dart';
 import 'package:wcmusic/app.dart';
@@ -98,6 +97,9 @@ void main() {
     );
     addTearDown(viewModel.dispose);
     await viewModel.load();
+    // load() 会安排 4 秒后的静默「检查更新」，快照测试不关心它；
+    // virtual async 里这个计时器一直挂着会让测试在结束时断定有未完成的 Timer。
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpWidget(
       ChangeNotifierProvider.value(value: viewModel, child: const WcMusicApp()),
     );

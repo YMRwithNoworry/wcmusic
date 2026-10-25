@@ -73,7 +73,8 @@ class PlayerBar extends StatelessWidget {
                     ),
                   ),
                   SizedBox(
-                    width: compact ? 170 : (showVolume ? 300 : 130),
+                    // 音量固定 190 + 三个按钮 + 间距，宽度给足，避免窄窗口溢出。
+                    width: compact ? 170 : (showVolume ? 312 : 130),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
@@ -86,7 +87,7 @@ class PlayerBar extends StatelessWidget {
                           const PlaybackModeButton(),
                         ],
                         if (showVolume) ...[
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 8),
                           const VolumeControl(width: 190),
                         ],
                       ],

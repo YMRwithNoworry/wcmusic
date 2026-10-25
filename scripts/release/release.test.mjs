@@ -143,3 +143,17 @@ test('android release notes only list the apk', () => fixture(cwd => {
   // 只生成说明时不能改动官网。
   assert.equal(readFileSync(join(cwd, 'site/index.html'), 'utf8'), before);
 }));
+
+test("windows build records the release version inside the package", () => {
+  // 应用「检查更新」靠包内的 rebuild_meta.json 认出真实安装版本：
+  // 本地直接跑 pubspec 1.2.82，而 CI 用 --build-name 打出 1.2.83。
+  const workflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
+  assert.match(
+    workflow,
+    /flutter build windows --release --build-name=\$\{\{ needs\.version-windows\.outputs\.version \}\}/,
+    "Windows 构建必须把发布版本写进产物",
+  );
+  const release = readFileSync(resolve(root, "lib/data/services/release_service.dart"), "utf8");
+  assert.ok(release.includes("rebuild_meta.json"));
+  assert.ok(release.includes("--build-name"));
+});

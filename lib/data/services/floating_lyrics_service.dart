@@ -22,6 +22,12 @@ abstract interface class FloatingLyricsService {
   Future<void> setStyle(LyricsOverlayStyle style);
   Future<LyricsOverlayStyle> loadStyle();
   Future<void> saveStyle(LyricsOverlayStyle style);
+
+  /// 系统已安装字体（字族名，已排序）；不支持的平台返回空列表。
+  Future<List<String>> listSystemFonts();
+
+  /// 平台默认的界面字体，用作字体列表的「系统默认」项。
+  Future<String?> defaultSystemFont();
   Future<void> dispose();
 }
 
@@ -31,12 +37,16 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   static const _channel = MethodChannel('wcmusic/lyrics_overlay');
+  // 读取系统字体走歌词通道，避免让歌词窗口常驻就能列出字体
+  static const _systemChannel = MethodChannel('wcmusic/lyrics_overlay');
 
   final Future<Directory> Function() _directoryProvider;
   bool _enabled = false;
   bool _handlerRegistered = false;
   LyricsOverlayStyle? _style;
   File? _settingsFile;
+  List<String>? _systemFonts;
+  String? _defaultFont;
 
   void _ensureHandler() {
     if (_handlerRegistered) return;
@@ -142,6 +152,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
 
   Map<String, dynamic> _styleArguments(LyricsOverlayStyle style) => {
     'fontFamily': style.fontFamily,
+    'fontWeight': style.fontWeight,
     'fontSize': style.fontSize,
     'align': style.alignment,
     'textColor': style.textColor,
@@ -152,6 +163,34 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
     'x': style.positionX,
     'y': style.positionY,
   };
+
+  @override
+  Future<List<String>> listSystemFonts() async {
+    if (!Platform.isWindows) return const [];
+    final cached = _systemFonts;
+    if (cached != null) return cached;
+    try {
+      final names =
+          await _systemChannel.invokeListMethod<String>('listFonts') ?? [];
+      final fonts = names.where((name) => name.trim().isNotEmpty).toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return _systemFonts = List.unmodifiable(fonts);
+    } on Object {
+      return const [];
+    }
+  }
+
+  @override
+  Future<String?> defaultSystemFont() async {
+    if (!Platform.isWindows) return null;
+    if (_defaultFont != null) return _defaultFont;
+    try {
+      final name = await _systemChannel.invokeMethod<String>('defaultFont');
+      return _defaultFont = (name == null || name.isEmpty) ? null : name;
+    } on Object {
+      return null;
+    }
+  }
 
   @override
   Future<void> dispose() async {

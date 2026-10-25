@@ -10,6 +10,9 @@ import 'package:window_manager/window_manager.dart';
 abstract interface class WindowLifecycleService {
   bool get closeToTray;
   Future<void> setCloseToTray(bool value);
+
+  /// 一键更新：立即退出进程（跳过关闭到托盘），由更新脚本重启新版本
+  Future<void> exitForUpdate();
 }
 
 /// Windows 桌面窗口：无边框 + 自绘标题栏、最小尺寸、托盘、关闭到托盘。
@@ -87,6 +90,12 @@ class DesktopWindowService
 
   Future<void> startDragging() async {
     if (isDesktop) await windowManager.startDragging();
+  }
+
+  /// 一键更新：不做「关闭到托盘」，直接退出进程，交给后台更新脚本替换文件后重启
+  @override
+  Future<void> exitForUpdate() async {
+    if (isDesktop) await _exitApplication();
   }
 
   @override

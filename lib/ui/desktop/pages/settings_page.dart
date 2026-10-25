@@ -89,10 +89,8 @@ class SettingsPage extends StatelessWidget {
                                 textAlign: TextAlign.end,
                                 style: context.theme.typography.body.xs
                                     .copyWith(
-                                      color: context
-                                          .theme
-                                          .colors
-                                          .mutedForeground,
+                                      color:
+                                          context.theme.colors.mutedForeground,
                                     ),
                               ),
                             ),
@@ -182,18 +180,20 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 16),
-                const _SettingsSection(
+                _SettingsSection(
                   title: '关于',
                   icon: FLucideIcons.info,
                   children: [
                     _SettingRow(
                       title: 'WCMusic',
-                      description: 'Flutter 3.44 · Forui · Rust 音源运行时',
+                      description:
+                          'Flutter 3.44 · Forui · Rust 音源运行时${model.appVersion == null ? '' : ' · 当前版本 v${model.appVersion}'}',
                     ),
                     _SettingRow(
                       title: '界面',
                       description: '桌面端 UI 使用 Forui 组件构建，动画与列表按 60fps 预算调优',
                     ),
+                    _UpdateRow(model: model),
                   ],
                 ),
               ],
@@ -201,6 +201,79 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _UpdateRow extends StatelessWidget {
+  const _UpdateRow({required this.model});
+
+  final PlayerViewModel model;
+
+  String get _description {
+    if (model.updateError != null) return model.updateError!;
+    if (model.isInstallingUpdate) {
+      final progress = model.updateDownloadProgress;
+      return progress == null
+          ? '正在下载更新包…'
+          : '正在下载更新包 ${(progress * 100).clamp(0, 100).toStringAsFixed(0)}%';
+    }
+    if (model.isCheckingUpdate) return '正在连接 GitHub 检查版本…';
+    final update = model.availableUpdate;
+    if (update != null) {
+      return '发现新版本 v${update.version} · ${_formatSize(update.assetSize)}';
+    }
+    final latest = model.latestRelease;
+    if (latest != null) return '已是最新版本（v${latest.version}）';
+    return '从 GitHub Releases 获取最新版本，并自动下载安装';
+  }
+
+  static String _formatSize(int bytes) {
+    if (bytes <= 0) return '大小未知';
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final update = model.availableUpdate;
+    return _SettingRow(
+      title: '软件更新',
+      description: _description,
+      trailing: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        alignment: WrapAlignment.end,
+        children: [
+          if (update != null && !model.isInstallingUpdate)
+            FButton(
+              variant: FButtonVariant.primary,
+              size: FButtonSizeVariant.sm,
+              prefix: const Icon(FLucideIcons.download, size: 15),
+              onPress: model.installUpdate,
+              child: const Text('一键更新'),
+            ),
+          FButton(
+            variant: FButtonVariant.outline,
+            size: FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: model.isCheckingUpdate || model.isInstallingUpdate
+                ? null
+                : () => model.checkForUpdate(),
+            child: Text(update == null ? '检查更新' : '重新检查'),
+          ),
+          if (update != null)
+            FButton(
+              variant: FButtonVariant.ghost,
+              size: FButtonSizeVariant.sm,
+              mainAxisSize: MainAxisSize.min,
+              onPress: () => model.releaseService.openExternal(update.pageUrl),
+              child: const Text('版本说明'),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -254,11 +327,7 @@ class _SettingsSection extends StatelessWidget {
 }
 
 class _SettingRow extends StatelessWidget {
-  const _SettingRow({
-    required this.title,
-    this.description,
-    this.trailing,
-  });
+  const _SettingRow({required this.title, this.description, this.trailing});
 
   final String title;
   final String? description;
@@ -287,9 +356,7 @@ class _SettingRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     description!,
-                    style: type.body.xs.copyWith(
-                      color: colors.mutedForeground,
-                    ),
+                    style: type.body.xs.copyWith(color: colors.mutedForeground),
                   ),
                 ],
               ],
@@ -305,8 +372,11 @@ class _SettingRow extends StatelessWidget {
 class _LyricsStyleSection extends StatelessWidget {
   const _LyricsStyleSection({required this.style});
 
+  /// 内置默认字体，也是旧版本样式的默认值
+  static const _defaultFont = 'Microsoft YaHei UI';
+
   static const _fonts = [
-    'Microsoft YaHei UI',
+    _defaultFont,
     'Microsoft YaHei',
     'SimSun',
     'SimHei',
@@ -344,6 +414,36 @@ class _LyricsStyleSection extends StatelessWidget {
   ];
 
   final LyricsOverlayStyle style;
+
+  /// 字体下拉选项：标签 -> 字族名。系统字体就绪后以系统列表为准，
+  /// 并把当前选中项与内置默认字体放在最前，保证选中项始终可见。
+  List<(String, String)> _fontOptions(PlayerViewModel model) {
+    final current = style.fontFamily;
+    final systemFonts = model.systemFonts;
+    if (systemFonts.isEmpty) {
+      return [
+        for (final font in _fonts)
+          if (font == current || font == _defaultFont) (font, font),
+      ];
+    }
+    final options = <(String, String)>[];
+    final defaultFont = model.defaultSystemFont ?? _defaultFont;
+    final hasDefault = systemFonts.contains(defaultFont);
+    if (hasDefault) {
+      options.add(('系统默认（$defaultFont）', defaultFont));
+    }
+    if (current != defaultFont || !hasDefault) {
+      options.add((
+        systemFonts.contains(current) ? current : '$current（当前）',
+        current,
+      ));
+    }
+    for (final font in systemFonts) {
+      if (font == defaultFont) continue;
+      options.add((font, font));
+    }
+    return options;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -383,17 +483,42 @@ class _LyricsStyleSection extends StatelessWidget {
         ),
         _SettingRow(
           title: '字体',
+          description: model.systemFonts.isEmpty
+              ? '字体列表暂不可用，显示内置字体'
+              : '共 ${model.systemFonts.length} 款系统字体',
           trailing: SizedBox(
             width: 220,
             child: FSelect<String>(
+              key: ValueKey(model.systemFonts.length),
               control: FSelectControl.managed(
                 initial: style.fontFamily,
                 onChange: (font) {
                   if (font != null) update(style.copyWith(fontFamily: font));
                 },
               ),
-              items: {for (final font in _fonts) font: font},
+              items: {
+                for (final entry in _fontOptions(model)) entry.$1: entry.$2,
+              },
             ),
+          ),
+        ),
+        _SettingRow(
+          title: '字体变体',
+          description: '仅作用于当前高亮行，其余歌词保持常规字重',
+          trailing: Wrap(
+            spacing: 6,
+            children: [
+              for (final entry in const [
+                (lyricsOverlayFontWeightRegular, '常规'),
+                (lyricsOverlayFontWeightBold, '粗体'),
+                (lyricsOverlayFontWeightLight, '细体'),
+              ])
+                FilterPill(
+                  label: entry.$2,
+                  selected: style.fontWeight == entry.$1,
+                  onPress: () => update(style.copyWith(fontWeight: entry.$1)),
+                ),
+            ],
           ),
         ),
         _SettingRow(
@@ -520,11 +645,7 @@ class _ColorRow extends StatelessWidget {
                     : null,
               ),
               child: color == selected
-                  ? Icon(
-                      FLucideIcons.check,
-                      size: 14,
-                      color: _contrast(color),
-                    )
+                  ? Icon(FLucideIcons.check, size: 14, color: _contrast(color))
                   : null,
             ),
           ),

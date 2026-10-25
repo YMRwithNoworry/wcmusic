@@ -159,7 +159,9 @@ jobs:
           workspaces: native/wcmusic_core
       - run: flutter pub get
       - name: 构建 Flutter 桌面端
-        run: flutter build windows --release
+        # 版本任务写回的是递增后的 pubspec 版本，这里显式传入，保证 exe 的版本
+        # 资源与实际发布的 tag 一致（应用靠它判断“有没有更新”）。
+        run: flutter build windows --release --build-name=${{ needs.version-windows.outputs.version }}
       - name: 打包 ZIP
         shell: pwsh
         run: |

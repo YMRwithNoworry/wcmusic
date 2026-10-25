@@ -20,6 +20,22 @@ std::wstring Utf8ToWide(const std::string& value) {
   return result;
 }
 
+}  // namespace
+
+namespace {
+
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) return "";
+  const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                       static_cast<int>(value.size()), nullptr,
+                                       0, nullptr, nullptr);
+  std::string result(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                      static_cast<int>(value.size()), result.data(), size,
+                      nullptr, nullptr);
+  return result;
+}
+
 COLORREF ArgbToColorRef(int64_t value) {
   return RGB((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
 }
@@ -142,6 +158,8 @@ bool FlutterWindow::OnCreate() {
           LyricsOverlayStyle style;
           const auto* font = FindArgument(arguments, "fontFamily");
           if (font) style.font_family = Utf8ToWide(StringValue(font, "Microsoft YaHei UI"));
+          const auto* weight = FindArgument(arguments, "fontWeight");
+          if (weight) style.font_weight = Utf8ToWide(StringValue(weight, "bold"));
           style.font_size = static_cast<int>(DoubleValue(
               FindArgument(arguments, "fontSize"), 24));
           const std::string align = StringValue(
@@ -174,6 +192,22 @@ bool FlutterWindow::OnCreate() {
           result->Success();
           return;
         }
+        if (call.method_name() == "listFonts") {
+          flutter::EncodableList families;
+          for (const auto& family : InstalledFontFamilies()) {
+            families.emplace_back(WideToUtf8(family));
+          }
+          result->Success(flutter::EncodableValue(std::move(families)));
+          return;
+        }
+        if (call.method_name() == "defaultFont") {
+          const std::vector<std::wstring> installed = InstalledFontFamilies();
+          result->Success(flutter::EncodableValue(installed.empty()
+                                                      ? std::string()
+                                                      : WideToUtf8(installed.front())));
+          return;
+        }
+
         result->NotImplemented();
       });
   lyrics_overlay_->SetPositionCallback([this](int x, int y) {

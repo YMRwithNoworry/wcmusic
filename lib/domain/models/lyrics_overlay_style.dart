@@ -1,6 +1,17 @@
+/// 桌面歌词字体变体，取值与原生端约定保持一致。
+const lyricsOverlayFontWeightRegular = 'regular';
+const lyricsOverlayFontWeightBold = 'bold';
+const lyricsOverlayFontWeightLight = 'light';
+const lyricsOverlayFontWeights = {
+  lyricsOverlayFontWeightRegular,
+  lyricsOverlayFontWeightBold,
+  lyricsOverlayFontWeightLight,
+};
+
 class LyricsOverlayStyle {
   const LyricsOverlayStyle({
     this.fontFamily = 'Microsoft YaHei UI',
+    this.fontWeight = lyricsOverlayFontWeightBold,
     this.fontSize = 24,
     this.alignment = 'right',
     this.textColor = 0xFFF3F3F3,
@@ -13,6 +24,9 @@ class LyricsOverlayStyle {
   });
 
   final String fontFamily;
+
+  /// 字体变体：常规 / 粗体 / 细体。只影响当前高亮行，其余行始终使用常规字面。
+  final String fontWeight;
   final double fontSize;
   final String alignment;
   final int textColor;
@@ -25,6 +39,7 @@ class LyricsOverlayStyle {
 
   LyricsOverlayStyle copyWith({
     String? fontFamily,
+    String? fontWeight,
     double? fontSize,
     String? alignment,
     int? textColor,
@@ -36,6 +51,7 @@ class LyricsOverlayStyle {
     double? positionY,
   }) => LyricsOverlayStyle(
     fontFamily: fontFamily ?? this.fontFamily,
+    fontWeight: fontWeight ?? this.fontWeight,
     fontSize: fontSize ?? this.fontSize,
     alignment: alignment ?? this.alignment,
     textColor: textColor ?? this.textColor,
@@ -50,6 +66,7 @@ class LyricsOverlayStyle {
   Map<String, dynamic> toJson() => {
     'layoutVersion': 2,
     'fontFamily': fontFamily,
+    'fontWeight': fontWeight,
     'fontSize': fontSize,
     'alignment': alignment,
     'textColor': textColor,
@@ -72,6 +89,9 @@ class LyricsOverlayStyle {
         ((json['layoutVersion'] as num?)?.toInt() ?? 0) < 2;
     return LyricsOverlayStyle(
       fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
+      fontWeight: lyricsOverlayFontWeights.contains(json['fontWeight'])
+          ? json['fontWeight'] as String
+          : lyricsOverlayFontWeightBold,
       fontSize: needsAppleMusicMigration ? 24 : fontSize ?? 24,
       alignment: needsAppleMusicMigration ? 'right' : alignment ?? 'right',
       textColor: needsAppleMusicMigration
