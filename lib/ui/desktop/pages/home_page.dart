@@ -64,13 +64,6 @@ class HomePage extends StatelessWidget {
                 SectionTitle(
                   title: '平台热门歌单',
                   caption: '来自各平台的每日精选',
-                  action: RoundAction(
-                    icon: FLucideIcons.refreshCw,
-                    tooltip: '换一批歌单',
-                    onPress: model.platformPlaylists.isEmpty
-                        ? model.refreshPlatformPlaylists
-                        : model.shufflePlatformPlaylists,
-                  ),
                 ),
                 _PlatformPlaylists(
                   onOpenAll: () => onNavigate(AppSection.playlists),
