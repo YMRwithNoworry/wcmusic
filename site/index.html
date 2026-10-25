@@ -44,7 +44,7 @@
           </picture>
         </div>
         <div class="hero-copy">
-          <p class="eyebrow"><span></span> WCMusic 1.2.86</p>
+          <p class="eyebrow"><span></span> WCMusic 1.2.89</p>
           <h1 id="hero-title">让声音<br>自然生长</h1>
           <p class="hero-summary">聚合搜索、本地曲库与自定义音源，在一处自然流动。为 Windows 与 Android 而生。</p>
           <div class="hero-actions">
@@ -54,7 +54,7 @@
             </a>
             <a class="text-link" href="#experience">看看它如何工作 <i data-lucide="arrow-down" aria-hidden="true"></i></a>
           </div>
-          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.86 · Android 1.2.85</p>
+          <p class="hero-note">开源免费 · 无广告 · Windows 1.2.89 · Android 1.2.89</p>
         </div>
         <div class="hero-caption" aria-hidden="true">
           <span>本地曲库</span><span>聚合搜索</span><span>自由音源</span>
@@ -126,11 +126,11 @@
               <h3>Windows x64</h3>
               <p class="meta">Windows 10 / 11 · ZIP 便携版</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.86/wcmusic-windows-x64.zip">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.89/wcmusic-windows-x64.zip">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Windows 版
             </a>
-            <p class="file-meta">版本 1.2.86 · x64</p>
+            <p class="file-meta">版本 1.2.89 · x64</p>
           </article>
           <article class="download-card reveal" data-platform="android">
             <div class="platform-icon clay"><i data-lucide="smartphone" aria-hidden="true"></i></div>
@@ -139,11 +139,11 @@
               <h3>Android arm64</h3>
               <p class="meta">Android 8.0+ · APK 安装包</p>
             </div>
-            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.85/wcmusic-android-arm64.apk">
+            <a class="button download-button" href="https://github.com/YMRwithNoworry/wcmusic/releases/download/v1.2.89/wcmusic-android-arm64.apk">
               <i data-lucide="download" aria-hidden="true"></i>
               下载 Android 版
             </a>
-            <p class="file-meta">版本 1.2.85 · arm64-v8a</p>
+            <p class="file-meta">版本 1.2.89 · arm64-v8a</p>
           </article>
         </div>
         <p class="download-footnote reveal"><i data-lucide="shield-check" aria-hidden="true"></i> 安装包由项目构建流程生成。Android 安装时可能需要允许“安装未知应用”。</p>
@@ -153,17 +153,17 @@
         <div class="section-kicker reveal"><span>03</span> 最新发布</div>
         <div class="release-layout">
           <div class="release-sticky reveal">
-            <p class="version">v1.2.86</p>
+            <p class="version">v1.2.89</p>
             <h2 id="release-title">更清晰的界面，更顺手的聆听</h2>
             <p>2026 年 10 月 25 日</p>
             <span class="stable"><span></span> 稳定版</span>
           </div>
           <div class="changelog reveal">
-            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>feat: 从 GitHub 检测新版本并支持一键更新</h3><p>- 检查更新：按平台读取 vX.Y.Z / android-vX.Y.Z 发布线，比较版本号</p></div></div>
+            <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>feat: Windows 与 Android 合并发布，恢复桌面歌词开关</h3><p>- 发布流程合并：两端共用 vX.Y.Z 版本号，一个 Release 同时挂 zip 与 apk，</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>ci: 部署阶段从仓库变量读取 Cloudflare 账号 ID</h3><p>CLOUDFLARE_ACCOUNT_ID 是仓库 Variables 而不是 Secrets，之前读错来源导致</p></div></div>
+                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>feat: 从 GitHub 检测新版本并支持一键更新</h3><p>- 检查更新：按平台读取 vX.Y.Z / android-vX.Y.Z 发布线，比较版本号</p></div></div>
                         <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>feat: 详情页只保留歌词，播放顺序按钮移到下载按钮旁</h3><p>- 聚焦播放页去掉顶部标题、右上角的音质标签与关闭按钮、底部进度与音量控制</p></div></div>
                         <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>fix: 修复空间音效导致播放失败，并重做歌曲详情页</h3><p>- 空间音效改用随包 libmpv 唯一编入的 FFmpeg equalizer 滤镜；</p></div></div>
-                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>fix(site): keep the full download URL when rewriting release links</h3><p>APK 链接替换时丢了 https://github.com/owner/repo 前缀，官网 Android 按钮变成</p></div></div>
-                        <div class="change-group"><span class="change-icon"><i data-lucide="sparkles" aria-hidden="true"></i></span><div><h3>ci: remove temporary debug steps from the release workflow</h3></div></div>
           </div>
         </div>
       </section>
