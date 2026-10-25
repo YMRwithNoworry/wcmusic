@@ -402,15 +402,6 @@ class TransportControls extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         RoundIconButton(
-          icon: _modeIcon(model.playbackMode),
-          tooltip: '${model.playbackMode.label}（点击切换）',
-          selected: model.playbackMode != PlaybackMode.sequence,
-          size: size - 4,
-          iconSize: compact ? 15 : 17,
-          onPress: model.cyclePlaybackMode,
-        ),
-        SizedBox(width: compact ? 2 : 6),
-        RoundIconButton(
           icon: FLucideIcons.skipBack,
           tooltip: '上一首',
           size: size,
@@ -430,13 +421,37 @@ class TransportControls extends StatelessWidget {
       ],
     );
   }
+}
 
-  IconData _modeIcon(PlaybackMode mode) => switch (mode) {
-    PlaybackMode.sequence => FLucideIcons.listMusic,
-    PlaybackMode.listLoop => FLucideIcons.repeat,
-    PlaybackMode.shuffle => FLucideIcons.shuffle,
-    PlaybackMode.singleLoop => FLucideIcons.repeat1,
-  };
+/// 播放顺序切换（顺序 / 列表循环 / 随机 / 单曲循环）。
+///
+/// 从 [TransportControls] 里挪出来，放到播放条右侧与下载按钮相邻。
+class PlaybackModeButton extends StatelessWidget {
+  const PlaybackModeButton({super.key, this.size = 34, this.iconSize = 17});
+
+  final double size;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final mode = context.select<PlayerViewModel, PlaybackMode>(
+      (model) => model.playbackMode,
+    );
+    return RoundIconButton(
+      key: const ValueKey('playbackModeButton'),
+      icon: switch (mode) {
+        PlaybackMode.sequence => FLucideIcons.listMusic,
+        PlaybackMode.listLoop => FLucideIcons.repeat,
+        PlaybackMode.shuffle => FLucideIcons.shuffle,
+        PlaybackMode.singleLoop => FLucideIcons.repeat1,
+      },
+      tooltip: '${mode.label}（点击切换）',
+      selected: mode != PlaybackMode.sequence,
+      size: size,
+      iconSize: iconSize,
+      onPress: context.read<PlayerViewModel>().cyclePlaybackMode,
+    );
+  }
 }
 
 class _PlayButton extends StatefulWidget {

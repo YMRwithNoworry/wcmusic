@@ -11,11 +11,11 @@ import '../widgets/artwork.dart';
 import 'controls.dart';
 import 'lyrics_view.dart';
 
-/// 聚焦播放：歌词、进度与完整控制。
+/// 聚焦播放：歌词与完整控制。
 ///
 /// 作为内容区的一层覆盖而不是新路由，切页时不重建侧栏与播放条；进入/退出只做
-/// 透明度 + 位移 + 轻微缩放，避免整页布局重排。封面色块只作为背景模糊，详情页
-/// 不再重复展示封面、标题与歌手。
+/// 透明度 + 位移 + 轻微缩放，避免整页布局重排。底部播放条已经提供进度与音量，
+/// 这里只负责把歌词放大展示。封面色块只作为背景模糊。
 class NowPlayingPanel extends StatelessWidget {
   const NowPlayingPanel({super.key, required this.onClose});
 
@@ -77,46 +77,18 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.theme.colors;
-    final type = context.theme.typography;
-    final track = context.select<PlayerViewModel, Track?>(
-      (model) => model.current,
-    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-      child: Row(
-        children: [
-          FButton(
-            variant: FButtonVariant.ghost,
-            size: FButtonSizeVariant.sm,
-            mainAxisSize: MainAxisSize.min,
-            prefix: const Icon(FLucideIcons.chevronLeft, size: 16),
-            onPress: onClose,
-            child: const Text('返回'),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            '聚焦播放',
-            style: type.body.xs.copyWith(
-              color: colors.mutedForeground,
-              letterSpacing: 1.6,
-            ),
-          ),
-          const Spacer(),
-          if (track?.quality != null) ...[
-            FBadge(
-              variant: FBadgeVariant.secondary,
-              child: Text(track!.quality!),
-            ),
-            const SizedBox(width: 8),
-          ],
-          FButton.icon(
-            variant: FButtonVariant.ghost,
-            size: FButtonSizeVariant.sm,
-            onPress: onClose,
-            child: const Icon(FLucideIcons.x, size: 17),
-          ),
-        ],
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FButton(
+          variant: FButtonVariant.ghost,
+          size: FButtonSizeVariant.sm,
+          mainAxisSize: MainAxisSize.min,
+          prefix: const Icon(FLucideIcons.chevronLeft, size: 16),
+          onPress: onClose,
+          child: const Text('返回'),
+        ),
       ),
     );
   }
@@ -128,32 +100,15 @@ class _WideLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      // 详情页不再展示封面、标题与歌手（歌曲信息已在播放条左侧），只保留
-      // 歌词、进度与播放控制这一块，并让它垂直居中。
+      // 详情页不重复展示封面、标题、进度与音量（都在底部播放条上），只放大
+      // 歌词并铺满内容区。
       padding: const EdgeInsets.fromLTRB(48, 18, 48, 34),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(
-                height: 300,
-                child: LyricsPane(maxLines: 2),
-              ),
-              const SizedBox(height: 18),
-              SeekBar(compact: false),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TransportControls(),
-                  const SizedBox(width: 22),
-                  const VolumeControl(width: 190),
-                ],
-              ),
-            ],
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox.expand(child: LyricsPane(maxLines: 2)),
           ),
         ),
       ),

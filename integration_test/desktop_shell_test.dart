@@ -137,7 +137,8 @@ void main() {
     await settle(500);
     expect(viewModel.current?.id, 'perf-online');
 
-    await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
+    // 播放条不再单独放「聚焦播放」按钮，点左侧歌曲信息打开歌词页。
+    await tester.tap(find.text('性能测试歌曲').first);
     await settle(600);
     expect(find.byType(NowPlayingPanel), findsOneWidget);
     await tester.tap(find.text('返回'));

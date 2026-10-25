@@ -15,6 +15,7 @@ import 'package:wcmusic/ui/desktop/player/controls.dart';
 import 'package:wcmusic/ui/desktop/player/lyrics_view.dart';
 import 'package:wcmusic/ui/desktop/player/now_playing.dart';
 import 'package:wcmusic/ui/desktop/player/player_bar.dart';
+import 'package:wcmusic/ui/desktop/widgets/hover.dart';
 import 'package:wcmusic/ui/state/player_view_model.dart';
 
 import 'test_support.dart';
@@ -369,17 +370,29 @@ void main() {
     expect(find.byType(PlayerBar), findsOneWidget);
     expect(find.byType(SeekBar), findsOneWidget);
     expect(find.byType(TransportControls), findsOneWidget);
+    // 播放顺序按钮在播放条右侧、下载按钮旁边，不在上一首/播放/下一首中间。
+    expect(find.byKey(const ValueKey('playbackModeButton')), findsOneWidget);
+    expect(find.byIcon(FLucideIcons.panelBottomOpen), findsNothing);
 
-    await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
+    // 点击播放条左侧歌曲信息打开歌词页。
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(PlayerBar),
+            matching: find.byType(HoverLift),
+          )
+          .first,
+    );
     await tester.pumpAndSettle();
 
     expect(find.byType(NowPlayingPanel), findsOneWidget);
     expect(find.byType(LyricsPane), findsOneWidget);
-    expect(find.byType(SeekBar), findsNWidgets(2));
-    // 播放条上歌词按钮紧挨着下载按钮（桌面歌词开关已移到设置页）。
+    // 详情页不再重复播放条上的进度与控制，只剩歌词。
+    expect(find.byType(SeekBar), findsOneWidget);
+    expect(find.text('聚焦播放'), findsNothing);
     expect(find.byKey(const ValueKey('lyricsButton')), findsOneWidget);
 
-    await tester.tap(find.text('返回'));
+    await tester.tap(find.text('返回').last);
     await tester.pumpAndSettle();
     expect(find.byType(NowPlayingPanel), findsNothing);
   });

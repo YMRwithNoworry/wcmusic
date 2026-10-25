@@ -12,7 +12,8 @@ import 'controls.dart';
 /// 底部播放条。
 ///
 /// 只订阅“当前曲目 / 播放状态 / 模式 / 音量”这些低频状态；进度由 [SeekBar]
-/// 自己监听高频通道，避免整条栏每 100ms 重建一次。
+/// 自己监听高频通道，避免整条栏每 100ms 重建一次。左侧歌曲信息可点击，打开
+/// 聚焦播放的歌词页。
 class PlayerBar extends StatelessWidget {
   const PlayerBar({super.key, required this.onOpenNowPlaying});
 
@@ -25,7 +26,7 @@ class PlayerBar extends StatelessWidget {
       (model) => model.current,
     );
     if (track == null) {
-      return _IdlePlayerBar(onOpenNowPlaying: onOpenNowPlaying);
+      return const _IdlePlayerBar();
     }
     final isPlaying = context.select<PlayerViewModel, bool>(
       (model) => model.isPlaying,
@@ -72,28 +73,22 @@ class PlayerBar extends StatelessWidget {
                     ),
                   ),
                   SizedBox(
-                    width: compact ? 170 : (showVolume ? 320 : 210),
+                    width: compact ? 170 : (showVolume ? 300 : 130),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         if (showExtras) ...[
-                          // 歌词紧随下载按钮：先下载旁边的歌词开关，再是下载。
+                          // 下载按钮旁边依次是歌词与播放顺序切换。
                           const LyricsButton(),
                           const SizedBox(width: 2),
                           const DownloadButton(),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 2),
+                          const PlaybackModeButton(),
                         ],
                         if (showVolume) ...[
-                          const VolumeControl(width: 190),
                           const SizedBox(width: 10),
+                          const VolumeControl(width: 190),
                         ],
-                        RoundIconButton(
-                          icon: FLucideIcons.panelBottomOpen,
-                          tooltip: '聚焦播放',
-                          size: 34,
-                          iconSize: 17,
-                          onPress: onOpenNowPlaying,
-                        ),
                       ],
                     ),
                   ),
@@ -108,9 +103,7 @@ class PlayerBar extends StatelessWidget {
 }
 
 class _IdlePlayerBar extends StatelessWidget {
-  const _IdlePlayerBar({required this.onOpenNowPlaying});
-
-  final VoidCallback onOpenNowPlaying;
+  const _IdlePlayerBar();
 
   @override
   Widget build(BuildContext context) {
@@ -140,14 +133,6 @@ class _IdlePlayerBar extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: type.body.xs.copyWith(color: colors.mutedForeground),
                 ),
-              ),
-              const SizedBox(width: 8),
-              FButton(
-                variant: FButtonVariant.ghost,
-                size: FButtonSizeVariant.xs,
-                mainAxisSize: MainAxisSize.min,
-                onPress: onOpenNowPlaying,
-                child: const Text('聚焦播放'),
               ),
             ],
           ),

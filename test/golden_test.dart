@@ -10,6 +10,7 @@ import 'package:wcmusic/app.dart';
 import 'package:wcmusic/data/repositories/memory_music_repository.dart';
 import 'package:wcmusic/data/repositories/memory_source_repository.dart';
 import 'package:wcmusic/domain/models/track.dart';
+import 'package:wcmusic/ui/desktop/player/player_bar.dart';
 import 'package:wcmusic/ui/state/player_view_model.dart';
 
 import 'test_support.dart';
@@ -146,7 +147,8 @@ void main() {
         final viewModel = context.read<PlayerViewModel>();
         await viewModel.playTrack(viewModel.tracks.first);
         await tester.pump();
-        await tester.tap(find.byIcon(FLucideIcons.panelBottomOpen));
+        // 播放条左侧歌曲信息就是打开聚焦播放页的入口。
+        await tester.tap(find.byType(PlayerBar));
       },
     );
   });
