@@ -171,7 +171,7 @@ void LyricsOverlay::Update(
     animation_t_ = 1.0f;
     if (window_) {
       KillTimer(window_, kLyricsTimerId);
-      InvalidateRect(window_, nullptr, TRUE);
+      Paint();
     }
     return;
   }
@@ -198,7 +198,9 @@ void LyricsOverlay::Update(
     if (index_changed && !lyrics_changed) {
       SetTimer(window_, kLyricsTimerId, 16, nullptr);
     }
-    InvalidateRect(window_, nullptr, TRUE);
+    // 分层窗口使用 UpdateLayeredWindow 绘制，InvalidateRect 不一定会触发
+    // WM_PAINT；直接绘制才能让播放进度和滚动动画及时显示。
+    Paint();
   }
 }
 
@@ -217,7 +219,7 @@ void LyricsOverlay::ApplyStyle(const LyricsOverlayStyle& style) {
     SetWindowPos(window_, HWND_TOPMOST, work_area.right - width, work_area.top,
                  width, work_area.bottom - work_area.top, SWP_NOACTIVATE);
   }
-  InvalidateRect(window_, nullptr, TRUE);
+  Paint();
 }
 
 void LyricsOverlay::SetPositionCallback(PositionCallback callback) {
@@ -290,7 +292,7 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
               static_cast<float>(overlay->current_index_);
           KillTimer(window, kLyricsTimerId);
         }
-        InvalidateRect(window, nullptr, TRUE);
+        overlay->Paint();
       }
       return 0;
     case WM_DESTROY:
