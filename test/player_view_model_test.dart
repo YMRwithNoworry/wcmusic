@@ -232,6 +232,29 @@ void main() {
     expect(style.toJson()['backgroundColor'], 0x00000000);
   });
 
+  test('keeps desktop lyrics opacity fully transparent when saved', () {
+    const style = LyricsOverlayStyle(opacity: 0);
+
+    final restored = LyricsOverlayStyle.fromJson(style.toJson());
+
+    expect(restored.opacity, 0);
+    expect(restored.toJson()['opacity'], 0);
+  });
+
+  test('clamps saved desktop lyrics opacity to the supported range', () {
+    final transparent = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 3,
+      'opacity': -0.25,
+    });
+    final opaque = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 3,
+      'opacity': 1.25,
+    });
+
+    expect(transparent.opacity, 0);
+    expect(opaque.opacity, 1);
+  });
+
   test('migrates the legacy desktop lyrics defaults', () {
     final style = LyricsOverlayStyle.fromJson(const {
       'fontFamily': 'Microsoft YaHei UI',

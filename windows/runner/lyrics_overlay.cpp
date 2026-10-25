@@ -13,7 +13,7 @@ constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayWidth = 480;
 constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
-constexpr float kLyricsAnimationSeconds = 0.38f;
+constexpr ULONGLONG kLyricsAnimationDurationMs = 380;
 const std::wstring kEmptyText;
 
 float EaseInOutCubic(float value) {
@@ -152,36 +152,52 @@ void LyricsOverlay::Hide() {
   if (window_) ShowWindow(window_, SW_HIDE);
 }
 
-void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
-                           int current_index, float line_progress,
-                           const std::wstring& current_translation,
-                           const std::wstring& next_translation) {
-  const int next_index = lines.empty()
+void LyricsOverlay::Update(
+    const std::optional<std::vector<std::wstring>>& lines, int current_index,
+    float line_progress, const std::wstring& current_translation,
+    const std::wstring& next_translation) {
+  const bool lyrics_changed = lines.has_value() && lines_ != *lines;
+  if (lines.has_value()) lines_ = *lines;
+  const int next_index = lines_.empty()
       ? 0
-      : std::clamp(current_index, 0, static_cast<int>(lines.size()) - 1);
+      : std::clamp(current_index, 0, static_cast<int>(lines_.size()) - 1);
   const bool index_changed = next_index != current_index_;
-  lines_ = lines;
   line_progress_ = std::clamp(line_progress, 0.0f, 1.0f);
   current_translation_ = current_translation;
   next_translation_ = next_translation;
   if (lines_.empty()) {
-    if (window_) InvalidateRect(window_, nullptr, TRUE);
+    current_index_ = 0;
+    displayed_index_ = 0.0f;
+    animation_t_ = 1.0f;
+    if (window_) {
+      KillTimer(window_, kLyricsTimerId);
+      InvalidateRect(window_, nullptr, TRUE);
+    }
     return;
   }
-  if (index_changed) {
+  if (lyrics_changed) {
+    // 新歌或歌词内容变化时从当前行开始，避免沿用上一首歌的滚动位置。
+    current_index_ = next_index;
+    displayed_index_ = static_cast<float>(next_index);
+    animation_t_ = 1.0f;
+    animation_start_time_ = 0;
+    if (window_) KillTimer(window_, kLyricsTimerId);
+  } else if (index_changed) {
     if (animation_t_ < 1.0f) {
-      displayed_index_ = static_cast<int>(
-          std::round(Lerp(static_cast<float>(displayed_index_),
-                          static_cast<float>(current_index_),
-                          EaseInOutCubic(animation_t_))));
+      displayed_index_ = Lerp(displayed_index_,
+                              static_cast<float>(current_index_),
+                              EaseInOutCubic(animation_t_));
     } else {
-      displayed_index_ = current_index_;
+      displayed_index_ = static_cast<float>(current_index_);
     }
     current_index_ = next_index;
+    animation_start_time_ = GetTickCount64();
     animation_t_ = 0.0f;
   }
   if (window_) {
-    if (index_changed) SetTimer(window_, kLyricsTimerId, 16, nullptr);
+    if (index_changed && !lyrics_changed) {
+      SetTimer(window_, kLyricsTimerId, 16, nullptr);
+    }
     InvalidateRect(window_, nullptr, TRUE);
   }
 }
@@ -263,10 +279,15 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
       return 0;
     case WM_TIMER:
       if (overlay && wparam == kLyricsTimerId) {
-        overlay->animation_t_ += 0.016f / kLyricsAnimationSeconds;
+        const ULONGLONG elapsed =
+            GetTickCount64() - overlay->animation_start_time_;
+        overlay->animation_t_ = std::min(
+            1.0f, static_cast<float>(elapsed) /
+                     static_cast<float>(kLyricsAnimationDurationMs));
         if (overlay->animation_t_ >= 1.0f) {
           overlay->animation_t_ = 1.0f;
-          overlay->displayed_index_ = overlay->current_index_;
+          overlay->displayed_index_ =
+              static_cast<float>(overlay->current_index_);
           KillTimer(window, kLyricsTimerId);
         }
         InvalidateRect(window, nullptr, TRUE);
@@ -392,50 +413,61 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                                     int height) {
   if (lines_.empty()) return;
   const float base = animation_t_ < 1.0f
-      ? Lerp(static_cast<float>(displayed_index_),
-             static_cast<float>(current_index_),
+      ? Lerp(displayed_index_, static_cast<float>(current_index_),
              EaseInOutCubic(animation_t_))
       : static_cast<float>(current_index_);
-  const float center_y = height * 0.62f;
-  const float spacing = std::max(42.0f, style_.font_size * 1.85f);
-  const float max_distance = std::ceil(height / spacing / 2.0f) + 1.0f;
+  const float center_y = height * 0.54f;
+  const float spacing = std::max(60.0f, style_.font_size * 2.25f);
+  const float max_distance = 3.0f;
+  const int first_index = std::max(
+      0, static_cast<int>(std::floor(base - max_distance)));
+  const int last_index = std::min(
+      static_cast<int>(lines_.size()) - 1,
+      static_cast<int>(std::ceil(base + max_distance)));
   const float left_padding = 34.0f;
-  const float right_padding = 20.0f;
+  const float right_padding = 24.0f;
+  const float line_width = width - left_padding - right_padding;
 
   Gdiplus::FontFamily font_family(style_.font_family.c_str());
   const Gdiplus::Color text_color(
       255, GetRValue(style_.text_color), GetGValue(style_.text_color),
       GetBValue(style_.text_color));
+  const Gdiplus::Color highlight_color(255, 123, 231, 165);
+  const Gdiplus::Color karaoke_color(255, 0, 198, 91);
 
-  for (int index = 0; index < static_cast<int>(lines_.size()); ++index) {
+  for (int index = first_index; index <= last_index; ++index) {
     const float offset = static_cast<float>(index) - base;
     const float distance = std::abs(offset);
     if (distance > max_distance) continue;
     const float y = center_y + offset * spacing;
     if (y < -spacing || y > height + spacing) continue;
-    const bool is_center = distance < 0.5f;
-    const bool is_played = index < current_index_;
-    const int font_size = is_center ? style_.font_size + 4 : style_.font_size;
-    const float line_width = width - left_padding - right_padding;
-    const float line_height = spacing;
+
+    const float focus = EaseInOutCubic(
+        1.0f - std::clamp(distance / 1.35f, 0.0f, 1.0f));
+    const float distance_fade = std::clamp(1.0f - distance * 0.10f,
+                                           0.32f, 1.0f);
     const float edge_fade = std::clamp(
         std::min(y / (spacing * 1.5f),
                  (height - y) / (spacing * 1.5f)),
         0.18f, 1.0f);
-    const BYTE alpha = static_cast<BYTE>(
-        std::clamp((is_center ? 255.0f : (is_played ? 230.0f : 185.0f)) *
-                       edge_fade,
-                   0.0f, 255.0f));
+    const float font_size = style_.font_size + 5.0f * focus;
+    const BYTE alpha = static_cast<BYTE>(std::clamp(
+        (108.0f + 147.0f * focus) * distance_fade * edge_fade, 0.0f,
+        255.0f));
+    const auto blend_channel = [focus](BYTE from, BYTE to) {
+      return static_cast<BYTE>(from + (static_cast<int>(to) - from) * focus);
+    };
+    const Gdiplus::Color line_color(
+        alpha,
+        blend_channel(text_color.GetRed(), highlight_color.GetRed()),
+        blend_channel(text_color.GetGreen(), highlight_color.GetGreen()),
+        blend_channel(text_color.GetBlue(), highlight_color.GetBlue()));
 
-    // 字体变体只作用于当前行；未选中的行使用同字族的常规字面，保证层级清晰
     const Gdiplus::FontStyle font_style = ResolveFontStyle(
-        font_family, style_.font_weight, /*want_regular=*/!is_center);
-    Gdiplus::Font font(&font_family, static_cast<float>(font_size),
-                       font_style, Gdiplus::UnitPixel);
-    const Gdiplus::Color base_color(
-        alpha, text_color.GetRed(), text_color.GetGreen(), text_color.GetBlue());
-    const Gdiplus::Color accent_color(alpha, 0, 198, 91);
-    Gdiplus::SolidBrush base_brush(is_played ? accent_color : base_color);
+        font_family, style_.font_weight, /*want_regular=*/focus < 0.78f);
+    Gdiplus::Font font(&font_family, font_size, font_style,
+                       Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush line_brush(line_color);
     Gdiplus::StringFormat format;
     format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
     format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
@@ -446,47 +478,58 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                                        : Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-    Gdiplus::RectF text_rect(left_padding, y - line_height / 2.0f,
-                             line_width, line_height);
-    // 当前行和下一行若带有翻译，将原文上移，下方挤出翻译行
+    Gdiplus::RectF text_rect(left_padding, y - spacing / 2.0f, line_width,
+                             spacing);
     const std::wstring& translation = index == current_index_
         ? current_translation_
         : index == current_index_ + 1 ? next_translation_ : kEmptyText;
     const bool has_translation = !translation.empty();
-    if (has_translation) {
-      text_rect.Y -= font_size * 0.28f;
-    }
-    graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
-                        &base_brush);
+    if (has_translation) text_rect.Y -= spacing * 0.12f;
 
-    if (is_center && line_progress_ > 0.0f) {
+    Gdiplus::SolidBrush shadow_brush(
+        Gdiplus::Color(static_cast<BYTE>(alpha * 0.34f), 0, 0, 0));
+    Gdiplus::RectF shadow_rect = text_rect;
+    shadow_rect.Y += 1.2f;
+    graphics.DrawString(lines_[index].c_str(), -1, &font, shadow_rect, &format,
+                        &shadow_brush);
+    graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
+                        &line_brush);
+
+    if (index == current_index_ && line_progress_ > 0.0f) {
       const Gdiplus::GraphicsState state = graphics.Save();
       Gdiplus::RectF measured;
       graphics.MeasureString(lines_[index].c_str(), -1, &font, text_rect,
                              &format, &measured);
       Gdiplus::RectF clip_rect(measured.X, text_rect.Y,
-                              measured.Width * line_progress_, line_height);
+                               measured.Width * line_progress_, spacing);
       graphics.SetClip(clip_rect);
-      Gdiplus::SolidBrush accent_brush(accent_color);
+      Gdiplus::SolidBrush karaoke_brush(Gdiplus::Color(
+          alpha, karaoke_color.GetRed(), karaoke_color.GetGreen(),
+          karaoke_color.GetBlue()));
       graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
-                          &accent_brush);
+                          &karaoke_brush);
       graphics.Restore(state);
     }
 
     if (has_translation) {
-      // 翻译行固定使用常规字面，不跟随当前/非当前行的字重。
-      // 参数先取出来再传：GDI+ 的 FontStyle 是枚举，MSVC 不接受叫 style 的局部变量。
+      // 翻译行保持清晰的白色层级，不跟随原文的高亮颜色。
       const Gdiplus::FontStyle translation_weight = ResolveFontStyle(
-          font_family, style_.font_weight, true);
-      Gdiplus::Font translation_font(&font_family, font_size * 0.62f,
+          font_family, style_.font_weight, /*want_regular=*/true);
+      Gdiplus::Font translation_font(&font_family, font_size * 0.58f,
                                      translation_weight, Gdiplus::UnitPixel);
-      const BYTE translation_alpha = static_cast<BYTE>(alpha * 0.78f);
+      const BYTE translation_alpha = static_cast<BYTE>(alpha * 0.76f);
       Gdiplus::SolidBrush translation_brush(Gdiplus::Color(
           translation_alpha, text_color.GetRed(), text_color.GetGreen(),
           text_color.GetBlue()));
       Gdiplus::RectF translation_rect(
-          left_padding, y + line_height * 0.16f, line_width,
-          line_height * 0.8f);
+          left_padding, y + spacing * 0.08f, line_width, spacing * 0.48f);
+      Gdiplus::SolidBrush translation_shadow_brush(Gdiplus::Color(
+          static_cast<BYTE>(translation_alpha * 0.34f), 0, 0, 0));
+      Gdiplus::RectF translation_shadow_rect = translation_rect;
+      translation_shadow_rect.Y += 1.0f;
+      graphics.DrawString(translation.c_str(), -1, &translation_font,
+                          translation_shadow_rect, &format,
+                          &translation_shadow_brush);
       graphics.DrawString(translation.c_str(), -1, &translation_font,
                           translation_rect, &format, &translation_brush);
     }

@@ -1,5 +1,6 @@
 ﻿#include "flutter_window.h"
 
+#include <algorithm>
 #include <optional>
 #include <vector>
 
@@ -128,18 +129,19 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         if (call.method_name() == "update") {
-          std::vector<std::wstring> lines;
-          const auto* lines_value = FindArgument(arguments, "lines");
-          if (lines_value) {
-            if (const auto* list =
-                    std::get_if<std::vector<flutter::EncodableValue>>(
-                        lines_value)) {
+          std::optional<std::vector<std::wstring>> lines;
+          const auto* lines_changed = FindArgument(arguments, "lines");
+          if (lines_changed) {
+            std::vector<std::wstring> decoded_lines;
+            if (const auto* list = std::get_if<std::vector<flutter::EncodableValue>>(
+                    lines_changed)) {
               for (const auto& item : *list) {
                 if (const auto* text = std::get_if<std::string>(&item)) {
-                  lines.push_back(Utf8ToWide(*text));
+                  decoded_lines.push_back(Utf8ToWide(*text));
                 }
               }
             }
+            lines = std::move(decoded_lines);
           }
           const int current_index = static_cast<int>(DoubleValue(
               FindArgument(arguments, "currentIndex"), 0));
@@ -179,8 +181,10 @@ bool FlutterWindow::OnCreate() {
           style.background_color = ArgbToColorRef(background_argb);
           style.background_alpha =
               static_cast<BYTE>((background_argb >> 24) & 0xFF);
+          const double opacity = DoubleValue(
+              FindArgument(arguments, "opacity"), 0.92);
           style.opacity = static_cast<int>(
-              DoubleValue(FindArgument(arguments, "opacity"), 0.92) * 255);
+              std::clamp(opacity, 0.0, 1.0) * 255);
           style.corner_radius = static_cast<int>(DoubleValue(
               FindArgument(arguments, "cornerRadius"), 0));
           style.locked = BoolValue(FindArgument(arguments, "locked"), true);

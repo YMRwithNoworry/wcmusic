@@ -41,4 +41,21 @@ void main() {
     expect(loaded.positionX, 120);
     expect(loaded.positionY, 400);
   });
+
+  test('persists a fully transparent lyrics background', () async {
+    final directory = await Directory.systemTemp.createTemp('wcmusic-lyrics-');
+    addTearDown(() => directory.delete(recursive: true));
+    final first = PlatformFloatingLyricsService(
+      directoryProvider: () async => directory,
+    );
+    addTearDown(first.dispose);
+    await first.saveStyle(const LyricsOverlayStyle(opacity: 0));
+
+    final second = PlatformFloatingLyricsService(
+      directoryProvider: () async => directory,
+    );
+    addTearDown(second.dispose);
+
+    expect((await second.loadStyle()).opacity, 0);
+  });
 }

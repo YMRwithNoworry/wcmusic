@@ -111,7 +111,9 @@ class LyricsOverlayStyle {
       backgroundColor: needsAppleMusicMigration || needsTransparentBackground
           ? 0x00000000
           : backgroundColor ?? 0x00000000,
-      opacity: needsAppleMusicMigration ? 0.92 : opacity ?? 0.92,
+      opacity: needsAppleMusicMigration
+          ? 0.92
+          : (opacity ?? 0.92).clamp(0.0, 1.0).toDouble(),
       cornerRadius: needsAppleMusicMigration ? 0 : cornerRadius ?? 0,
       locked: json['locked'] as bool? ?? true,
       positionX: needsAppleMusicMigration

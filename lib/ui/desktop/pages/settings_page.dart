@@ -562,11 +562,8 @@ class _LyricsStyleSection extends StatelessWidget {
             width: 240,
             child: FSlider(
               control: FSliderControl.liftedContinuous(
-                value: FSliderValue(
-                  max: ((style.opacity - .15) / .85).clamp(0.0, 1.0),
-                ),
-                onChange: (value) =>
-                    update(style.copyWith(opacity: .15 + value.max * .85)),
+                value: FSliderValue(max: style.opacity.clamp(0.0, 1.0)),
+                onChange: (value) => update(style.copyWith(opacity: value.max)),
               ),
             ),
           ),

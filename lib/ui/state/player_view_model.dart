@@ -139,6 +139,7 @@ class PlayerViewModel extends ChangeNotifier {
   bool isDownloading = false;
   double? downloadProgress;
   List<LyricLine> lyrics = const [];
+  List<String> _floatingLyricsLines = const [];
   int currentLyricIndex = -1;
   late bool backgroundPlayback = windowLifecycleService?.closeToTray ?? true;
   String query = '';
@@ -1070,6 +1071,7 @@ class PlayerViewModel extends ChangeNotifier {
   Future<void> _loadLyrics(Track track) async {
     final generation = ++_lyricGeneration;
     lyrics = const [];
+    _floatingLyricsLines = const [];
     currentLyricIndex = -1;
     lyricIndexListenable.value = -1;
     lyricProgressListenable.value = 0;
@@ -1096,6 +1098,7 @@ class PlayerViewModel extends ChangeNotifier {
       final loaded = await lyricService.loadLyrics(lyricTrack);
       if (generation != _lyricGeneration || current?.id != track.id) return;
       lyrics = loaded;
+      _floatingLyricsLines = [for (final lyric in loaded) lyric.text];
       if (floatingLyricsEnabled) {
         await floatingLyricsService.update(
           title: '${track.title} · ${track.artist}',
@@ -1156,13 +1159,6 @@ class PlayerViewModel extends ChangeNotifier {
     final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
         ? lyrics[followingIndex].text
         : '';
-    const radius = 5;
-    final windowStart = (nextIndex - radius).clamp(0, lyrics.length - 1);
-    final windowEnd = (nextIndex + radius + 1).clamp(0, lyrics.length);
-    final windowLines = [
-      for (var index = windowStart; index < windowEnd; index++)
-        lyrics[index].text,
-    ];
     final translation = nextIndex < 0 ? null : lyrics[nextIndex].translation;
     final nextTranslation =
         followingIndex >= 0 && followingIndex < lyrics.length
@@ -1175,8 +1171,9 @@ class PlayerViewModel extends ChangeNotifier {
         nextLine: nextLine,
         currentTranslation: translation,
         nextTranslation: nextTranslation,
-        lines: windowLines,
-        currentIndex: nextIndex - windowStart,
+        // 原生窗口需要完整歌词索引，才能在歌词窗口滚动时保持连续动画。
+        lines: _floatingLyricsLines,
+        currentIndex: nextIndex,
         lineProgress: lineProgress,
       ),
     );

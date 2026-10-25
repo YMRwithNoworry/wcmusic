@@ -5,6 +5,7 @@
 #include <gdiplus.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,8 +40,9 @@ class LyricsOverlay {
   bool Create();
   void Show();
   void Hide();
-  void Update(const std::vector<std::wstring>& lines, int current_index,
-              float line_progress, const std::wstring& current_translation,
+  void Update(const std::optional<std::vector<std::wstring>>& lines,
+              int current_index, float line_progress,
+              const std::wstring& current_translation,
               const std::wstring& next_translation);
   void ApplyStyle(const LyricsOverlayStyle& style);
   void SetPositionCallback(PositionCallback callback);
@@ -59,8 +61,9 @@ class LyricsOverlay {
   HWND window_ = nullptr;
   std::vector<std::wstring> lines_;
   int current_index_ = 0;
-  int displayed_index_ = 0;
+  float displayed_index_ = 0.0f;
   float animation_t_ = 1.0f;
+  ULONGLONG animation_start_time_ = 0;
   float line_progress_ = 0.0f;
   // 当前行与下一行的中文翻译
   std::wstring current_translation_;

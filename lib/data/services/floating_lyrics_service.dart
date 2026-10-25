@@ -45,6 +45,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   bool _handlerRegistered = false;
   LyricsOverlayStyle? _style;
   File? _settingsFile;
+  List<String>? _lastLyricsLines;
   List<String>? _systemFonts;
   String? _defaultFont;
 
@@ -66,6 +67,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
     });
     final succeeded = result ?? false;
     _enabled = enabled && succeeded;
+    if (!enabled) _lastLyricsLines = null;
     return enabled ? _enabled : succeeded;
   }
 
@@ -82,16 +84,20 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   }) async {
     if (!_enabled) return;
     _ensureHandler();
-    await _channel.invokeMethod<void>('update', {
+    final updateLines =
+        Platform.isWindows && !identical(lines, _lastLyricsLines);
+    if (updateLines) _lastLyricsLines = lines;
+    final arguments = <String, Object?>{
       'title': title,
       'currentLine': currentLine,
       'nextLine': nextLine,
       'currentTranslation': currentTranslation,
       'nextTranslation': nextTranslation,
-      'lines': lines,
       'currentIndex': currentIndex,
       'lineProgress': lineProgress.clamp(0.0, 1.0),
-    });
+    };
+    if (updateLines) arguments['lines'] = lines;
+    await _channel.invokeMethod<void>('update', arguments);
   }
 
   @override
