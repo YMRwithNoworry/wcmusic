@@ -74,8 +74,10 @@ class _SearchPageState extends State<SearchPage> {
                         focusNode: _focusNode,
                         hint: '输入歌曲、艺术家或专辑',
                         clearable: (_) => true,
-                        prefixBuilder: (context, style, _) =>
-                            Icon(FLucideIcons.search, size: 16),
+                        prefixBuilder: (context, style, _) => Padding(
+                          padding: const EdgeInsets.only(left: 12, right: 8),
+                          child: Icon(FLucideIcons.search, size: 16),
+                        ),
                         onSubmit: model.isSearchingOnline
                             ? null
                             : (value) => model.searchOnline(value),

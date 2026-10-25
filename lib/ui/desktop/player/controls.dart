@@ -578,24 +578,50 @@ class VolumeControl extends StatelessWidget {
     final type = context.theme.typography;
     return SizedBox(
       width: width,
+      height: 34,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           RoundIconButton(
             icon: _icon(model.volume),
             tooltip: model.volume <= .001 ? '取消静音' : '静音',
-            size: 30,
+            size: 34,
             iconSize: 16,
             onPress: model.toggleMute,
           ),
           const SizedBox(width: 4),
           Expanded(
-            child: FSlider(
-              control: FSliderControl.liftedContinuous(
-                value: FSliderValue(max: model.volume.clamp(0.0, 1.0)),
-                onChange: (value) => model.setVolume(value.max),
+            child: LayoutBuilder(
+              builder: (context, constraints) => GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: (details) {
+                  const thumbSize = 16.0;
+                  final travel = constraints.maxWidth - thumbSize;
+                  if (travel <= 0) return;
+                  model.setVolume(
+                    ((details.localPosition.dx - thumbSize / 2) / travel).clamp(
+                      0.0,
+                      1.0,
+                    ),
+                  );
+                },
+                child: FSlider(
+                  style: const FSliderStyleDelta.delta(
+                    thumbSize: 16,
+                    childPadding: EdgeInsetsGeometryDelta.value(
+                      EdgeInsets.zero,
+                    ),
+                  ),
+                  trackHitRegionCrossExtent: 34,
+                  control: FSliderControl.liftedContinuous(
+                    value: FSliderValue(max: model.volume.clamp(0.0, 1.0)),
+                    interaction: FSliderInteraction.slide,
+                    onChange: (value) => model.setVolume(value.max),
+                  ),
+                  tooltipBuilder: (controller, value) =>
+                      Text('${(value * 100).round()}%'),
+                ),
               ),
-              tooltipBuilder: (controller, value) =>
-                  Text('${(value * 100).round()}%'),
             ),
           ),
           if (showLabel)
