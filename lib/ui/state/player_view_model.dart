@@ -910,6 +910,8 @@ class PlayerViewModel extends ChangeNotifier {
         floatingLyricsEnabled = value;
         message = value ? '歌词浮层已开启' : '歌词浮层已关闭';
         if (value) {
+          // 首次启用时立即同步当前样式，确保原生端正确处理透明背景和用户设置。
+          await floatingLyricsService.setStyle(lyricsStyle);
           final track = current;
           if (track == null) {
             await floatingLyricsService.update(

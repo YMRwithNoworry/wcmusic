@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <gdiplus.h>
 #include <windowsx.h>
 
@@ -141,6 +142,7 @@ bool LyricsOverlay::Create() {
 
 void LyricsOverlay::Show() {
   if (!Create()) return;
+  Clear();
   ShowWindow(window_, SW_SHOWNOACTIVATE);
   SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -302,18 +304,21 @@ void LyricsOverlay::Paint() {
     graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
     graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
 
-    Gdiplus::RectF full(0, 0, static_cast<float>(width),
-                        static_cast<float>(height));
-    Gdiplus::GraphicsPath background_path;
-    AddRoundedRectangle(
-        background_path, full, static_cast<float>(style_.corner_radius));
-    Gdiplus::Color background(
-        static_cast<BYTE>(style_.opacity),
-        GetRValue(style_.background_color),
-        GetGValue(style_.background_color),
-        GetBValue(style_.background_color));
-    Gdiplus::SolidBrush background_brush(background);
-    graphics.FillPath(&background_brush, &background_path);
+    if (style_.background_alpha > 0) {
+      Gdiplus::RectF full(0, 0, static_cast<float>(width),
+                          static_cast<float>(height));
+      Gdiplus::GraphicsPath background_path;
+      AddRoundedRectangle(
+          background_path, full, static_cast<float>(style_.corner_radius));
+      const BYTE background_alpha = static_cast<BYTE>(
+          style_.opacity * style_.background_alpha / 255);
+      Gdiplus::Color background(
+          background_alpha, GetRValue(style_.background_color),
+          GetGValue(style_.background_color),
+          GetBValue(style_.background_color));
+      Gdiplus::SolidBrush background_brush(background);
+      graphics.FillPath(&background_brush, &background_path);
+    }
 
     const float handle_height = 96.0f;
     Gdiplus::RectF handle_rect(0.0f, (height - handle_height) / 2.0f, 9.0f,
@@ -338,6 +343,45 @@ void LyricsOverlay::Paint() {
   UpdateLayeredWindow(window_, screen_dc, &destination, &size, mem_dc,
                       &source, 0, &blend, ULW_ALPHA);
 
+  SelectObject(mem_dc, previous);
+  DeleteObject(dib);
+  DeleteDC(mem_dc);
+  ReleaseDC(nullptr, screen_dc);
+}
+
+void LyricsOverlay::Clear() {
+  if (!window_) return;
+  RECT bounds{};
+  GetClientRect(window_, &bounds);
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
+  if (width <= 0 || height <= 0) return;
+  // 窗口显示前先整块刷成全透明，避免首帧闪一下不透明的默认底色。
+  HDC screen_dc = GetDC(nullptr);
+  HDC mem_dc = CreateCompatibleDC(screen_dc);
+  BITMAPINFO bitmap_info{};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = width;
+  bitmap_info.bmiHeader.biHeight = -height;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+  void* bits = nullptr;
+  HBITMAP dib = CreateDIBSection(screen_dc, &bitmap_info, DIB_RGB_COLORS,
+                                 &bits, nullptr, 0);
+  HGDIOBJ previous = SelectObject(mem_dc, dib);
+  std::memset(bits, 0, static_cast<size_t>(width) * height * 4);
+  RECT window_bounds{};
+  GetWindowRect(window_, &window_bounds);
+  POINT destination{window_bounds.left, window_bounds.top};
+  POINT source{0, 0};
+  SIZE size{width, height};
+  BLENDFUNCTION blend{};
+  blend.BlendOp = AC_SRC_OVER;
+  blend.SourceConstantAlpha = 255;
+  blend.AlphaFormat = AC_SRC_ALPHA;
+  UpdateLayeredWindow(window_, screen_dc, &destination, &size, mem_dc,
+                      &source, 0, &blend, ULW_ALPHA);
   SelectObject(mem_dc, previous);
   DeleteObject(dib);
   DeleteDC(mem_dc);

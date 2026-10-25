@@ -8,6 +8,9 @@ const lyricsOverlayFontWeights = {
   lyricsOverlayFontWeightLight,
 };
 
+/// 历次版本的默认背景色（深色）。这些值不是用户主动选的，加载时一律当作“无背景”。
+const _legacyDarkBackgrounds = <int>{0xFF141416, 0xFF1C1F1B};
+
 class LyricsOverlayStyle {
   const LyricsOverlayStyle({
     this.fontFamily = 'Microsoft YaHei UI',
@@ -87,9 +90,14 @@ class LyricsOverlayStyle {
     final cornerRadius = (json['cornerRadius'] as num?)?.toDouble();
     final layoutVersion = (json['layoutVersion'] as num?)?.toInt() ?? 0;
     final needsAppleMusicMigration = layoutVersion < 2;
-    // 桌面歌词默认透明：v1/v2 时代保存下来的黑色底会被迁移成透明，用户想加背景
-    // 可以在设置页重新挑选颜色（v3 起会记住用户的选择）。
-    final needsTransparentBackground = layoutVersion < 3;
+    // 桌面歌词默认透明：v3 之前保存的深色底，以及仍然等于历次版本默认值的
+    // 深色底，都迁移成透明。之前把迁移后的透明样式写回时版本号已经是 3，
+    // 结果黑色的旧默认值被“固化”下来，所以这里按颜色值再兜一层。
+    // 用户主动挑的其他背景色（v3 之后保存的）保持不变。
+    final needsTransparentBackground =
+        layoutVersion < 3 ||
+        (backgroundColor != null &&
+            _legacyDarkBackgrounds.contains(backgroundColor));
     return LyricsOverlayStyle(
       fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
       fontWeight: lyricsOverlayFontWeights.contains(json['fontWeight'])

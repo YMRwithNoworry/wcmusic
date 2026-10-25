@@ -18,7 +18,9 @@ struct LyricsOverlayStyle {
   int font_size = 24;
   int align = DT_RIGHT;
   COLORREF text_color = RGB(243, 243, 243);
-  COLORREF background_color = RGB(20, 20, 22);
+  // 背景色的 RGB 与 ARGB 透明度分开保存，默认 alpha 为 0，即无底色。
+  COLORREF background_color = RGB(0, 0, 0);
+  BYTE background_alpha = 0;
   int opacity = 235;
   int corner_radius = 0;
   bool locked = true;
@@ -51,6 +53,8 @@ class LyricsOverlay {
   void Paint();
   void DrawLyricsWheel(Gdiplus::Graphics& graphics, int width, int height);
   void ApplyWindowAttributes();
+  /// 把整个窗口刷成全透明（显示前调用，避免闪出不透明底色）
+  void Clear();
 
   HWND window_ = nullptr;
   std::vector<std::wstring> lines_;

@@ -401,6 +401,7 @@ class _LyricsStyleSection extends StatelessWidget {
   ];
 
   static const _backgroundColors = [
+    0x00000000,
     0xFF1C1F1B,
     0xFF101418,
     0xFF1E2A24,

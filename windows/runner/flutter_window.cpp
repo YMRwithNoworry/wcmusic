@@ -1,4 +1,4 @@
-#include "flutter_window.h"
+﻿#include "flutter_window.h"
 
 #include <optional>
 #include <vector>
@@ -173,9 +173,12 @@ bool FlutterWindow::OnCreate() {
           }
           style.text_color = ArgbToColorRef(static_cast<int64_t>(
               DoubleValue(FindArgument(arguments, "textColor"), 0xFFF3F3F3)));
-          style.background_color = ArgbToColorRef(static_cast<int64_t>(
-              DoubleValue(FindArgument(arguments, "backgroundColor"),
-                          0xFF141416)));
+          // 保留 ARGB 的透明度通道；透明背景不能只把 RGB 转成 COLORREF。
+          const int64_t background_argb = static_cast<int64_t>(DoubleValue(
+              FindArgument(arguments, "backgroundColor"), 0x00000000));
+          style.background_color = ArgbToColorRef(background_argb);
+          style.background_alpha =
+              static_cast<BYTE>((background_argb >> 24) & 0xFF);
           style.opacity = static_cast<int>(
               DoubleValue(FindArgument(arguments, "opacity"), 0.92) * 255);
           style.corner_radius = static_cast<int>(DoubleValue(

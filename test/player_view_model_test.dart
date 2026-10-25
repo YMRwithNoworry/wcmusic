@@ -74,6 +74,32 @@ void main() {
     expect(player.setVolumeValue, .35);
   });
 
+  test(
+    'pushes the transparent style to the overlay when desktop lyrics open',
+    () async {
+      final overlay = _FakeFloatingLyricsService();
+      overlay.style = const LyricsOverlayStyle(
+        backgroundColor: 0x00000000,
+        fontSize: 28,
+      );
+      final viewModel = PlayerViewModel(
+        musicRepository: MemoryMusicRepository(),
+        sourceRepository: MemorySourceRepository(),
+        onlineSearchService: FakeOnlineSearchService(),
+        playerService: FakePlayerService(),
+        floatingLyricsService: overlay,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.load();
+
+      await viewModel.setFloatingLyrics(true);
+      // 开启时必须把保存的样式推给原生窗口，透明背景才能正确生效。
+      expect(overlay.style?.backgroundColor, 0x00000000);
+      expect(overlay.style?.fontSize, 28);
+      expect(viewModel.floatingLyricsEnabled, isTrue);
+    },
+  );
+
   test('toggles and persists spatial audio effects', () async {
     final player = FakePlayerService();
     final settings = FakeAudioEffectSettingsStore();
@@ -199,6 +225,13 @@ void main() {
     expect(viewModel.availableUpdate, isNull);
   });
 
+  test('uses a transparent default desktop lyrics background', () {
+    const style = LyricsOverlayStyle();
+
+    expect(style.backgroundColor, 0x00000000);
+    expect(style.toJson()['backgroundColor'], 0x00000000);
+  });
+
   test('migrates the legacy desktop lyrics defaults', () {
     final style = LyricsOverlayStyle.fromJson(const {
       'fontFamily': 'Microsoft YaHei UI',
@@ -238,10 +271,30 @@ void main() {
     // 用户在新版本里主动选的背景色要保留。
     final chosen = LyricsOverlayStyle.fromJson({
       ...LyricsOverlayStyle.fromJson(const {'layoutVersion': 3}).toJson(),
-      'backgroundColor': 0xFF1C1F1B,
+      'backgroundColor': 0xFF101418,
     });
-    expect(chosen.backgroundColor, 0xFF1C1F1B);
+    expect(chosen.backgroundColor, 0xFF101418);
   });
+
+  test(
+    'clears legacy dark backgrounds even after they were re-saved as v3',
+    () {
+      // 真实踩坑：升级后透明样式被写回时 layoutVersion 已是 3，旧默认的纯黑
+      // 0xFF141416 被“固化”下来，桌面歌词一直带黑底。
+      final frozen = LyricsOverlayStyle.fromJson(const {
+        'layoutVersion': 3,
+        'backgroundColor': 0xFF141416,
+        'opacity': 0.15,
+      });
+      expect(frozen.backgroundColor, 0x00000000);
+
+      final userChosen = LyricsOverlayStyle.fromJson(const {
+        'layoutVersion': 3,
+        'backgroundColor': 0xFF101418,
+      });
+      expect(userChosen.backgroundColor, 0xFF101418);
+    },
+  );
 
   test('prefers a full track url resolved by an imported source', () async {
     const previewTrack = Track(
