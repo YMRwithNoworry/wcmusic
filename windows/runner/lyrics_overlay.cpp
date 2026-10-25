@@ -5,21 +5,33 @@
 #include <cstring>
 #include <gdiplus.h>
 #include <windowsx.h>
+#include <mmsystem.h>
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "winmm.lib")
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayWidth = 480;
 constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
-constexpr ULONGLONG kLyricsAnimationDurationMs = 380;
+constexpr UINT kLyricsFrameIntervalMs = 16;
+constexpr ULONGLONG kLyricsAnimationDurationMs = 420;
+constexpr float kLyricsScaleMin = 0.94f;
+constexpr float kLyricsScaleMax = 1.16f;
 const std::wstring kEmptyText;
 
-float EaseInOutCubic(float value) {
-  return value < 0.5f
-      ? 4.0f * value * value * value
-      : static_cast<float>(1 - std::pow(-2 * value + 2, 3) / 2);
+float EaseOutQuint(float value) {
+  const float inverse = 1.0f - std::clamp(value, 0.0f, 1.0f);
+  return 1.0f - inverse * inverse * inverse * inverse * inverse;
+}
+
+float EaseInOutQuint(float value) {
+  const float t = std::clamp(value, 0.0f, 1.0f);
+  const float inverse = 1.0f - t;
+  return t < 0.5f ? 16.0f * t * t * t * t * t
+                  : 1.0f - 16.0f * inverse * inverse * inverse * inverse *
+                                inverse;
 }
 
 float Lerp(float from, float to, float value) {
@@ -146,10 +158,13 @@ void LyricsOverlay::Show() {
   ShowWindow(window_, SW_SHOWNOACTIVATE);
   SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  if (animation_t_ < 1.0f) StartAnimationTimer();
 }
 
 void LyricsOverlay::Hide() {
-  if (window_) ShowWindow(window_, SW_HIDE);
+  if (!window_) return;
+  StopAnimationTimer();
+  ShowWindow(window_, SW_HIDE);
 }
 
 void LyricsOverlay::Update(
@@ -167,37 +182,29 @@ void LyricsOverlay::Update(
   next_translation_ = next_translation;
   if (lines_.empty()) {
     current_index_ = 0;
-    displayed_index_ = 0.0f;
+    animation_from_index_ = 0.0f;
     animation_t_ = 1.0f;
-    if (window_) {
-      KillTimer(window_, kLyricsTimerId);
-      Paint();
-    }
+    StopAnimationTimer();
+    if (window_) Paint();
     return;
   }
   if (lyrics_changed) {
     // 新歌或歌词内容变化时从当前行开始，避免沿用上一首歌的滚动位置。
     current_index_ = next_index;
-    displayed_index_ = static_cast<float>(next_index);
+    animation_from_index_ = static_cast<float>(next_index);
     animation_t_ = 1.0f;
     animation_start_time_ = 0;
-    if (window_) KillTimer(window_, kLyricsTimerId);
+    StopAnimationTimer();
   } else if (index_changed) {
-    if (animation_t_ < 1.0f) {
-      displayed_index_ = Lerp(displayed_index_,
-                              static_cast<float>(current_index_),
-                              EaseInOutCubic(animation_t_));
-    } else {
-      displayed_index_ = static_cast<float>(current_index_);
-    }
+    const ULONGLONG now = GetTickCount64();
+    // 在旧动画的实时位置接续，避免歌词快速切换时跳帧或回弹。
+    animation_from_index_ = AnimatedIndex(now);
     current_index_ = next_index;
-    animation_start_time_ = GetTickCount64();
+    animation_start_time_ = now;
     animation_t_ = 0.0f;
+    if (window_ && IsWindowVisible(window_)) StartAnimationTimer();
   }
   if (window_) {
-    if (index_changed && !lyrics_changed) {
-      SetTimer(window_, kLyricsTimerId, 16, nullptr);
-    }
     // 分层窗口使用 UpdateLayeredWindow 绘制，InvalidateRect 不一定会触发
     // WM_PAINT；直接绘制才能让播放进度和滚动动画及时显示。
     Paint();
@@ -227,9 +234,12 @@ void LyricsOverlay::SetPositionCallback(PositionCallback callback) {
 }
 
 void LyricsOverlay::Destroy() {
-  if (!window_) return;
-  DestroyWindow(window_);
-  window_ = nullptr;
+  StopAnimationTimer();
+  if (window_) {
+    DestroyWindow(window_);
+    window_ = nullptr;
+  }
+  ReleaseBackBuffer();
 }
 
 void LyricsOverlay::ApplyWindowAttributes() {
@@ -245,6 +255,87 @@ void LyricsOverlay::ApplyWindowAttributes() {
   SetWindowPos(window_, nullptr, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                    SWP_FRAMECHANGED);
+}
+
+bool LyricsOverlay::EnsureBackBuffer(int width, int height) {
+  if (memory_dc_ && back_buffer_ && back_buffer_bits_ &&
+      back_buffer_width_ == width && back_buffer_height_ == height) {
+    return true;
+  }
+
+  ReleaseBackBuffer();
+  HDC screen_dc = GetDC(nullptr);
+  if (!screen_dc) return false;
+
+  memory_dc_ = CreateCompatibleDC(screen_dc);
+  BITMAPINFO bitmap_info{};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = width;
+  bitmap_info.bmiHeader.biHeight = -height;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+  if (memory_dc_) {
+    back_buffer_ = CreateDIBSection(screen_dc, &bitmap_info, DIB_RGB_COLORS,
+                                    &back_buffer_bits_, nullptr, 0);
+  }
+  ReleaseDC(nullptr, screen_dc);
+
+  if (!memory_dc_ || !back_buffer_ || !back_buffer_bits_) {
+    ReleaseBackBuffer();
+    return false;
+  }
+
+  previous_bitmap_ = SelectObject(memory_dc_, back_buffer_);
+  if (!previous_bitmap_ || previous_bitmap_ == HGDI_ERROR) {
+    previous_bitmap_ = nullptr;
+    ReleaseBackBuffer();
+    return false;
+  }
+  back_buffer_width_ = width;
+  back_buffer_height_ = height;
+  return true;
+}
+
+void LyricsOverlay::ReleaseBackBuffer() {
+  if (memory_dc_ && previous_bitmap_) {
+    SelectObject(memory_dc_, previous_bitmap_);
+  }
+  if (back_buffer_) DeleteObject(back_buffer_);
+  if (memory_dc_) DeleteDC(memory_dc_);
+  memory_dc_ = nullptr;
+  back_buffer_ = nullptr;
+  previous_bitmap_ = nullptr;
+  back_buffer_bits_ = nullptr;
+  back_buffer_width_ = 0;
+  back_buffer_height_ = 0;
+}
+
+void LyricsOverlay::StartAnimationTimer() {
+  if (!window_) return;
+  if (!timer_resolution_active_) {
+    timer_resolution_active_ = timeBeginPeriod(1) == TIMERR_NOERROR;
+  }
+  if (!SetTimer(window_, kLyricsTimerId, kLyricsFrameIntervalMs, nullptr)) {
+    StopAnimationTimer();
+  }
+}
+
+void LyricsOverlay::StopAnimationTimer() {
+  if (window_) KillTimer(window_, kLyricsTimerId);
+  if (timer_resolution_active_) {
+    timeEndPeriod(1);
+    timer_resolution_active_ = false;
+  }
+}
+
+float LyricsOverlay::AnimatedIndex(ULONGLONG now) const {
+  if (animation_t_ >= 1.0f) return static_cast<float>(current_index_);
+  const float elapsed = static_cast<float>(now - animation_start_time_);
+  const float progress = std::clamp(
+      elapsed / static_cast<float>(kLyricsAnimationDurationMs), 0.0f, 1.0f);
+  return Lerp(animation_from_index_, static_cast<float>(current_index_),
+              EaseOutQuint(progress));
 }
 
 LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
@@ -281,16 +372,15 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
       return 0;
     case WM_TIMER:
       if (overlay && wparam == kLyricsTimerId) {
-        const ULONGLONG elapsed =
-            GetTickCount64() - overlay->animation_start_time_;
+        const float elapsed = static_cast<float>(
+            GetTickCount64() - overlay->animation_start_time_);
         overlay->animation_t_ = std::min(
-            1.0f, static_cast<float>(elapsed) /
-                     static_cast<float>(kLyricsAnimationDurationMs));
+            1.0f, elapsed / static_cast<float>(kLyricsAnimationDurationMs));
         if (overlay->animation_t_ >= 1.0f) {
           overlay->animation_t_ = 1.0f;
-          overlay->displayed_index_ =
+          overlay->animation_from_index_ =
               static_cast<float>(overlay->current_index_);
-          KillTimer(window, kLyricsTimerId);
+          overlay->StopAnimationTimer();
         }
         overlay->Paint();
       }
@@ -302,28 +392,15 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
 }
 
 void LyricsOverlay::Paint() {
+  if (!window_) return;
   RECT bounds{};
   GetClientRect(window_, &bounds);
   const int width = bounds.right - bounds.left;
   const int height = bounds.bottom - bounds.top;
-  if (width <= 0 || height <= 0) return;
-
-  HDC screen_dc = GetDC(nullptr);
-  HDC mem_dc = CreateCompatibleDC(screen_dc);
-  BITMAPINFO bitmap_info{};
-  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  bitmap_info.bmiHeader.biWidth = width;
-  bitmap_info.bmiHeader.biHeight = -height;
-  bitmap_info.bmiHeader.biPlanes = 1;
-  bitmap_info.bmiHeader.biBitCount = 32;
-  bitmap_info.bmiHeader.biCompression = BI_RGB;
-  void* bits = nullptr;
-  HBITMAP dib = CreateDIBSection(
-      screen_dc, &bitmap_info, DIB_RGB_COLORS, &bits, nullptr, 0);
-  HGDIOBJ previous = SelectObject(mem_dc, dib);
+  if (width <= 0 || height <= 0 || !EnsureBackBuffer(width, height)) return;
 
   {
-    Gdiplus::Graphics graphics(mem_dc);
+    Gdiplus::Graphics graphics(memory_dc_);
     graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
     graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
 
@@ -345,7 +422,7 @@ void LyricsOverlay::Paint() {
 
     const float handle_height = 96.0f;
     Gdiplus::RectF handle_rect(0.0f, (height - handle_height) / 2.0f, 9.0f,
-                              handle_height);
+                               handle_height);
     Gdiplus::GraphicsPath handle_path;
     AddRoundedRectangle(handle_path, handle_rect, 4.5f);
     Gdiplus::SolidBrush handle_brush(Gdiplus::Color(150, 92, 94, 98));
@@ -354,6 +431,8 @@ void LyricsOverlay::Paint() {
     DrawLyricsWheel(graphics, width, height);
   }
 
+  HDC screen_dc = GetDC(nullptr);
+  if (!screen_dc) return;
   RECT window_bounds{};
   GetWindowRect(window_, &window_bounds);
   POINT destination{window_bounds.left, window_bounds.top};
@@ -363,12 +442,8 @@ void LyricsOverlay::Paint() {
   blend.BlendOp = AC_SRC_OVER;
   blend.SourceConstantAlpha = 255;
   blend.AlphaFormat = AC_SRC_ALPHA;
-  UpdateLayeredWindow(window_, screen_dc, &destination, &size, mem_dc,
+  UpdateLayeredWindow(window_, screen_dc, &destination, &size, memory_dc_,
                       &source, 0, &blend, ULW_ALPHA);
-
-  SelectObject(mem_dc, previous);
-  DeleteObject(dib);
-  DeleteDC(mem_dc);
   ReleaseDC(nullptr, screen_dc);
 }
 
@@ -378,22 +453,13 @@ void LyricsOverlay::Clear() {
   GetClientRect(window_, &bounds);
   const int width = bounds.right - bounds.left;
   const int height = bounds.bottom - bounds.top;
-  if (width <= 0 || height <= 0) return;
+  if (width <= 0 || height <= 0 || !EnsureBackBuffer(width, height)) return;
   // 窗口显示前先整块刷成全透明，避免首帧闪一下不透明的默认底色。
+  std::memset(back_buffer_bits_, 0,
+              static_cast<size_t>(width) * height * 4);
+
   HDC screen_dc = GetDC(nullptr);
-  HDC mem_dc = CreateCompatibleDC(screen_dc);
-  BITMAPINFO bitmap_info{};
-  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  bitmap_info.bmiHeader.biWidth = width;
-  bitmap_info.bmiHeader.biHeight = -height;
-  bitmap_info.bmiHeader.biPlanes = 1;
-  bitmap_info.bmiHeader.biBitCount = 32;
-  bitmap_info.bmiHeader.biCompression = BI_RGB;
-  void* bits = nullptr;
-  HBITMAP dib = CreateDIBSection(screen_dc, &bitmap_info, DIB_RGB_COLORS,
-                                 &bits, nullptr, 0);
-  HGDIOBJ previous = SelectObject(mem_dc, dib);
-  std::memset(bits, 0, static_cast<size_t>(width) * height * 4);
+  if (!screen_dc) return;
   RECT window_bounds{};
   GetWindowRect(window_, &window_bounds);
   POINT destination{window_bounds.left, window_bounds.top};
@@ -403,21 +469,16 @@ void LyricsOverlay::Clear() {
   blend.BlendOp = AC_SRC_OVER;
   blend.SourceConstantAlpha = 255;
   blend.AlphaFormat = AC_SRC_ALPHA;
-  UpdateLayeredWindow(window_, screen_dc, &destination, &size, mem_dc,
+  UpdateLayeredWindow(window_, screen_dc, &destination, &size, memory_dc_,
                       &source, 0, &blend, ULW_ALPHA);
-  SelectObject(mem_dc, previous);
-  DeleteObject(dib);
-  DeleteDC(mem_dc);
   ReleaseDC(nullptr, screen_dc);
 }
+
 
 void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                                     int height) {
   if (lines_.empty()) return;
-  const float base = animation_t_ < 1.0f
-      ? Lerp(displayed_index_, static_cast<float>(current_index_),
-             EaseInOutCubic(animation_t_))
-      : static_cast<float>(current_index_);
+  const float base = AnimatedIndex(GetTickCount64());
   const float center_y = height * 0.54f;
   const float spacing = std::max(60.0f, style_.font_size * 2.25f);
   const float max_distance = 3.0f;
@@ -436,6 +497,19 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
       GetBValue(style_.text_color));
   const Gdiplus::Color highlight_color(255, 123, 231, 165);
   const Gdiplus::Color karaoke_color(255, 0, 198, 91);
+  const Gdiplus::FontStyle active_font_style = ResolveFontStyle(
+      font_family, style_.font_weight, /*want_regular=*/false);
+  const Gdiplus::FontStyle regular_font_style = ResolveFontStyle(
+      font_family, style_.font_weight, /*want_regular=*/true);
+  Gdiplus::StringFormat format;
+  format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+  format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+  format.SetAlignment(
+      style_.align == DT_LEFT
+          ? Gdiplus::StringAlignmentNear
+          : style_.align == DT_RIGHT ? Gdiplus::StringAlignmentFar
+                                     : Gdiplus::StringAlignmentCenter);
+  format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
   for (int index = first_index; index <= last_index; ++index) {
     const float offset = static_cast<float>(index) - base;
@@ -444,7 +518,7 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
     const float y = center_y + offset * spacing;
     if (y < -spacing || y > height + spacing) continue;
 
-    const float focus = EaseInOutCubic(
+    const float focus = EaseInOutQuint(
         1.0f - std::clamp(distance / 1.35f, 0.0f, 1.0f));
     const float distance_fade = std::clamp(1.0f - distance * 0.10f,
                                            0.32f, 1.0f);
@@ -452,7 +526,9 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
         std::min(y / (spacing * 1.5f),
                  (height - y) / (spacing * 1.5f)),
         0.18f, 1.0f);
-    const float font_size = style_.font_size + 5.0f * focus;
+    const float scale_focus = EaseOutQuint(focus);
+    const float font_size =
+        style_.font_size * Lerp(kLyricsScaleMin, kLyricsScaleMax, scale_focus);
     const BYTE alpha = static_cast<BYTE>(std::clamp(
         (108.0f + 147.0f * focus) * distance_fade * edge_fade, 0.0f,
         255.0f));
@@ -465,21 +541,11 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
         blend_channel(text_color.GetGreen(), highlight_color.GetGreen()),
         blend_channel(text_color.GetBlue(), highlight_color.GetBlue()));
 
-    const Gdiplus::FontStyle font_style = ResolveFontStyle(
-        font_family, style_.font_weight, /*want_regular=*/focus < 0.78f);
+    const Gdiplus::FontStyle font_style =
+        focus < 0.78f ? regular_font_style : active_font_style;
     Gdiplus::Font font(&font_family, font_size, font_style,
                        Gdiplus::UnitPixel);
     Gdiplus::SolidBrush line_brush(line_color);
-    Gdiplus::StringFormat format;
-    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-    format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
-    format.SetAlignment(
-        style_.align == DT_LEFT
-            ? Gdiplus::StringAlignmentNear
-            : style_.align == DT_RIGHT ? Gdiplus::StringAlignmentFar
-                                       : Gdiplus::StringAlignmentCenter);
-    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-
     Gdiplus::RectF text_rect(left_padding, y - spacing / 2.0f, line_width,
                              spacing);
     const std::wstring& translation = index == current_index_
@@ -515,8 +581,7 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
 
     if (has_translation) {
       // 翻译行保持清晰的白色层级，不跟随原文的高亮颜色。
-      const Gdiplus::FontStyle translation_weight = ResolveFontStyle(
-          font_family, style_.font_weight, /*want_regular=*/true);
+      const Gdiplus::FontStyle translation_weight = regular_font_style;
       Gdiplus::Font translation_font(&font_family, font_size * 0.58f,
                                      translation_weight, Gdiplus::UnitPixel);
       const BYTE translation_alpha = static_cast<BYTE>(alpha * 0.76f);

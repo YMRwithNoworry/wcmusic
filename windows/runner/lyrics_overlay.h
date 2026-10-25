@@ -55,13 +55,25 @@ class LyricsOverlay {
   void Paint();
   void DrawLyricsWheel(Gdiplus::Graphics& graphics, int width, int height);
   void ApplyWindowAttributes();
+  bool EnsureBackBuffer(int width, int height);
+  void ReleaseBackBuffer();
+  void StartAnimationTimer();
+  void StopAnimationTimer();
+  float AnimatedIndex(ULONGLONG now) const;
   /// 把整个窗口刷成全透明（显示前调用，避免闪出不透明底色）
   void Clear();
 
   HWND window_ = nullptr;
+  HDC memory_dc_ = nullptr;
+  HBITMAP back_buffer_ = nullptr;
+  HGDIOBJ previous_bitmap_ = nullptr;
+  void* back_buffer_bits_ = nullptr;
+  int back_buffer_width_ = 0;
+  int back_buffer_height_ = 0;
+  bool timer_resolution_active_ = false;
   std::vector<std::wstring> lines_;
   int current_index_ = 0;
-  float displayed_index_ = 0.0f;
+  float animation_from_index_ = 0.0f;
   float animation_t_ = 1.0f;
   ULONGLONG animation_start_time_ = 0;
   float line_progress_ = 0.0f;
