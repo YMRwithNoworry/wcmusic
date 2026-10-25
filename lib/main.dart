@@ -29,7 +29,7 @@ Future<void> main() async {
         sourceRepository: MemorySourceRepository(
           storage: FileSourceStorage(),
           builtInScript: builtInSourceScript,
-          builtInSourceName: '屿溪-终章',
+          builtInSourceName: '内置音乐',
         ),
         onlineSearchService: MultiSourceOnlineSearchService(),
         windowLifecycleService: windowService,

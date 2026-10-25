@@ -168,17 +168,17 @@ void main() {
     expect(source.sourceKeys, MemorySourceRepository.builtInSourceKeys);
   });
 
-  test('loads the bundled source with its internal display name', () async {
+  test('uses the configured display name for the bundled source', () async {
     final repository = MemorySourceRepository(
       nativeCore: _FakeNativeCore(),
       builtInScript: _script,
-      builtInSourceName: '屿溪-终章',
+      builtInSourceName: '内置音乐',
     );
 
     final source = (await repository.loadSources()).single;
 
     expect(source.id, MemorySourceRepository.builtInSourceId);
-    expect(source.name, '屿溪-终章');
+    expect(source.name, '内置音乐');
     expect(source.isBuiltIn, isTrue);
     expect(source.sourceKeys, ['kw']);
     expect(
