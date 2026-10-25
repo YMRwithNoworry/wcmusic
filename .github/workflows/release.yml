@@ -365,10 +365,14 @@ jobs:
       - name: 部署正式站点
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 账号 ID 与项目名是仓库级 variables，不是 secrets；写错来源会让
+          # wrangler 拿不到账号，报成含糊的 “Authentication error”。
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CF_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           SOURCE_SHA: ${{ needs.version-windows.outputs.sha }}
-        run: npx --yes wrangler@4.59.2 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$SOURCE_SHA" --commit-dirty=true
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::缺少仓库变量 CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          npx --yes wrangler@4.59.2 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$SOURCE_SHA" --commit-dirty=true
       - name: 验证正式站点版本
         env:
           WINDOWS_VERSION: ${{ needs.version-windows.outputs.version }}
