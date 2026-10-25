@@ -376,7 +376,8 @@ void main() {
     expect(find.byType(NowPlayingPanel), findsOneWidget);
     expect(find.byType(LyricsPane), findsOneWidget);
     expect(find.byType(SeekBar), findsNWidgets(2));
-    expect(find.byKey(const ValueKey('floatingLyricsToggle')), findsWidgets);
+    // 播放条上歌词按钮紧挨着下载按钮（桌面歌词开关已移到设置页）。
+    expect(find.byKey(const ValueKey('lyricsButton')), findsOneWidget);
 
     await tester.tap(find.text('返回'));
     await tester.pumpAndSettle();

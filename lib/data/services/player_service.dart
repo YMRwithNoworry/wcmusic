@@ -25,9 +25,8 @@ abstract interface class AudioPlayerService {
 class PlayerService implements AudioPlayerService {
   PlayerService() : player = Player() {
     _errorSubscription = player.stream.error.listen((error) {
-      // 空间音效滤镜不被当前 mpv 支持时，先卸掉滤镜重试一次，
-      // 避免“开了空间音效就整首播不出来”。
-      if (_spatialEnabled && error.contains('Audio filter')) {
+      // 不兼容的音频滤镜不能让整首歌无法播放，清空滤镜并重新打开当前媒体。
+      if (_isAudioFilterError(error)) {
         unawaited(_disableSpatialAndRetry());
         return;
       }
@@ -41,8 +40,10 @@ class PlayerService implements AudioPlayerService {
 
   final Player player;
   late final StreamSubscription<String> _errorSubscription;
+  Track? _currentTrack;
   Track? _networkTrack;
   bool _retriedWithoutProxy = false;
+  bool _recoveringFromAudioFilterError = false;
 
   @override
   Stream<bool> get playing => player.stream.playing;
@@ -62,26 +63,26 @@ class PlayerService implements AudioPlayerService {
   Stream<void> get completed => player.stream.completed;
 
   @override
-  Stream<String> get errors => player.stream.error;
+  Stream<String> get errors =>
+      player.stream.error.where((error) => !_isAudioFilterError(error));
+
+  bool _isAudioFilterError(String error) => error.contains('Audio filter');
+
+  /// 与 [play] 相同的 UA，恢复播放时保持一致的请求头。
+  static const _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+      'AppleWebKit/537.36 Chrome/126.0 Safari/537.36';
 
   @override
   Future<void> play(Track track) async {
     if (track.uri.isEmpty) return;
+    _currentTrack = track;
     _networkTrack = _isNetworkTrack(track) ? track : null;
     _retriedWithoutProxy = false;
     await _configureNetworkPlayback();
-    // mpv 在 open 时重建滤镜图，之前设置的 af 会被清空；先清一遍，
-    // 等 open 完成后再按当前设置重新挂上（见 _applyAudioFilters）。
-    await _resetAudioFilters();
+    // mpv 在 open 时会重建滤镜图，因此只在媒体后应用当前设置。
     await player.open(
-      Media(
-        track.uri,
-        httpHeaders: const {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-              'AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
-        },
-      ),
+      Media(track.uri, httpHeaders: const {'User-Agent': _userAgent}),
       play: true,
     );
     await _applyAudioFilters();
@@ -107,11 +108,12 @@ class PlayerService implements AudioPlayerService {
   /// “Audio filter initialized failed!”，整首歌都放不出来；而切换音质会重新
   /// open 媒体，所以表现为“切完音质就播不了”。
   ///
-  /// 现在走 libmpv 自带的 lavfi 桥，滤镜名与参数用 `lavfi=graph` 的形式传入
-  /// （mpv 的 af 语法，不是 lavfi 的方括号写法）。extrastereo 用来拓宽声场，
-  /// aecho 叠两路短延迟制造空间感。
+  /// 同理 aecho、pan、earwax 也都没编进 media_kit 的 Windows 构建，唯一随包
+  /// 启用的音频滤镜是 FFmpeg 的 equalizer（见 libmpv 的 configure 参数
+  /// `--enable-filter=equalizer --enable-filter=overlay`），因此只能用它做频段
+  /// 塑形：中高频 3kHz 提 2dB 让声像更贴耳，8kHz 略降 1dB 压掉刺耳齿音。
   static const _spatialFilter =
-      'lavfi=[extrastereo=m=1.8:c=0,aecho=0.8:0.85:12|22:0.22|0.14]';
+      'lavfi=[equalizer=f=3000:t=q:w=1:g=2,equalizer=f=8000:t=q:w=1:g=-1]';
 
   @override
   Future<void> setSpatialAudioEnabled(bool enabled) async {
@@ -119,14 +121,13 @@ class PlayerService implements AudioPlayerService {
     if (platform is! NativePlayer) return;
     await platform.future;
     _spatialEnabled = enabled;
-    try {
-      await platform.setProperty('af', enabled ? _spatialFilter : '');
-    } on Object {
-      // 滤镜链不被当前 mpv 支持时不能让播放失败，回退为无滤镜并回报错误。
-      _spatialEnabled = false;
+    if (!enabled) {
       await platform.setProperty('af', '');
-      rethrow;
+      return;
     }
+    // 首次启动时还没有音频轨，不能提前初始化 af；等 play/open 完成后再挂载。
+    if (player.state.playlist.medias.isEmpty) return;
+    await _applyAudioFilters();
   }
 
   bool _spatialEnabled = false;
@@ -135,6 +136,10 @@ class PlayerService implements AudioPlayerService {
   ///
   /// 必须放在 open 之后：mpv 打开新媒体时会重建滤镜图，open 前设置的 af
   /// 会被清空（实测切音质后 af 变成空值，空间音效静默失效）。
+  ///
+  /// 注意 `Player.setProperty` 只调 `mpv_set_property_string` 且丢弃返回值，
+  /// 滤镜名写错不会抛异常，而是通过 errors 流报 “Audio filter initialized
+  /// failed!”；真正的回退由 [_disableSpatialAndRetry] 负责。
   Future<void> _applyAudioFilters() async {
     final platform = player.platform;
     if (platform is! NativePlayer) return;
@@ -150,21 +155,28 @@ class PlayerService implements AudioPlayerService {
     }
   }
 
-  Future<void> _resetAudioFilters() async {
-    final platform = player.platform;
-    if (platform is! NativePlayer) return;
-    await platform.future;
-    await platform.setProperty('af', '');
-  }
-
   Future<void> _disableSpatialAndRetry() async {
-    final track = _networkTrack;
+    // mpv 可能连续上报多条滤镜错误，只处理第一条。
+    if (_recoveringFromAudioFilterError) return;
+    _recoveringFromAudioFilterError = true;
     _spatialEnabled = false;
     try {
-      await _applyAudioFilters();
-      if (track != null) await player.open(Media(track.uri), play: true);
+      final platform = player.platform;
+      if (platform is! NativePlayer) return;
+      await platform.future;
+      await platform.setProperty('af', '');
+      // 滤镜初始化失败时 mpv 已经停掉了音频输出，必须重新打开才能出声。
+      final track = _currentTrack;
+      if (track != null && track.uri.isNotEmpty) {
+        await player.open(
+          Media(track.uri, httpHeaders: const {'User-Agent': _userAgent}),
+          play: true,
+        );
+      }
     } on Object {
-      // 已经尽力；错误会继续通过 errors 流上报。
+      // 已经尽力；恢复失败时保持无滤镜状态，不再向界面抛滤镜错误。
+    } finally {
+      _recoveringFromAudioFilterError = false;
     }
   }
 
@@ -174,14 +186,7 @@ class PlayerService implements AudioPlayerService {
     await platform.setProperty('http-proxy', '');
     if (_networkTrack?.id != track.id) return;
     await player.open(
-      Media(
-        track.uri,
-        httpHeaders: const {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-              'AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
-        },
-      ),
+      Media(track.uri, httpHeaders: const {'User-Agent': _userAgent}),
       play: true,
     );
   }

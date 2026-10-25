@@ -77,7 +77,8 @@ class PlayerBar extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         if (showExtras) ...[
-                          const FloatingLyricsButton(),
+                          // 歌词紧随下载按钮：先下载旁边的歌词开关，再是下载。
+                          const LyricsButton(),
                           const SizedBox(width: 2),
                           const DownloadButton(),
                           const SizedBox(width: 6),
@@ -225,28 +226,27 @@ class _NowPlayingInfo extends StatelessWidget {
   }
 }
 
-/// 桌面歌词开关。
-class FloatingLyricsButton extends StatelessWidget {
-  const FloatingLyricsButton({super.key});
+/// 歌词按钮：播放条上紧随下载按钮的歌词入口。
+///
+/// 图标是「文本行 + 音符」，与「顺序播放」模式的 listMusic 区分开。原先占用
+/// 这个位置的是桌面歌词开关，现已移到设置页；这里只做状态展示，点击行为
+/// 交给聚焦播放页的歌词面板。
+class LyricsButton extends StatelessWidget {
+  const LyricsButton({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final enabled = context.select<PlayerViewModel, bool>(
-      (model) => model.floatingLyricsEnabled,
-    );
-    final supported = context.select<PlayerViewModel, bool>(
-      (model) => model.floatingLyricsService.isSupported,
+    final hasLyrics = context.select<PlayerViewModel, bool>(
+      (model) => model.lyrics.isNotEmpty,
     );
     return RoundIconButton(
-      key: const ValueKey('floatingLyricsToggle'),
-      icon: enabled ? FLucideIcons.micVocal : FLucideIcons.mic2,
-      tooltip: enabled ? '关闭桌面歌词' : '开启桌面歌词',
-      selected: enabled,
+      key: const ValueKey('lyricsButton'),
+      icon: FLucideIcons.listEnd,
+      tooltip: hasLyrics ? '歌词已加载' : '暂无歌词',
+      selected: hasLyrics,
       size: 34,
       iconSize: 17,
-      onPress: supported
-          ? () => context.read<PlayerViewModel>().setFloatingLyrics(!enabled)
-          : null,
+      onPress: null,
     );
   }
 }

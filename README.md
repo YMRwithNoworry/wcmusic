@@ -16,7 +16,7 @@ flutter build windows --release
 
 - `lib/ui/desktop/shell/` 是外壳：自绘标题栏（拖动 / 双击最大化 / 最小化 / 关闭到托盘）、Forui `FSidebar` 分组导航、底部播放条；窄窗口自动退化为单列 + 底部导航。
 - `lib/ui/desktop/pages/` 是七个页面（发现、搜索、排行榜、曲库、歌单、音源、设置），列表用固定 `itemExtent` 的 `ListView.builder`，网格用 `SliverGridDelegate`，滚动时不重复测量。
-- `lib/ui/desktop/player/` 是播放条、聚焦播放与歌词面板。进度条自己订阅 `positionListenable` 并在两次播放器推送之间做 320ms 插值，所以进度是连续移动的；歌词只监听当前行索引，逐字进度用独立 `ValueNotifier`，两者都不会重建整页。
+- `lib/ui/desktop/player/` 是播放条、聚焦播放与歌词面板。进度条自己订阅 `positionListenable` 并在两次播放器推送之间做 320ms 插值，所以进度是连续移动的；歌词只监听当前行索引，当前行由 `KaraokeText` 单独订阅逐字进度做从左到右的卡拉 OK 填充，两者都不会重建整页。
 - 动画只做透明度 / 位移 / 缩放（切页 240ms、聚焦播放 300ms），并统一读取系统「减少动效」；常驻呼吸动画在不可见时通过 `TickerMode` 自动停摆。
 - `lib/ui/core/frame_probe.dart` 是编译期开关的帧探针：`-D WCMUSIC_FRAME_PROBE=true -D WCMUSIC_FRAME_LOG=<path>` 会把 build / raster 耗时的 p50/p95/p99 写到 JSON，用于回归帧预算。实测 Windows profile 构建下 build p95 ≈ 1ms、raster p95 ≈ 4–6ms（预算 16.7ms）。
 
@@ -37,9 +37,9 @@ flutter build windows --release
 - 本地音频托管导入、持久化曲库、播放、暂停、进度跳转、音量控制与队列
 - 顺序播放、列表循环、随机循环、单曲循环四种播放方式，点击图标即可切换
 - 播放音质可选标准 128k、高品 320k 与无损 flac，整曲解析时按所选音质请求
-- 空间音效：播放栏的「空间音效」按钮开关一套双耳空间化处理——分频拓宽立体声（低频不动、高频拉宽）、对侧耳串扰（头部遮蔽，把声像推出颅腔）、左右交替到达的早期反射（方位感）与约 2 秒衰减的房间混响（距离感）；播放中平滑切换、不重启歌曲，开关状态保存在本机；默认关闭，关闭时是逐样本的精确旁路
+- 空间音效：设置页的「空间音效」开关给当前行歌词同款的频段塑形（中高频 3 kHz 提 2 dB 让声像更贴耳、8 kHz 略降压掉齿音），基于随包 libmpv 唯一编入的 FFmpeg `equalizer` 滤镜实现——`extrastereo`、`aecho`、`pan`、`earwax` 等宽声场滤镜都没编进 media_kit 的 Windows 构建，用了只会报 “Audio filter initialized failed!” 并让整首歌播不出来；开关状态保存在本机，默认关闭；万一滤镜不被当前 libmpv 支持，会自动摘掉滤镜并重新打开当前歌曲，不会打断播放
 - 在线整曲可下载到本地，桌面端自选保存位置，Android 保存到下载目录
-- 获取歌曲（解析整曲地址与下载音频）时，列表行、播放栏与侧栏状态行都会显示「获取中」
+- 获取歌曲（解析整曲地址与下载音频）时，列表行与播放栏都会显示「获取中」
 - 酷我、酷狗、QQ、网易云四个独立搜索渠道，搜索结果通过洛雪音源解析整曲
 - 选定音源后，按搜索时选择的音乐平台调用该音源解析，平台不匹配时明确提示
 - 可在音源页指定已加载音源用于整曲解析，也可恢复自动选择全部音源

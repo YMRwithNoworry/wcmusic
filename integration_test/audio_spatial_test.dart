@@ -8,10 +8,11 @@ import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:wcmusic/data/services/player_service.dart';
 import 'package:wcmusic/domain/models/track.dart';
 
-/// 在真实 libmpv 上验证“切换音质后还能播放”。
+/// 在真实 libmpv 上验证「空间音效」的滤镜链可用，且不会让整首歌播不出来。
 ///
-/// 回归的是这个 bug：空间音效用的滤镜名在当前 libmpv 里不存在，
-/// 重新 open 媒体时抛 “Audio filter initialized failed!”，导致切完音质就播不了。
+/// 回归的 bug：滤镜名在当前 libmpv 里不存在时，mpv 会报
+/// “Audio filter initialized failed!” 并停掉音频输出，表现为「播放失败」。
+/// 这个 libmpv 只编进了 FFmpeg 的 equalizer，aecho / pan / earwax 等都不存在。
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -34,6 +35,7 @@ void main() {
     });
     addTearDown(playingSub.cancel);
 
+    // 首次启动时没有任何媒体，开启空间音效只能记录状态，不能提前初始化 af。
     await tester.runAsync(() => service.setSpatialAudioEnabled(true));
 
     final track = Track(
@@ -51,7 +53,12 @@ void main() {
     expect(errors, isEmpty, reason: '第一次播放不应有错误：$errors');
     expect(played, isNotEmpty, reason: '第一次播放没有真正开始');
 
-    // 模拟“切换音质”：同一个播放器重新 open（这正是原来失败的地方）。
+    // 播放中再开启一次（走「已经有媒体」的分支）。
+    await tester.runAsync(() => service.setSpatialAudioEnabled(true));
+    await _pumpFor(tester, const Duration(milliseconds: 400));
+    expect(errors, isEmpty, reason: '播放中开启空间音效不应有错误：$errors');
+
+    // 模拟“切换音质”：同一个播放器重新 open。
     played.clear();
     await tester.runAsync(() => service.play(track));
     await _pumpFor(tester, const Duration(milliseconds: 900));
@@ -64,6 +71,12 @@ void main() {
     await tester.runAsync(service.toggle);
     await _pumpFor(tester, const Duration(milliseconds: 300));
     expect(errors, isEmpty, reason: '暂停/继续不应有错误：$errors');
+
+    // 关闭后滤镜必须真的被摘掉，之后继续播放不受影响。
+    await tester.runAsync(() => service.setSpatialAudioEnabled(false));
+    await tester.runAsync(() => service.play(track));
+    await _pumpFor(tester, const Duration(milliseconds: 600));
+    expect(errors, isEmpty, reason: '关闭空间音效后不应有错误：$errors');
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
 

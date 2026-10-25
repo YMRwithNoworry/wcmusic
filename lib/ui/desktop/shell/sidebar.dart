@@ -5,26 +5,19 @@ import 'package:provider/provider.dart';
 import '../../../domain/models/track.dart';
 import '../../state/player_view_model.dart';
 import '../nav.dart';
-import '../widgets/artwork.dart';
-import '../widgets/hover.dart';
-import '../widgets/track_list.dart';
 
 const appVersion = String.fromEnvironment('APP_VERSION');
 
-/// 桌面端侧栏：品牌、分组导航、正在播放卡片、版本号。
+/// 桌面端侧栏：品牌、分组导航、版本号。
 class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
     super.key,
     required this.section,
     required this.onSelect,
-    required this.onOpenNowPlaying,
-    this.nowPlayingActive = false,
   });
 
   final AppSection section;
   final ValueChanged<AppSection> onSelect;
-  final VoidCallback onOpenNowPlaying;
-  final bool nowPlayingActive;
 
   @override
   Widget build(BuildContext context) {
@@ -79,25 +72,15 @@ class DesktopSidebar extends StatelessWidget {
           ),
         ],
       ),
-      footer: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _NowPlayingCard(
-            active: nowPlayingActive,
-            onTap: onOpenNowPlaying,
+      footer: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(
+          appVersion.isEmpty ? '' : 'WCMusic $appVersion',
+          style: type.body.xs.copyWith(
+            color: colors.mutedForeground.withValues(alpha: .75),
+            fontSize: 11,
           ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              appVersion.isEmpty ? '' : 'WCMusic $appVersion',
-              style: type.body.xs.copyWith(
-                color: colors.mutedForeground.withValues(alpha: .75),
-                fontSize: 11,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
       children: [
         for (final group in const [
@@ -138,99 +121,6 @@ class DesktopSidebar extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _NowPlayingCard extends StatelessWidget {
-  const _NowPlayingCard({required this.active, required this.onTap});
-
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.theme.colors;
-    final type = context.theme.typography;
-    final model = context.watch<PlayerViewModel>();
-    final track = model.current;
-    return HoverLift(
-      scale: 1.01,
-      onTap: track == null ? null : onTap,
-      borderRadius: const BorderRadius.all(Radius.circular(12)),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.all(9),
-        decoration: BoxDecoration(
-          color: active
-              ? colors.primary.withValues(alpha: .10)
-              : colors.secondary.withValues(alpha: .55),
-          borderRadius: const BorderRadius.all(Radius.circular(12)),
-          border: Border.all(
-            color: active
-                ? colors.primary.withValues(alpha: .35)
-                : colors.border,
-          ),
-        ),
-        child: Row(
-          children: [
-            if (track != null)
-              ArtworkView(
-                seed: track.id,
-                url: track.artworkUri,
-                size: 36,
-                radius: 8,
-                playing: model.isPlaying,
-              )
-            else
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: colors.muted,
-                  borderRadius: const BorderRadius.all(Radius.circular(8)),
-                ),
-                child: Icon(
-                  FLucideIcons.music2,
-                  size: 15,
-                  color: colors.mutedForeground,
-                ),
-              ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    track?.title ?? '挑一首开始',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: type.body.xs.copyWith(
-                      color: colors.foreground,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (track != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      track.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: type.body.xs.copyWith(
-                        color: colors.mutedForeground,
-                        fontSize: 10.5,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (track != null)
-              PlayingBars(playing: model.isPlaying, height: 13),
-          ],
-        ),
-      ),
     );
   }
 }

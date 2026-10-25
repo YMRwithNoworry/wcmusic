@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 常用：`flutter pub get`、`flutter analyze`、`flutter test`、单测用 `flutter test test/player_view_model_test.dart` 或 `flutter test test/xxx_test.dart --plain-name "用例名"`。
 - 界面快照测试：`flutter test test/golden_test.dart`；有意改动界面后运行 `flutter test test/golden_test.dart --update-goldens` 更新 `test/goldens/`。快照用随包分发的 `assets/fonts/NotoSansSC-Bold.otf` 渲染，CI（Linux）与本地结果一致，不要改回读取系统字体。
 - 发布脚本测试：`node --test scripts/release/release.test.mjs`。
-- 真机冒烟：`flutter test integration_test/desktop_shell_test.dart -d windows`。
+- 真机冒烟：`flutter test integration_test/desktop_shell_test.dart -d windows`；音频滤镜回归：`flutter test integration_test/audio_spatial_test.dart -d windows`（真实 libmpv）。
 - 构建：`flutter build windows --release`（产物 `build/windows/x64/runner/Release/wcmusic.exe`）、`flutter build apk --release --target-platform android-arm64`。
 - Rust 核心：`cargo test --manifest-path native/wcmusic_core/Cargo.toml`。`desktop/` 是已停发的旧 Tauri 客户端，除非特别说明不要改动。
 
@@ -17,7 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Dart 分层：`lib/domain/models`（纯数据模型）→ `lib/data/services`（HTTP 搜索、歌词、下载、播放封装、平台通道）→ `lib/ui/state/player_view_model.dart`（唯一的 ChangeNotifier 视图模型，持有播放、歌单、搜索、歌词状态）→ `lib/ui/desktop/`（Forui 界面，禁止引入第二套设计系统）。
 - 原生核心是 `native/wcmusic_core`（Rust + SQLite + QuickJS），通过 `native_core_bridge.dart` 暴露；数据源脚本由 QuickJS 执行，`source.rs` / `source_script_parser.dart` 负责解析。
 - 桌面歌词是 Flutter ↔ 原生 MethodChannel `wcmusic/lyrics_overlay`：样式 `LyricsOverlayStyle`（`lib/domain/models/lyrics_overlay_style.dart`）在这里是唯一真相来源，由 `floating_lyrics_service.dart` 序列化后传到 `windows/runner/lyrics_overlay.cpp`（GDI+ 分层窗口绘制）和 Android 的 `LyricsOverlayService.kt`（悬浮窗）。改动字段时要同步三处：Dart 参数映射、`flutter_window.cpp` 的 `setStyle`/`update` 解析、原生渲染。原生样式变更受 `layoutVersion` 迁移逻辑控制（旧配置会被强制迁移到新默认值）。
-- 歌词来源：`lyric_service.dart` 按平台（酷我/酷狗/QQ/网易）拉取 LRC，并把翻译轨（QQ `trans`、网易 `tlyric`、酷狗 `krc`）按 300ms 容差合并为 `LyricLine.translation`；界面在 `lyrics_view.dart` 显示翻译副行，桌面歌词通过 `currentTranslation` / `nextTranslation` 传给原生。
+- 歌词来源：`lyric_service.dart` 按平台（酷我/酷狗/QQ/网易）拉取 LRC，并把翻译轨（QQ `trans`、网易 `tlyric`、酷狗 `krc`）按 300ms 容差合并为 `LyricLine.translation`；界面在 `lyrics_view.dart` 显示翻译副行，桌面歌词通过 `currentTranslation` / `nextTranslation` 传给原生。当前行由 `KaraokeText` 按字宽比例做从左到右的卡拉 OK 填充，不要改回行下方的进度条。
+- 音频滤镜：`player_service.dart` 的空间音效只能使用随包 libmpv（media_kit `libmpv-win32-video-build` 的 configure：`--disable-filters --enable-filter=equalizer --enable-filter=overlay`）编进来的 FFmpeg 滤镜——`extrastereo`、`aecho`、`pan`、`earwax` 都不存在，写进 `af` 会报 “Audio filter initialized failed!” 并让整首歌无声。`setProperty('af', …)` 不抛异常，错误只走 `player.stream.error`，因此滤镜切换必须在 `play()` 之后、并且要有摘滤镜重开的兜底。
 
 ## 性能约束
 

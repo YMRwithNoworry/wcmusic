@@ -188,8 +188,6 @@ class _DesktopShellState extends State<DesktopShell> {
                       DesktopSidebar(
                         section: _section,
                         onSelect: _select,
-                        onOpenNowPlaying: _openNowPlaying,
-                        nowPlayingActive: _nowPlaying,
                       ),
                     Expanded(
                       child: FScaffold(
