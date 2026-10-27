@@ -13,7 +13,6 @@
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayWidth = 480;
-constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
 constexpr UINT kLyricsFrameIntervalMs = 16;
 constexpr ULONGLONG kLyricsAnimationDurationMs = 420;
@@ -250,8 +249,11 @@ void LyricsOverlay::ApplyWindowAttributes() {
       window_,
       CreateRoundRectRgn(0, 0, bounds.right, bounds.bottom, radius, radius),
       TRUE);
+  // 固定后整窗鼠标穿透（跨进程也生效），未固定时可拖动。
   const LONG_PTR ex_style = GetWindowLongPtr(window_, GWL_EXSTYLE);
-  SetWindowLongPtr(window_, GWL_EXSTYLE, ex_style & ~WS_EX_TRANSPARENT);
+  SetWindowLongPtr(window_, GWL_EXSTYLE,
+                   style_.locked ? ex_style | WS_EX_TRANSPARENT
+                                 : ex_style & ~WS_EX_TRANSPARENT);
   SetWindowPos(window_, nullptr, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                    SWP_FRAMECHANGED);
@@ -354,15 +356,10 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
     case WM_PAINT:
       if (overlay) overlay->Paint();
       return 0;
-    case WM_NCHITTEST: {
-      if (!overlay) return HTTRANSPARENT;
-      POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-      ScreenToClient(window, &point);
-      if (!overlay->style_.locked || point.x <= kDragHandleWidth) {
-        return HTCAPTION;
-      }
-      return HTTRANSPARENT;
-    }
+    case WM_NCHITTEST:
+      // 固定后整窗鼠标穿透；未固定时整个歌词面板都可拖动。
+      if (!overlay || overlay->style_.locked) return HTTRANSPARENT;
+      return HTCAPTION;
     case WM_EXITSIZEMOVE:
       if (overlay && !overlay->style_.locked && overlay->position_callback_) {
         RECT bounds{};
@@ -419,14 +416,6 @@ void LyricsOverlay::Paint() {
       Gdiplus::SolidBrush background_brush(background);
       graphics.FillPath(&background_brush, &background_path);
     }
-
-    const float handle_height = 96.0f;
-    Gdiplus::RectF handle_rect(0.0f, (height - handle_height) / 2.0f, 9.0f,
-                               handle_height);
-    Gdiplus::GraphicsPath handle_path;
-    AddRoundedRectangle(handle_path, handle_rect, 4.5f);
-    Gdiplus::SolidBrush handle_brush(Gdiplus::Color(150, 92, 94, 98));
-    graphics.FillPath(&handle_brush, &handle_path);
 
     DrawLyricsWheel(graphics, width, height);
   }

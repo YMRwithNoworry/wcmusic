@@ -458,7 +458,7 @@ class _LyricsStyleSection extends StatelessWidget {
       children: [
         _SettingRow(
           title: '固定歌词窗口',
-          description: '固定时可拖动左侧把手；关闭后可拖动整个歌词面板',
+          description: '固定后歌词窗口不响应鼠标；关闭后可拖动整个歌词面板',
           trailing: FSwitch(
             value: style.locked,
             onChange: (value) => update(style.copyWith(locked: value)),
