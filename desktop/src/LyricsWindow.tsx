@@ -11,6 +11,8 @@ import { useCurrentLine } from "@/lib/lyrics";
 import { usePlayer } from "@/player-context";
 import { useSettings } from "@/settings-context";
 
+const DEFAULT_LYRIC_FONT = "Microsoft YaHei";
+
 
 /// `0xRRGGBB` + 透明度 → CSS 颜色。
 function toCss(rgb: number, alpha: number): string {
@@ -78,7 +80,7 @@ export default function LyricsWindow() {
     style?.alignment === "left" ? "items-start" : style?.alignment === "right" ? "items-end" : "items-center";
   const textAlign =
     style?.alignment === "left" ? "left" : style?.alignment === "right" ? "right" : "center";
-  const fontFamily = style?.font_family ? `"${style.font_family}"` : undefined;
+  const fontFamily = `"${style?.font_family || DEFAULT_LYRIC_FONT}"`;
   const karaoke = style?.karaoke ?? false;
   const textColor = toCss(style?.text_color ?? 0xffffff, style?.text_alpha ?? 1);
   const fontWeight = style?.font_weight ?? 600;
@@ -106,7 +108,7 @@ export default function LyricsWindow() {
     let firstFrame = 0;
     let secondFrame = 0;
     // 明确加载歌词使用的字重，避免显示后由备用字体切换产生一次跳动。
-    void document.fonts.load(`${fontWeight} ${fontSize}px "${style?.font_family ?? "MiSans"}"`, "歌词 Music")
+    void document.fonts.load(`${fontWeight} ${fontSize}px "${style?.font_family ?? DEFAULT_LYRIC_FONT}"`, "歌词 Music")
       .catch((problem) => console.warn("[lyrics font]", problem))
       .then(() => {
         if (disposed) return;

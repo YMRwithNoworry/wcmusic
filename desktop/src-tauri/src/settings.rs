@@ -253,9 +253,9 @@ impl AppSettings {
         // bounds or render unreadable lyrics.
         settings.quality_index = settings.quality_index.min(2);
         settings.lyrics.clamp();
-        // 旧版本的默认歌词字体是「Microsoft YaHei UI」，现在程序内置 MiSans 作为默认；
-        // 只在用户没有主动改过字体（仍然是旧默认值）时迁移。
-        if settings.lyrics.font_family.trim() == LEGACY_DEFAULT_LYRICS_FONT {
+        // 旧版默认字体是「Microsoft YaHei UI」，上一版改为 MiSans；
+        // 只迁移仍停留在这两个默认值的配置，用户选择的其他字体保持不变。
+        if PREVIOUS_DEFAULT_LYRICS_FONTS.contains(&settings.lyrics.font_family.trim()) {
             settings.lyrics.font_family = crate::lyrics::FONT_FAMILIES[0].to_owned();
         }
         // 旧版本默认歌词字号 36px 偏大（桌面歌词挡住桌面、可见行数太少），
@@ -294,8 +294,8 @@ impl AppSettings {
     }
 }
 
-/// 旧版本歌词字体的默认值，用于把老设置迁移到内置 MiSans。
-const LEGACY_DEFAULT_LYRICS_FONT: &str = "Microsoft YaHei UI";
+/// 之前两个版本的歌词默认字体，加载时迁移到当前默认字体。
+const PREVIOUS_DEFAULT_LYRICS_FONTS: [&str; 2] = ["Microsoft YaHei UI", "MiSans"];
 /// 旧版本歌词字号默认值（偏大），迁移到新的默认字号。
 const LEGACY_DEFAULT_LYRICS_FONT_SIZE: f32 = 36.0;
 /// 旧版本歌词文字色默认值（#F3F3F3），现在默认纯白。
@@ -517,17 +517,19 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_default_lyrics_font_to_bundled_misans() {
-        let path = temp_path("legacy-font");
-        let mut settings = AppSettings::default();
-        settings.lyrics.font_family = LEGACY_DEFAULT_LYRICS_FONT.to_owned();
-        settings.save_to(&path).unwrap();
+    fn migrates_previous_default_lyrics_fonts_to_microsoft_yahei() {
+        for previous_font in PREVIOUS_DEFAULT_LYRICS_FONTS {
+            let path = temp_path("previous-default-font");
+            let mut settings = AppSettings::default();
+            settings.lyrics.font_family = previous_font.to_owned();
+            settings.save_to(&path).unwrap();
 
-        let loaded = AppSettings::load_from(Some(&path)).unwrap();
+            let loaded = AppSettings::load_from(Some(&path)).unwrap();
 
-        assert_eq!(loaded.lyrics.font_family, crate::lyrics::FONT_FAMILIES[0]);
-        assert_eq!(loaded.lyrics.font_family, "MiSans");
-        let _ = fs::remove_file(path);
+            assert_eq!(loaded.lyrics.font_family, crate::lyrics::FONT_FAMILIES[0]);
+            assert_eq!(loaded.lyrics.font_family, "Microsoft YaHei");
+            let _ = fs::remove_file(path);
+        }
     }
 
     #[test]

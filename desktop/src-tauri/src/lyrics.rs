@@ -54,11 +54,11 @@ fn extrapolate_position_ms(position_ms: u64, playing: bool, since_sample_ms: u64
     position_ms.saturating_add(since_sample_ms.min(POSITION_EXTRAPOLATION_LIMIT_MS))
 }
 
-/// 可选字体，与主界面设置共用。第一项是默认字体（程序内置 MiSans）。
+/// 可选字体，与主界面设置共用。第一项是默认字体（微软雅黑）。
 pub const FONT_FAMILIES: [&str; 7] = [
+    "Microsoft YaHei",
     "MiSans",
     "Microsoft YaHei UI",
-    "Microsoft YaHei",
     "SimSun",
     "KaiTi",
     "DengXian",
