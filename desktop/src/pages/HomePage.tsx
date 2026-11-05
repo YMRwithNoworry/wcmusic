@@ -63,7 +63,8 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /// 点开的歌单：`tracks` 为 `null` 表示还在载入。
-  const [detail, setDetail] = useState<{ name: string; tracks: Track[] | null } | null>(null);
+  const [detail, setDetail] = useState<{ playlist: PlatformPlaylist; tracks: Track[] | null } | null>(null);
+  const detailRequestRef = useRef(0);
 
   const loadHot = useCallback(async (next: OnlineSearchChannel) => {
     const requestId = ++requestIdRef.current;
@@ -121,14 +122,32 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
   }, [channel, loadHot]);
 
   const openPlaylist = async (playlist: PlatformPlaylist) => {
-    setDetail({ name: playlist.name, tracks: null });
+    const requestId = ++detailRequestRef.current;
+    setChannel(playlist.channel as OnlineSearchChannel);
+    setDetail({ playlist, tracks: null });
     setError(null);
     try {
-      setDetail({ name: playlist.name, tracks: await online.playlistTracks(playlist) });
+      const tracks = await online.playlistTracks(playlist);
+      if (requestId === detailRequestRef.current) {
+        setDetail({ playlist, tracks });
+      }
     } catch (problem) {
-      setError(String(problem));
-      setDetail(null);
+      if (requestId === detailRequestRef.current) {
+        setError(String(problem));
+        setDetail(null);
+      }
     }
+  };
+
+  const closeDetail = () => {
+    ++detailRequestRef.current;
+    setDetail(null);
+  };
+
+  const changeDetailChannel = (value: string) => {
+    ++detailRequestRef.current;
+    setDetail(null);
+    setChannel(value as OnlineSearchChannel);
   };
 
   const savedPlaylists = settings?.saved_playlists ?? [];
@@ -145,15 +164,61 @@ export default function HomePage({ onSearch }: { onSearch?: () => void }) {
   const toggleTrack = (track: Track) => {
     void favorites.toggleTrack(track, "我的收藏").then(replace);
   };
+  const playlistChoices = detail
+    ? new Map(
+        [
+          ...hot.filter((item) => item.channel === detail.playlist.channel),
+          ...savedPlaylists
+            .map((item) => item.playlist)
+            .filter((item) => item.channel === detail.playlist.channel),
+          detail.playlist,
+        ].map((item) => [playlistKey(item), item]),
+      )
+    : new Map<string, PlatformPlaylist>();
 
   if (detail) {
+    const detailChannel = detail.playlist.channel as OnlineSearchChannel;
     return (
       <PlaylistDetail
-        name={detail.name}
+        name={detail.playlist.name}
         tracks={detail.tracks}
-        onBack={() => setDetail(null)}
+        onBack={closeDetail}
         onToggleSave={toggleTrack}
         saved={isTrackSaved}
+        toolbar={(
+          <div className="mb-5 flex shrink-0 flex-wrap items-center gap-3">
+            <Select value={detailChannel} onValueChange={changeDetailChannel}>
+              <SelectTrigger aria-label="歌单平台" className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CHANNELS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={playlistKey(detail.playlist)}
+              onValueChange={(key) => {
+                const selected = playlistChoices.get(key);
+                if (selected) void openPlaylist(selected);
+              }}
+            >
+              <SelectTrigger aria-label="切换歌单" className="w-[260px] max-w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[...playlistChoices].map(([key, playlist]) => (
+                  <SelectItem key={key} value={key}>
+                    {playlist.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       />
     );
   }
