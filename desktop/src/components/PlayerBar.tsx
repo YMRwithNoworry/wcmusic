@@ -13,7 +13,7 @@ import {
   TextAaIcon,
   WaveformIcon,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { lyricsWindow } from "@/api";
@@ -67,6 +67,9 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
 
   const { settings, update } = useSettings();
   const [savingMode, setSavingMode] = useState(false);
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const volumeRequestRef = useRef<Promise<void>>(Promise.resolve());
+  const volumeInteractionRef = useRef(0);
   const modeIndex = Math.max(0, PLAYBACK_MODES.findIndex((mode) => mode.value === settings?.playback_mode));
   const mode = PLAYBACK_MODES[modeIndex];
   const nextMode = PLAYBACK_MODES[(modeIndex + 1) % PLAYBACK_MODES.length];
@@ -86,7 +89,7 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
   const duration = track?.durationMs ?? 0;
   const position = snapshot?.position_ms ?? 0;
   const playing = snapshot?.playing ?? false;
-  const volume = snapshot?.volume ?? 1;
+  const volume = volumeDraft === null ? snapshot?.volume ?? 1 : volumeDraft / 100;
 
   return (
     <footer className="grid grid-cols-[minmax(150px,1fr)_minmax(260px,1.6fr)_minmax(210px,1fr)] items-center gap-5 border-t border-border/70 bg-background px-5">
@@ -247,7 +250,20 @@ export default function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () =
           value={[Math.round(volume * 100)]}
           max={100}
           step={1}
-          onValueChange={([value]) => void setVolume(value / 100)}
+          onValueChange={([value]) => {
+            const next = value / 100;
+            ++volumeInteractionRef.current;
+            setVolumeDraft(value);
+            volumeRequestRef.current = setVolume(next).catch(() => {});
+          }}
+          onValueCommit={() => {
+            const interaction = volumeInteractionRef.current;
+            void volumeRequestRef.current.finally(() => {
+              if (interaction === volumeInteractionRef.current) {
+                setVolumeDraft(null);
+              }
+            });
+          }}
         />
       </div>
     </footer>
