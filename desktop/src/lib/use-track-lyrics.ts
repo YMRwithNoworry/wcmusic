@@ -41,7 +41,7 @@ export function useTrackLyrics(track: Track | null, translate: boolean, useProxy
         setLines(body);
         setLoading(false);
         // 正文已经显示后再请求翻译；翻译失败保留正文。
-        if (translate && body.length > 0 && body.every((line) => !line.translation)) {
+        if (translate && body.some((line) => !line.translation)) {
           void lyrics.translate(body)
             .then((translated) => { if (alive) setLines(translated); })
             .catch((problem) => console.warn("[lyrics translation]", problem));

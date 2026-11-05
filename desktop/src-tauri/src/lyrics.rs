@@ -428,14 +428,22 @@ pub fn translate_lyrics(mut lines: Vec<LyricLine>, use_proxy: bool) -> Result<Ve
     Ok(lines)
 }
 
-/// 平台是否漏了翻译：有足够多的正文行，但一行翻译都没有。
+/// 平台是否漏了翻译：至少有一行非中文歌词没有译文。
 fn needs_auto_translation(lines: &[LyricLine]) -> bool {
+    !translation_targets(lines).is_empty()
+}
+
+fn translation_targets(lines: &[LyricLine]) -> Vec<usize> {
     lines
         .iter()
-        .filter(|line| !line.text.trim().is_empty())
-        .count()
-        >= 2
-        && lines.iter().all(|line| line.translation.is_none())
+        .enumerate()
+        .filter(|(_, line)| {
+            line.translation.is_none()
+                && !line.text.trim().is_empty()
+                && !is_chinese_line(line.text.trim())
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// 这一行本来就是中文，不需要翻译（日文含假名、韩文含谚文，都仍会被翻译）。
@@ -466,15 +474,7 @@ const TRANSLATION_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) 
 fn translate_lines(lines: &mut [LyricLine], use_proxy: bool) -> Result<(), String> {
     // 只翻译需要翻译的行：空行（纯前奏/间奏）和本来就是中文的行都跳过。
     // 整首歌都是中文时这里会直接返回，不会发起任何翻译请求。
-    let targets: Vec<usize> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| {
-            let text = line.text.trim();
-            !text.is_empty() && !is_chinese_line(text)
-        })
-        .map(|(index, _)| index)
-        .collect();
+    let targets = translation_targets(lines);
     if targets.is_empty() {
         return Ok(());
     }
@@ -1307,17 +1307,29 @@ mod tests {
     }
 
     #[test]
-    fn auto_translation_kicks_in_only_when_the_platform_has_none() {
+    fn auto_translation_kicks_in_for_missing_foreign_lines() {
         let mut lines = parse_lrc_lines("[00:01.00]Hello\n[00:03.00]World");
         assert!(needs_auto_translation(&lines));
 
-        // 网易云 / QQ 已经给了翻译，就不要再调在线翻译。
+        // 平台已有译文的行保留，其余外语行仍需补齐。
         lines[0].translation = Some("你好".to_owned());
+        assert!(needs_auto_translation(&lines));
+        lines[1].translation = Some("世界".to_owned());
         assert!(!needs_auto_translation(&lines));
 
-        // 只有一行歌词时也没必要整段翻译。
-        let single = parse_lrc_lines("[00:01.00]Hello");
-        assert!(!needs_auto_translation(&single));
+        // 一行外语歌词也可以补翻译；中文原文不需要翻成中文。
+        let single_foreign = parse_lrc_lines("[00:01.00]Hello");
+        assert!(needs_auto_translation(&single_foreign));
+        let single_chinese = parse_lrc_lines("[00:01.00]你好");
+        assert!(!needs_auto_translation(&single_chinese));
+    }
+
+    #[test]
+    fn auto_translation_targets_only_missing_foreign_lines() {
+        let mut lines = parse_lrc_lines("[00:01.00]Hello\n[00:02.00]你好\n[00:03.00]World");
+        lines[0].translation = Some("已有译文".to_owned());
+
+        assert_eq!(translation_targets(&lines), vec![2]);
     }
 
     #[test]
