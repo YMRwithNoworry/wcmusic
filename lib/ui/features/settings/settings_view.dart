@@ -6,6 +6,7 @@ import '../../core/app_theme_controller.dart';
 import '../../core/page_scaffold.dart';
 import '../player/player_view_model.dart';
 import 'feedback_dialog.dart';
+import 'desktop_hotkey_controls.dart';
 import 'lyrics_style_controls.dart';
 
 class SettingsView extends StatefulWidget {
@@ -61,6 +62,13 @@ class _SettingsViewState extends State<SettingsView> {
               ),
             ],
           ),
+          if (viewModel.desktopHotkeyService.isSupported) ...[
+            const SizedBox(height: 18),
+            const _SettingSection(
+              title: '全局快捷键',
+              children: [DesktopHotkeyControls()],
+            ),
+          ],
           const SizedBox(height: 18),
           _SettingSection(
             title: '外观与辅助功能',

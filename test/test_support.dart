@@ -185,6 +185,15 @@ class FakeWindowLifecycleService implements WindowLifecycleService {
 
   @override
   bool closeToTray;
+  Future<void> Function(String action)? lyricsActionHandler;
+
+  @override
+  void setLyricsActionHandler(Future<void> Function(String action)? handler) {
+    lyricsActionHandler = handler;
+  }
+
+  @override
+  Future<void> toggleWindow() async {}
 
   @override
   Future<void> setCloseToTray(bool value) async {

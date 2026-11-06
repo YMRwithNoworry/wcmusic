@@ -1,36 +1,32 @@
 # WCMusic
 
-WCMusic 是面向 Windows 与 Android 的音乐播放器。Windows 桌面端使用 **Tauri 2 + React**，Android 使用 Flutter；Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 初始化校验。
+WCMusic 是面向 Windows 与 Android 的 Flutter 音乐播放器。Flutter 提供统一的应用界面，Windows 原生 runner 实现托盘、全局快捷键与桌面歌词浮窗；Rust 核心负责曲库数据、歌单解析和洛雪自定义音源的 QuickJS 运行时。
 
 ## 桌面客户端
 
-Windows 桌面端统一使用 **Tauri 2 + React**，后续改动都落在 `desktop/`。
-
-**Tauri 2 + React（`desktop/`）**
-
-Rust 后端复用 `native/wcmusic_core`，前端是 Vite + React 19 + TypeScript，界面用 **Tailwind v4 + shadcn/ui** 搭建，动效由 **motion**（Framer Motion）驱动：侧栏选中胶囊、页面切换淡入、列表逐条入场、播放中的跳动竖条，并随系统「减少动效」设置自动收敛。支持在线搜索、榜单、平台歌单与收藏、播放（rodio，含空间音频与顺序/列表循环/随机/单曲循环四种播放方式）、逐字歌词与置顶透明桌面歌词窗口、音源导入与切换、设置持久化（沿用 `%APPDATA%\wcmusic\settings.json`）、系统托盘、全局快捷键与版本更新检查。
+Windows 与 Android 共用 Flutter 应用和 Dart 业务逻辑，Windows 专属能力通过 Flutter 插件及 runner 的原生通道接入。Windows 开发构建：
 
 ```text
-cd desktop && npm install                 # 首次拉前端依赖
-WCMUSIC_CARGO_TOOLCHAIN=stable-x86_64-pc-windows-msvc nu build_desktop.nu
+flutter pub get
+nu build_desktop.nu
 ```
 
-产物在 `desktop/src-tauri/target/release/wcmusic-desktop.exe`。前端 `dist/` 是编译期嵌进 exe 的，改完前端必须重新构建；手工构建时**必须带 `--features custom-protocol`**，否则程序会去连 `http://localhost:1420`，界面提示「无法连接到 localhost」：
-
-```text
-cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
-```
+完整运行目录位于 `build/windows/x64/runner/Release/`，发布时需要将整个目录打包，不能只复制 `wcmusic.exe`。Rust 核心 DLL 由 Windows CMake 构建阶段自动生成并随应用安装。
 
 ## 桌面歌词
 
-桌面歌词由 Tauri 前端 `desktop/src/LyricsWindow.tsx` 绘制，歌词解析与排版计算在 `desktop/src-tauri/src/lyrics.rs`，窗口保持置顶、无边框和透明，并按 LX Music 的交互实现：
+Windows 桌面歌词由 Flutter 控制、Windows runner 原生绘制。窗口置顶、无边框，支持逐字高亮和当前行/译文显示：
 
-- 无边框透明窗口只画歌词：当前行居中放大，已播放部分逐字填充高亮色，上一行与下一行以更小字号淡出，靠近窗口边缘继续减弱
-- 文字描边保证在浅色壁纸上同样清晰，可选上下滚动、缩放或直接切换三种歌词动画
-- 默认锁定：锁定时整扇窗口对鼠标穿透，点击会落到下层应用；解锁后可拖动窗口、滚动滚轮调字号，并显示工具条（字号、面板、单行、翻译、卡拉OK、锁定、关闭）
-- 解锁状态下右键打开设置面板：对齐、动画、单行、翻译、卡拉OK、描边、描边颜色、背景、置顶、暂停隐藏、歌词偏移、重置位置
-- 设置面板与主界面“设置 → 桌面歌词”共用同一份样式，任何一处修改都会立刻同步并写入 `settings.json`
-- 托盘菜单新增“桌面歌词”子菜单：开关歌词、锁定解锁、增减字号、窗口回到默认位置
+- 锁定时歌词区域鼠标穿透，只保留窄拖动把手；解锁后出现悬浮工具栏
+- 工具栏可调整字号和背景不透明度、切换当前行放大/译文/置顶、锁定或关闭歌词
+- 解锁后可拖动窗口和右下角调整大小；位置与尺寸自动保存
+- 设置页可配置字体、对齐、文字与背景颜色、圆角、窗口尺寸和歌词显示选项
+- 网易云、QQ 歌曲已有译文优先保留；缺失的外语歌词在正文显示后后台补译
+- 新安装默认微软雅黑、窗口未锁定；已选择的其他字体和现存锁定设置会保留
+
+## 全局快捷键
+
+Windows 设置页可启用并录入播放控制、音量、静音、快进/快退、桌面歌词和主窗口切换快捷键。快捷键通过 Windows `RegisterHotKey` 注册，冲突时显示错误且保留原绑定；默认关闭。
 
 ## 当前能力
 
@@ -39,7 +35,7 @@ cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol 
 - 顺序播放、列表循环、随机循环、单曲循环四种播放方式，点击图标即可切换
 - 播放音质可选标准 128k、高品 320k 与无损 flac，整曲解析时按所选音质请求
 - 空间音效：播放栏的「空间音效」按钮开关一套双耳空间化处理——分频拓宽立体声（低频不动、高频拉宽）、对侧耳串扰（头部遮蔽，把声像推出颅腔）、左右交替到达的早期反射（方位感）与约 2 秒衰减的房间混响（距离感）；播放中平滑切换、不重启歌曲，开关状态保存在本机；默认关闭，关闭时是逐样本的精确旁路
-- 在线整曲可下载到本地，桌面端自选保存位置，Android 保存到下载目录
+- 在线整曲可下载到本地；下载当前正在播放、且音质相同的歌曲时复用已解析地址，避免重复整曲解析。桌面端自选保存位置，Android 保存到下载目录
 - 获取歌曲（解析整曲地址与下载音频）时，列表行、播放栏与侧栏状态行都会显示「获取中」
 - 酷我、酷狗、QQ、网易云四个独立搜索渠道，搜索结果通过洛雪音源解析整曲
 - 选定音源后，按搜索时选择的音乐平台调用该音源解析，平台不匹配时明确提示
@@ -47,12 +43,12 @@ cargo +stable-x86_64-pc-windows-msvc build --release --features custom-protocol 
 - 随机最近新曲，以及热门歌单的本地收藏与应用内播放
 - 「此刻」里直接浏览酷我、酷狗、QQ 与网易云的热门歌单，可收藏、可点开查看曲目并直接播放（收藏写入 `settings.json`）
 - 在线请求在代理不可用时自动回退直连，媒体播放失败后直连重试
-- Windows 系统托盘、关闭后后台播放，以及右键托盘显式退出
-- Windows 桌面歌词与 Android 可拖动悬浮窗歌词，随播放进度逐行同步
-- 桌面歌词模仿 LX Music：透明置顶歌词窗口、上下句淡出、逐字填充的卡拉OK高亮、文字描边与切换动画
-- 桌面歌词可锁定鼠标穿透，解锁后显示工具条与设置面板，滚轮直接调字号，支持单行模式、翻译、对齐、颜色、描边、背景与歌词偏移
-- 逐行翻译：网易云、QQ 音乐自带翻译时直接使用；酷我、酷狗等不提供翻译的平台会自动调用在线翻译（微软 → 谷歌 → MyMemory）补全，中文歌词与空行自动跳过
-- 设置页按 LX Music 分成左侧分类与右侧面板：歌词字体从已安装字体列表中挑选（每行用自身字体预览），歌词颜色用取色器选择（SV 色板 + 色相条 + 透明度条 + rgba/hex 输入与重置），改动实时同步到桌面歌词并写盘
+- Windows 系统托盘、关闭后后台播放、全局快捷键，以及右键托盘显式退出
+- Windows 桌面歌词与 Android 可拖动悬浮窗歌词，随播放进度同步，并保存桌面窗口位置与尺寸
+- Windows 桌面歌词支持鼠标穿透锁定、悬浮工具栏、字号/背景调整、逐字高亮、译文显示、窗口拖动与缩放
+- 桌面歌词设置支持字体、对齐、文字与背景颜色、圆角、窗口尺寸、当前行放大和译文显示
+- 平台已有译文优先保留；原文先显示，之后仅为缺失的外语行异步补译，中文、空行和已译行跳过
+- 设置页可选择歌词字体与预设颜色，改动实时同步到 Windows 桌面歌词
 - 侧边栏品牌位、窗口与任务栏使用同一份应用图标
 - 软件内问题反馈表单，与发布页一致通过邮件送达开发者
 - M3U/M3U8 和常见洛雪备份结构导入
@@ -94,7 +90,7 @@ $env.JAVA_HOME = "D:/MC/jdk/jdk-21.0.2"
 flutter build apk --release --target-platform android-arm64
 ```
 
-Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。
+Windows 桌面端发布包为 `build/windows/x64/runner/Release/` 的完整运行目录，使用 `nu build_desktop.nu` 构建。
 
 自动发布由 [Release 工作流](.github/workflows/release.yml) 完成：普通分支推送 → 递增版本并锁定源码提交 → Windows / Android 构建 → GitHub Release → 同步官网版本、下载链接与日志 → 部署 https://wcmusic.pages.dev/。机器人写回的提交带 `[skip ci]`，避免重复构建。Android 构建失败时仍发布 Windows，官网保留上一个实际可下载的 APK。
 

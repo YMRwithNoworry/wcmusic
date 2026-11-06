@@ -1,13 +1,18 @@
 class LyricsOverlayStyle {
   const LyricsOverlayStyle({
-    this.fontFamily = 'Microsoft YaHei UI',
+    this.fontFamily = 'Microsoft YaHei',
     this.fontSize = 24,
-    this.alignment = 'right',
+    this.alignment = 'center',
     this.textColor = 0xFFF3F3F3,
     this.backgroundColor = 0xFF141416,
     this.opacity = 0.92,
-    this.cornerRadius = 0,
-    this.locked = true,
+    this.cornerRadius = 8,
+    this.locked = false,
+    this.alwaysOnTop = true,
+    this.showTranslation = true,
+    this.zoomActiveLine = true,
+    this.windowWidth = 1000,
+    this.windowHeight = 140,
     this.positionX,
     this.positionY,
   });
@@ -20,6 +25,11 @@ class LyricsOverlayStyle {
   final double opacity;
   final double cornerRadius;
   final bool locked;
+  final bool alwaysOnTop;
+  final bool showTranslation;
+  final bool zoomActiveLine;
+  final double windowWidth;
+  final double windowHeight;
   final double? positionX;
   final double? positionY;
 
@@ -32,6 +42,12 @@ class LyricsOverlayStyle {
     double? opacity,
     double? cornerRadius,
     bool? locked,
+    bool? alwaysOnTop,
+    bool? showTranslation,
+    bool? zoomActiveLine,
+    double? windowWidth,
+    double? windowHeight,
+    bool clearPosition = false,
     double? positionX,
     double? positionY,
   }) => LyricsOverlayStyle(
@@ -43,12 +59,17 @@ class LyricsOverlayStyle {
     opacity: opacity ?? this.opacity,
     cornerRadius: cornerRadius ?? this.cornerRadius,
     locked: locked ?? this.locked,
-    positionX: positionX ?? this.positionX,
-    positionY: positionY ?? this.positionY,
+    alwaysOnTop: alwaysOnTop ?? this.alwaysOnTop,
+    showTranslation: showTranslation ?? this.showTranslation,
+    zoomActiveLine: zoomActiveLine ?? this.zoomActiveLine,
+    windowWidth: windowWidth ?? this.windowWidth,
+    windowHeight: windowHeight ?? this.windowHeight,
+    positionX: clearPosition ? null : positionX ?? this.positionX,
+    positionY: clearPosition ? null : positionY ?? this.positionY,
   );
 
   Map<String, dynamic> toJson() => {
-    'layoutVersion': 2,
+    'layoutVersion': 3,
     'fontFamily': fontFamily,
     'fontSize': fontSize,
     'alignment': alignment,
@@ -57,6 +78,11 @@ class LyricsOverlayStyle {
     'opacity': opacity,
     'cornerRadius': cornerRadius,
     'locked': locked,
+    'alwaysOnTop': alwaysOnTop,
+    'showTranslation': showTranslation,
+    'zoomActiveLine': zoomActiveLine,
+    'windowWidth': windowWidth,
+    'windowHeight': windowHeight,
     'positionX': positionX,
     'positionY': positionY,
   };
@@ -68,12 +94,20 @@ class LyricsOverlayStyle {
     final backgroundColor = (json['backgroundColor'] as num?)?.toInt();
     final opacity = (json['opacity'] as num?)?.toDouble();
     final cornerRadius = (json['cornerRadius'] as num?)?.toDouble();
-    final needsAppleMusicMigration =
-        ((json['layoutVersion'] as num?)?.toInt() ?? 0) < 2;
+    final layoutVersion = (json['layoutVersion'] as num?)?.toInt() ?? 0;
+    final needsAppleMusicMigration = layoutVersion < 2;
+    final savedFontFamily = json['fontFamily'] as String?;
+    final needsFontMigration =
+        layoutVersion < 3 &&
+        (savedFontFamily == null ||
+            savedFontFamily == 'MiSans' ||
+            savedFontFamily == 'Microsoft YaHei UI');
     return LyricsOverlayStyle(
-      fontFamily: json['fontFamily'] as String? ?? 'Microsoft YaHei UI',
+      fontFamily: needsFontMigration
+          ? 'Microsoft YaHei'
+          : savedFontFamily ?? 'Microsoft YaHei',
       fontSize: needsAppleMusicMigration ? 24 : fontSize ?? 24,
-      alignment: needsAppleMusicMigration ? 'right' : alignment ?? 'right',
+      alignment: needsAppleMusicMigration ? 'center' : alignment ?? 'center',
       textColor: needsAppleMusicMigration
           ? 0xFFF3F3F3
           : textColor ?? 0xFFF3F3F3,
@@ -81,8 +115,13 @@ class LyricsOverlayStyle {
           ? 0xFF141416
           : backgroundColor ?? 0xFF141416,
       opacity: needsAppleMusicMigration ? 0.92 : opacity ?? 0.92,
-      cornerRadius: needsAppleMusicMigration ? 0 : cornerRadius ?? 0,
-      locked: json['locked'] as bool? ?? true,
+      cornerRadius: needsAppleMusicMigration ? 8 : cornerRadius ?? 8,
+      locked: json['locked'] as bool? ?? false,
+      alwaysOnTop: json['alwaysOnTop'] as bool? ?? true,
+      showTranslation: json['showTranslation'] as bool? ?? true,
+      zoomActiveLine: json['zoomActiveLine'] as bool? ?? true,
+      windowWidth: (json['windowWidth'] as num?)?.toDouble() ?? 1000,
+      windowHeight: (json['windowHeight'] as num?)?.toDouble() ?? 140,
       positionX: needsAppleMusicMigration
           ? null
           : (json['positionX'] as num?)?.toDouble(),

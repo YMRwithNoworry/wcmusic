@@ -1,10 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-
-import '../../domain/models/lyrics_overlay_style.dart';
 
 abstract interface class FloatingLyricsService {
   bool get isSupported;
@@ -13,6 +12,8 @@ abstract interface class FloatingLyricsService {
     required String title,
     required String currentLine,
     required String nextLine,
+    String? currentTranslation,
+    String? nextTranslation,
     List<String> lines = const [],
     int currentIndex = -1,
     double lineProgress = 0,
@@ -20,6 +21,7 @@ abstract interface class FloatingLyricsService {
   Future<void> setStyle(LyricsOverlayStyle style);
   Future<LyricsOverlayStyle> loadStyle();
   Future<void> saveStyle(LyricsOverlayStyle style);
+  Stream<String> get events;
   Future<void> dispose();
 }
 
@@ -31,6 +33,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   static const _channel = MethodChannel('wcmusic/lyrics_overlay');
 
   final Future<Directory> Function() _directoryProvider;
+  final StreamController<String> _events = StreamController<String>.broadcast();
   bool _enabled = false;
   bool _handlerRegistered = false;
   LyricsOverlayStyle? _style;
@@ -43,12 +46,16 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   }
 
   @override
+  Stream<String> get events => _events.stream;
+
+  @override
   bool get isSupported => Platform.isWindows || Platform.isAndroid;
 
   @override
   Future<bool> setEnabled(bool enabled) async {
     if (!isSupported) return false;
     _ensureHandler();
+    if (enabled) await setStyle(await loadStyle());
     final result = await _channel.invokeMethod<bool>('setEnabled', {
       'enabled': enabled,
     });
@@ -62,6 +69,8 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
     required String title,
     required String currentLine,
     required String nextLine,
+    String? currentTranslation,
+    String? nextTranslation,
     List<String> lines = const [],
     int currentIndex = -1,
     double lineProgress = 0,
@@ -72,6 +81,8 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
       'title': title,
       'currentLine': currentLine,
       'nextLine': nextLine,
+      'currentTranslation': currentTranslation,
+      'nextTranslation': nextTranslation,
       'lines': lines,
       'currentIndex': currentIndex,
       'lineProgress': lineProgress.clamp(0.0, 1.0),
@@ -114,15 +125,63 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   }
 
   Future<void> _handleNativeCall(MethodCall call) async {
-    if (call.method != 'positionChanged') return;
     final arguments = call.arguments;
     if (arguments is! Map) return;
+    if (call.method == 'toolbarAction') {
+      await _handleToolbarAction(arguments['action']?.toString() ?? '');
+      return;
+    }
+    if (call.method != 'positionChanged') return;
     final x = (arguments['x'] as num?)?.toDouble();
     final y = (arguments['y'] as num?)?.toDouble();
     if (x == null || y == null) return;
     final current = await loadStyle();
-    _style = current.copyWith(positionX: x, positionY: y);
+    _style = current.copyWith(
+      positionX: x,
+      positionY: y,
+      windowWidth: (arguments['width'] as num?)?.toDouble(),
+      windowHeight: (arguments['height'] as num?)?.toDouble(),
+    );
     await saveStyle(_style!);
+    _events.add('positionChanged');
+  }
+
+  Future<void> _handleToolbarAction(String action) async {
+    if (action == 'close') {
+      await setEnabled(false);
+      _events.add('close');
+      return;
+    }
+    final current = await loadStyle();
+    final updated = switch (action) {
+      'fontDown' => current.copyWith(
+        fontSize: (current.fontSize - 2).clamp(16, 48).toDouble(),
+      ),
+      'fontUp' => current.copyWith(
+        fontSize: (current.fontSize + 2).clamp(16, 48).toDouble(),
+      ),
+      'opacityDown' => current.copyWith(
+        opacity: (current.opacity - 0.05).clamp(0.15, 1).toDouble(),
+      ),
+      'opacityUp' => current.copyWith(
+        opacity: (current.opacity + 0.05).clamp(0.15, 1).toDouble(),
+      ),
+      'toggleLock' => current.copyWith(locked: !current.locked),
+      'toggleAlwaysOnTop' => current.copyWith(
+        alwaysOnTop: !current.alwaysOnTop,
+      ),
+      'toggleTranslation' => current.copyWith(
+        showTranslation: !current.showTranslation,
+      ),
+      'toggleZoom' => current.copyWith(
+        zoomActiveLine: !current.zoomActiveLine,
+      ),
+      _ => current,
+    };
+    if (updated == current) return;
+    await setStyle(updated);
+    await saveStyle(updated);
+    _events.add(action);
   }
 
   Future<File> _settingsFileFor() async {
@@ -143,6 +202,11 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
     'opacity': style.opacity,
     'cornerRadius': style.cornerRadius,
     'locked': style.locked,
+    'alwaysOnTop': style.alwaysOnTop,
+    'showTranslation': style.showTranslation,
+    'zoomActiveLine': style.zoomActiveLine,
+    'windowWidth': style.windowWidth,
+    'windowHeight': style.windowHeight,
     'x': style.positionX,
     'y': style.positionY,
   };
@@ -157,8 +221,10 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
       }
       _handlerRegistered = false;
     }
-    if (!_enabled) return;
-    _enabled = false;
-    await _channel.invokeMethod<void>('setEnabled', {'enabled': false});
+    if (_enabled) {
+      _enabled = false;
+      await _channel.invokeMethod<void>('setEnabled', {'enabled': false});
+    }
+    await _events.close();
   }
 }

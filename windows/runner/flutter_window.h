@@ -6,6 +6,8 @@
 #include <flutter/method_channel.h>
 
 #include <memory>
+#include <map>
+#include <string>
 
 #include "win32_window.h"
 
@@ -33,7 +35,14 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       lyrics_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      hotkeys_channel_;
   std::unique_ptr<LyricsOverlay> lyrics_overlay_;
+  std::map<int, std::string> registered_hotkeys_;
+  std::map<std::string, std::string> hotkey_values_;
+
+  bool SetHotkeyBindings(const std::map<std::string, std::string>& bindings,
+                         std::string* error);
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

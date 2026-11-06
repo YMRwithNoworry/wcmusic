@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../../data/services/audio_effect_settings_store.dart';
 import '../../../data/services/player_service.dart';
 import '../../../data/services/online_search_service.dart';
+import '../../../data/services/desktop_hotkey_service.dart';
 import '../../../data/services/desktop_window_service.dart';
 import '../../../data/services/floating_lyrics_service.dart';
 import '../../../data/services/lyric_service.dart';
@@ -26,6 +27,7 @@ class PlayerViewModel extends ChangeNotifier {
     required this.sourceRepository,
     OnlineSearchService? onlineSearchService,
     this.windowLifecycleService,
+    DesktopHotkeyService? desktopHotkeyService,
     AudioPlayerService? playerService,
     LyricService? lyricService,
     FloatingLyricsService? floatingLyricsService,
@@ -39,7 +41,9 @@ class PlayerViewModel extends ChangeNotifier {
        lyricService = lyricService ?? OnlineLyricService(),
        floatingLyricsService =
            floatingLyricsService ?? PlatformFloatingLyricsService(),
-       downloadService = downloadService ?? TrackDownloadService() {
+       downloadService = downloadService ?? TrackDownloadService(),
+       desktopHotkeyService =
+           desktopHotkeyService ?? PlatformDesktopHotkeyService() {
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
@@ -66,6 +70,15 @@ class PlayerViewModel extends ChangeNotifier {
       message = '播放失败：$error';
       notifyListeners();
     });
+    _lyricsEventSubscription = this.floatingLyricsService.events.listen(
+      _handleLyricsOverlayEvent,
+    );
+    _hotkeyActionSubscription = this.desktopHotkeyService.actions.listen(
+      _handleDesktopHotkey,
+    );
+    this.windowLifecycleService?.setLyricsActionHandler(
+      _handleTrayLyricsAction,
+    );
   }
 
   final MusicRepository musicRepository;
@@ -77,6 +90,7 @@ class PlayerViewModel extends ChangeNotifier {
   final LyricService lyricService;
   final FloatingLyricsService floatingLyricsService;
   final TrackDownloadService downloadService;
+  final DesktopHotkeyService desktopHotkeyService;
   List<Track> tracks = const [];
   List<Playlist> playlists = const [];
   List<MusicFolder> folders = const [];
@@ -95,6 +109,9 @@ class PlayerViewModel extends ChangeNotifier {
   bool floatingLyricsEnabled = false;
   bool spatialAudioEnabled = false;
   LyricsOverlayStyle lyricsStyle = const LyricsOverlayStyle();
+  DesktopHotkeySettings desktopHotkeySettings =
+      DesktopHotkeySettings.defaults();
+  String? desktopHotkeyError;
   PlaybackMode playbackMode = PlaybackMode.listLoop;
   PlaybackQuality playbackQuality = PlaybackQuality.high;
   bool isDownloading = false;
@@ -139,6 +156,8 @@ class PlayerViewModel extends ChangeNotifier {
   StreamSubscription<double>? _volumeSubscription;
   StreamSubscription<void>? _completedSubscription;
   StreamSubscription<String>? _errorSubscription;
+  StreamSubscription<String>? _lyricsEventSubscription;
+  StreamSubscription<String>? _hotkeyActionSubscription;
 
   Duration get playbackDuration =>
       duration > Duration.zero ? duration : current?.duration ?? Duration.zero;
@@ -170,6 +189,7 @@ class PlayerViewModel extends ChangeNotifier {
       unawaited(refreshRecentTracks());
       unawaited(_upgradeEmptyPlatformFavorites());
       unawaited(_loadLyricsStyle());
+      unawaited(_loadDesktopHotkeys());
     } on Object catch (error) {
       message = '载入音乐数据失败：$error';
     } finally {
@@ -564,28 +584,12 @@ class PlayerViewModel extends ChangeNotifier {
           : '该歌曲暂无可用的播放地址';
     } else {
       var finalTrack = playbackTrack;
-      if (_isNetworkUri(finalTrack.uri)) {
-        message = '正在下载整曲，请稍候...';
-        notifyListeners();
-        try {
-          final localPath = await downloadService.downloadToCache(
-            finalTrack,
-            fallbackExtension: playbackQuality.sourceValue == 'flac'
-                ? '.flac'
-                : '.mp3',
-            onProgress: (_) {},
-            shouldCancel: () => generation != _playGeneration,
-          );
-          if (generation != _playGeneration) return;
-          finalTrack = finalTrack.copyWith(uri: localPath);
-        } on Object catch (error) {
-          if (generation != _playGeneration) return;
-          message = '下载播放失败，尝试直接播放：$error';
-          notifyListeners();
-        }
-      }
       try {
         if (generation != _playGeneration) return;
+        if (_isNetworkUri(finalTrack.uri)) {
+          message = '正在连接音频源...';
+          notifyListeners();
+        }
         await playerService.play(finalTrack);
         if (generation != _playGeneration) return;
         isPlaying = true;
@@ -663,8 +667,20 @@ class PlayerViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       final downloadQuality = quality ?? playbackQuality;
+      final sourceQualityLabel = '洛雪音源 · ${downloadQuality.label}';
+      final resolvedCurrent = current;
+      final canReuseCurrentUrl =
+          isPlaying &&
+          canResolveQuality &&
+          resolvedCurrent != null &&
+          resolvedCurrent.uri.isNotEmpty &&
+          resolvedCurrent.id == track.id &&
+          resolvedCurrent.source == track.source &&
+          resolvedCurrent.sourceId == track.sourceId &&
+          resolvedCurrent.quality == sourceQualityLabel;
       var downloadTrack = track;
-      if (canResolveQuality) {
+      if (canReuseCurrentUrl) downloadTrack = resolvedCurrent!;
+      if (canResolveQuality && !canReuseCurrentUrl) {
         message = '正在解析 ${downloadQuality.label} 下载地址...';
         notifyListeners();
         final url = await sourceRepository.resolveUrl(
@@ -674,7 +690,7 @@ class PlayerViewModel extends ChangeNotifier {
         );
         downloadTrack = track.copyWith(
           uri: url,
-          quality: '洛雪音源 · ${downloadQuality.label}',
+          quality: sourceQualityLabel,
         );
       }
       final path = await downloadService.download(
@@ -863,6 +879,111 @@ class PlayerViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> _handleTrayLyricsAction(String action) async {
+    switch (action) {
+      case 'toggle':
+        await setFloatingLyrics(!floatingLyricsEnabled);
+        return;
+      case 'lock':
+        await updateLyricsStyle(lyricsStyle.copyWith(locked: !lyricsStyle.locked));
+        return;
+      case 'fontDown':
+        await updateLyricsStyle(
+          lyricsStyle.copyWith(
+            fontSize: (lyricsStyle.fontSize - 2).clamp(16, 48).toDouble(),
+          ),
+        );
+        return;
+      case 'fontUp':
+        await updateLyricsStyle(
+          lyricsStyle.copyWith(
+            fontSize: (lyricsStyle.fontSize + 2).clamp(16, 48).toDouble(),
+          ),
+        );
+        return;
+      case 'reset':
+        await updateLyricsStyle(
+          lyricsStyle.copyWith(
+            clearPosition: true,
+            windowWidth: 1000,
+            windowHeight: 140,
+          ),
+        );
+        return;
+    }
+  }
+
+  void _handleDesktopHotkey(String action) {
+    switch (action) {
+      case 'previous':
+        unawaited(playPrevious());
+        return;
+      case 'next':
+        unawaited(playNext());
+        return;
+      case 'togglePlay':
+        unawaited(togglePlayback());
+        return;
+      case 'volumeUp':
+        unawaited(setVolume(volume + 0.05));
+        return;
+      case 'volumeDown':
+        unawaited(setVolume(volume - 0.05));
+        return;
+      case 'mute':
+        unawaited(toggleMute());
+        return;
+      case 'seekForward':
+        unawaited(seek(position.inMilliseconds + 5000.0));
+        return;
+      case 'seekBackward':
+        unawaited(seek(position.inMilliseconds - 5000.0));
+        return;
+      case 'toggleLyrics':
+        unawaited(setFloatingLyrics(!floatingLyricsEnabled));
+        return;
+      case 'toggleWindow':
+        unawaited(windowLifecycleService?.toggleWindow());
+        return;
+    }
+  }
+
+  void _handleLyricsOverlayEvent(String action) {
+    if (action == 'close') {
+      floatingLyricsEnabled = false;
+      _lyricGeneration++;
+      notifyListeners();
+      return;
+    }
+    unawaited(() async {
+      lyricsStyle = await floatingLyricsService.loadStyle();
+      notifyListeners();
+    }());
+  }
+
+  Future<void> _loadDesktopHotkeys() async {
+    try {
+      desktopHotkeySettings = await desktopHotkeyService.load();
+      desktopHotkeyError = desktopHotkeyService.lastError;
+    } on Object catch (error) {
+      desktopHotkeyError = '载入全局快捷键失败：$error';
+    }
+    notifyListeners();
+  }
+
+  Future<void> updateDesktopHotkeySettings(
+    DesktopHotkeySettings settings,
+  ) async {
+    try {
+      await desktopHotkeyService.save(settings);
+      desktopHotkeySettings = settings;
+      desktopHotkeyError = null;
+    } on Object catch (error) {
+      desktopHotkeyError = error.toString();
+    }
+    notifyListeners();
+  }
+
   Future<void> updateLyricsStyle(LyricsOverlayStyle style) async {
     lyricsStyle = style;
     notifyListeners();
@@ -906,6 +1027,10 @@ class PlayerViewModel extends ChangeNotifier {
         );
       } else {
         _syncLyrics(position);
+        final translator = lyricService;
+        if (translator is LyricTranslator && translationTargets(loaded).isNotEmpty) {
+          unawaited(_translateMissingLyrics(translator, track, generation, loaded));
+        }
       }
     } on Object {
       if (generation != _lyricGeneration || current?.id != track.id) return;
@@ -916,6 +1041,23 @@ class PlayerViewModel extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  Future<void> _translateMissingLyrics(
+    LyricTranslator translator,
+    Track track,
+    int generation,
+    List<LyricLine> original,
+  ) async {
+    try {
+      final translated = await translator.translateMissing(original);
+      if (generation != _lyricGeneration || current?.id != track.id) return;
+      lyrics = translated;
+      _syncLyrics(position);
+      notifyListeners();
+    } on Object {
+      // 歌词正文已经可用，翻译失败不影响播放。
+    }
   }
 
   void _syncLyrics(Duration value) {
@@ -933,9 +1075,16 @@ class PlayerViewModel extends ChangeNotifier {
     final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
         ? lyrics[followingIndex].text
         : '';
+    final currentTranslation = nextIndex >= 0
+        ? lyrics[nextIndex].translation
+        : null;
+    final nextTranslation = followingIndex >= 0 && followingIndex < lyrics.length
+        ? lyrics[followingIndex].translation
+        : null;
     const radius = 5;
-    final windowStart = (nextIndex - radius).clamp(0, lyrics.length - 1);
-    final windowEnd = (nextIndex + radius + 1).clamp(0, lyrics.length);
+    final windowStart =
+        (nextIndex - radius).clamp(0, lyrics.length - 1).toInt();
+    final windowEnd = (nextIndex + radius + 1).clamp(0, lyrics.length).toInt();
     final windowLines = [
       for (var index = windowStart; index < windowEnd; index++)
         lyrics[index].text,
@@ -947,15 +1096,16 @@ class PlayerViewModel extends ChangeNotifier {
     final lineSpan = lineEnd - lineStart;
     final lineProgress = lineSpan.inMilliseconds <= 0
         ? 0.0
-        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds).clamp(
-            0.0,
-            1.0,
-          );
+        : ((value - lineStart).inMilliseconds / lineSpan.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble();
     unawaited(
       floatingLyricsService.update(
         title: '${track.title} · ${track.artist}',
         currentLine: currentLine,
         nextLine: nextLine,
+        currentTranslation: currentTranslation,
+        nextTranslation: nextTranslation,
         lines: windowLines,
         currentIndex: nextIndex - windowStart,
         lineProgress: lineProgress,
@@ -1133,7 +1283,13 @@ class PlayerViewModel extends ChangeNotifier {
     unawaited(_volumeSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
     unawaited(_errorSubscription?.cancel());
+    unawaited(_lyricsEventSubscription?.cancel());
+    unawaited(_hotkeyActionSubscription?.cancel());
+    windowLifecycleService?.setLyricsActionHandler(null);
     unawaited(playerService.dispose());
+    final searchService = onlineSearchService;
+    if (searchService is ClosableOnlineSearchService) searchService.close();
+    unawaited(desktopHotkeyService.dispose());
     unawaited(floatingLyricsService.dispose());
     super.dispose();
   }

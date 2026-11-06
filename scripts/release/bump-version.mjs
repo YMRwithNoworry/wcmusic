@@ -1,107 +1,63 @@
 #!/usr/bin/env node
-// 递增版本号：两个客户端的版本号必须同步（Tauri 2 Windows 桌面端 / Flutter Android），
-// 否则安装包版本、关于页版本和更新检测会互相打架。
-//
-// 用法：node scripts/release/bump-version.mjs [patch|minor|major|none]
-// 输出（写入 $GITHUB_OUTPUT）：version=1.2.4 / tag=v1.2.4 / previous=1.2.3
+// 递增 Flutter 应用版本号；Windows 与 Android 安装包共享同一个版本来源。
+// 用法：node scripts/release/bump-version.mjs [patch|minor|major|none] [latest-tag]
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
-/// 版本号的事实来源：Tauri 2 桌面端。
-const SOURCE = "desktop/src-tauri/Cargo.toml";
-
-/// Cargo.lock 里也记着包自己的版本，漏改会让 `--locked` 的构建直接失败。
-const CARGO_LOCKS = [
-  { path: "desktop/src-tauri/Cargo.lock", package: "wcmusic-desktop" },
-];
-
-/// npm 包的 version 字段（Tauri 前端的 package.json）。
-const JSON_MANIFESTS = ["desktop/package.json"];
-
-/// Flutter 端的版本号（构建号 +N 每次发布递增，Android 靠它区分同版本号的不同构建）。
 const PUBSPEC = "pubspec.yaml";
-
-// 可选第二个参数为最新已发布 tag，旧分支也必须从该版本继续递增。
 const kind = process.argv[2] ?? "patch";
 const latest = (process.argv[3] ?? "").replace(/^v/, "");
 
-function nextVersion(current, kind) {
+function nextVersion(current, bump) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(current);
   if (!match) throw new Error("无法解析当前版本号：" + current);
   let major = Number(match[1]);
   let minor = Number(match[2]);
   let patch = Number(match[3]);
-  if (kind === "major") {
+  if (bump === "major") {
     major += 1;
     minor = 0;
     patch = 0;
-  } else if (kind === "minor") {
+  } else if (bump === "minor") {
     minor += 1;
     patch = 0;
-  } else if (kind === "patch") {
+  } else if (bump === "patch") {
     patch += 1;
-  } else if (kind !== "none") {
-    throw new Error("未知的递增方式：" + kind);
+  } else if (bump !== "none") {
+    throw new Error("未知的递增方式：" + bump);
   }
   return major + "." + minor + "." + patch;
 }
 
-function bumpCargoLock(path, packageName, version) {
-  const source = readFileSync(path, "utf8");
-  const pattern = new RegExp(
-    '(\\[\\[package\\]\\]\\r?\\nname = "' +
-      packageName +
-      '"\\r?\\nversion = ")\\d+\\.\\d+\\.\\d+(")',
-  );
-  if (!pattern.test(source)) {
-    throw new Error(path + " 里找不到 " + packageName + " 的版本号");
-  }
-  writeFileSync(path, source.replace(pattern, "$1" + version + "$2"));
-}
-
-/// 替换 package.json 的 version 字段。
-function bumpJsonManifest(path, version) {
-  const source = readFileSync(path, "utf8");
-  if (!/"version": "\d+\.\d+\.\d+"/.test(source)) {
-    throw new Error(path + " 里找不到版本号");
-  }
-  writeFileSync(path, source.replace(/"version": "\d+\.\d+\.\d+"/, '"version": "' + version + '"'));
-}
-
-const sourceToml = readFileSync(SOURCE, "utf8");
-const currentMatch = /^version = "(\d+\.\d+\.\d+)"/m.exec(sourceToml);
-if (!currentMatch) throw new Error(SOURCE + " 里找不到版本号");
-const current = currentMatch[1];
+const pubspec = readFileSync(PUBSPEC, "utf8");
+const pattern = /^version: (\d+\.\d+\.\d+)\+(\d+)$/m;
+const match = pattern.exec(pubspec);
+if (!match) throw new Error(PUBSPEC + " 里找不到 version: x.y.z+n");
+const current = match[1];
 if (latest && !/^\d+\.\d+\.\d+$/.test(latest)) {
   throw new Error("无法解析最新发布版本：" + latest);
 }
+
 function compareVersions(a, b) {
   const left = a.split(".").map(Number);
   const right = b.split(".").map(Number);
-  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] - right[i];
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
   return 0;
 }
-const previous = kind !== "none" && latest && compareVersions(latest, current) > 0 ? latest : current;
+
+const previous =
+  kind !== "none" && latest && compareVersions(latest, current) > 0
+    ? latest
+    : current;
 const version = nextVersion(previous, kind);
-
 if (version !== current) {
-  writeFileSync(SOURCE, sourceToml.replace(/^version = "\d+\.\d+\.\d+"/m, 'version = "' + version + '"'));
-  for (const { path, package: packageName } of CARGO_LOCKS) {
-    bumpCargoLock(path, packageName, version);
-  }
-  for (const path of JSON_MANIFESTS) bumpJsonManifest(path, version);
-  const lockPath = "desktop/package-lock.json";
-  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-  lock.version = version;
-  if (lock.packages?.[""]) lock.packages[""].version = version;
-  writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
-
-  const pubspec = readFileSync(PUBSPEC, "utf8");
-  const pubspecPattern = /^version: (\d+\.\d+\.\d+)\+(\d+)$/m;
-  const pubspecMatch = pubspecPattern.exec(pubspec);
-  if (!pubspecMatch) throw new Error(PUBSPEC + " 里找不到 version: x.y.z+n");
-  const build = Number(pubspecMatch[2]) + 1;
-  writeFileSync(PUBSPEC, pubspec.replace(pubspecPattern, "version: " + version + "+" + build));
+  const build = Number(match[2]) + 1;
+  writeFileSync(
+    PUBSPEC,
+    pubspec.replace(pattern, "version: " + version + "+" + build),
+  );
 }
 
 console.log("版本：" + previous + " -> " + version);

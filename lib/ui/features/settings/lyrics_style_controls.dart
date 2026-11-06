@@ -7,8 +7,8 @@ class LyricsStyleControls extends StatelessWidget {
   const LyricsStyleControls({super.key});
 
   static const _fonts = [
-    'Microsoft YaHei UI',
     'Microsoft YaHei',
+    'Microsoft YaHei UI',
     'SimSun',
     'SimHei',
     'KaiTi',
@@ -55,8 +55,29 @@ class LyricsStyleControls extends StatelessWidget {
           value: style.locked,
           onChanged: (value) =>
               viewModel.updateLyricsStyle(style.copyWith(locked: value)),
-          title: const Text('固定歌词窗口'),
-          subtitle: const Text('固定时可拖动左侧把手；关闭后可拖动整个歌词面板'),
+          title: const Text('锁定歌词窗口'),
+          subtitle: const Text('锁定后鼠标穿透，解锁后可拖动、缩放并使用悬浮工具栏'),
+        ),
+        SwitchListTile(
+          value: style.alwaysOnTop,
+          onChanged: (value) => viewModel.updateLyricsStyle(
+            style.copyWith(alwaysOnTop: value),
+          ),
+          title: const Text('窗口置顶'),
+        ),
+        SwitchListTile(
+          value: style.zoomActiveLine,
+          onChanged: (value) => viewModel.updateLyricsStyle(
+            style.copyWith(zoomActiveLine: value),
+          ),
+          title: const Text('放大当前行'),
+        ),
+        SwitchListTile(
+          value: style.showTranslation,
+          onChanged: (value) => viewModel.updateLyricsStyle(
+            style.copyWith(showTranslation: value),
+          ),
+          title: const Text('显示歌词翻译'),
         ),
         ListTile(
           title: const Text('对齐方式'),
@@ -119,6 +140,34 @@ class LyricsStyleControls extends StatelessWidget {
               style.copyWith(backgroundColor: color),
             ),
           ),
+        ),
+        ListTile(
+          title: const Text('窗口宽度'),
+          subtitle: Slider(
+            value: style.windowWidth,
+            min: 600,
+            max: 1600,
+            divisions: 100,
+            label: '${style.windowWidth.round()} px',
+            onChanged: (value) => viewModel.updateLyricsStyle(
+              style.copyWith(windowWidth: value),
+            ),
+          ),
+          trailing: Text('${style.windowWidth.round()}'),
+        ),
+        ListTile(
+          title: const Text('窗口高度'),
+          subtitle: Slider(
+            value: style.windowHeight,
+            min: 100,
+            max: 260,
+            divisions: 80,
+            label: '${style.windowHeight.round()} px',
+            onChanged: (value) => viewModel.updateLyricsStyle(
+              style.copyWith(windowHeight: value),
+            ),
+          ),
+          trailing: Text('${style.windowHeight.round()}'),
         ),
         ListTile(
           title: const Text('背景不透明度'),

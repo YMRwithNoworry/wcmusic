@@ -144,6 +144,43 @@ void main() {
     expect(tracks.single.duration, const Duration(minutes: 3));
   });
 
+  test('reuses keep-alive connections across searches', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final remotePorts = <int>[];
+    var requestCount = 0;
+    server.listen((request) async {
+      requestCount++;
+      remotePorts.add(request.connectionInfo.remotePort);
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'abslist': [
+            {
+              'DC_TARGETID': '$requestCount',
+              'SONGNAME': '歌曲 $requestCount',
+              'ARTIST': '测试歌手',
+            },
+          ],
+        }),
+      );
+      await request.response.close();
+    });
+    final service = MultiSourceOnlineSearchService(
+      kuwoSearchEndpoint: Uri.parse('http://127.0.0.1:${server.port}/api'),
+      proxyResolver: (_) => 'DIRECT',
+    );
+    addTearDown(service.close);
+    addTearDown(() => server.close(force: true));
+
+    final first = await service.search('第一首');
+    final second = await service.search('第二首');
+
+    expect(first.single.title, '歌曲 1');
+    expect(second.single.title, '歌曲 2');
+    expect(requestCount, 2);
+    expect(remotePorts.toSet(), hasLength(1));
+  });
+
   test('does not send a request for an empty keyword', () async {
     final service = MultiSourceOnlineSearchService();
 

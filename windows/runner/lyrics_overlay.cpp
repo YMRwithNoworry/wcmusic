@@ -1,7 +1,6 @@
 #include "lyrics_overlay.h"
 
 #include <algorithm>
-#include <cmath>
 #include <gdiplus.h>
 #include <windowsx.h>
 
@@ -9,20 +8,15 @@
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
-constexpr int kOverlayWidth = 480;
+constexpr int kMinOverlayWidth = 600;
+constexpr int kMinOverlayHeight = 100;
 constexpr int kDragHandleWidth = 18;
-constexpr UINT_PTR kLyricsTimerId = 0x4C59;
-constexpr float kLyricsAnimationSeconds = 0.38f;
-
-float EaseInOutCubic(float value) {
-  return value < 0.5f
-      ? 4.0f * value * value * value
-      : static_cast<float>(1 - std::pow(-2 * value + 2, 3) / 2);
-}
-
-float Lerp(float from, float to, float value) {
-  return from + (to - from) * value;
-}
+constexpr int kResizeBorder = 16;
+constexpr int kToolbarButtonWidth = 48;
+constexpr int kToolbarButtonGap = 4;
+constexpr int kToolbarTop = 8;
+constexpr int kToolbarRight = 10;
+constexpr int kToolbarButtonCount = 9;
 
 void AddRoundedRectangle(Gdiplus::GraphicsPath& path,
                          const Gdiplus::RectF& rect, float radius) {
@@ -67,80 +61,91 @@ bool LyricsOverlay::Create() {
   SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
   const int work_width = work_area.right - work_area.left;
   const int work_height = work_area.bottom - work_area.top;
-  const int width = std::min(kOverlayWidth, std::max(380, work_width / 3));
-  const int height = work_height;
-  int x = style_.has_position
+  const int width = std::clamp(
+      style_.window_width, std::min(kMinOverlayWidth, work_width), work_width);
+  const int height = std::clamp(
+      style_.window_height, std::min(kMinOverlayHeight, work_height),
+      work_height);
+  const int x = style_.has_position
       ? style_.x
-      : work_area.right - width;
-  int y = style_.has_position
+      : work_area.left + (work_width - width) / 2;
+  const int y = style_.has_position
       ? style_.y
-      : work_area.top;
+      : work_area.bottom - height - 32;
   window_ = CreateWindowEx(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE |
-          0,
-      kWindowClassName, L"WCMusic Desktop Lyrics", WS_POPUP, x, y, width,
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+      kWindowClassName, L"WCMusic Desktop Lyrics", WS_POPUP | WS_THICKFRAME, x, y, width,
       height, nullptr, nullptr, instance, this);
   if (!window_) return false;
+  drag_handle_ = CreateWindowEx(
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+      kWindowClassName, L"WCMusic Lyrics Drag Handle", WS_POPUP, x, y, 18, 48,
+      nullptr, nullptr, instance, this);
+  if (!drag_handle_) {
+    DestroyWindow(window_);
+    window_ = nullptr;
+    return false;
+  }
   ApplyWindowAttributes();
+  UpdateHandlePosition();
   return true;
 }
 
 void LyricsOverlay::Show() {
   if (!Create()) return;
+  toolbar_visible_ = !style_.locked;
   ShowWindow(window_, SW_SHOWNOACTIVATE);
-  SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
+  SetWindowPos(window_, style_.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+               0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  UpdateHandlePosition();
+  InvalidateRect(window_, nullptr, TRUE);
 }
 
 void LyricsOverlay::Hide() {
+  if (drag_handle_) ShowWindow(drag_handle_, SW_HIDE);
   if (window_) ShowWindow(window_, SW_HIDE);
 }
 
 void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
-                           int current_index, float line_progress) {
-  const int next_index = lines.empty()
-      ? 0
-      : std::clamp(current_index, 0, static_cast<int>(lines.size()) - 1);
-  const bool index_changed = next_index != current_index_;
+                           int current_index, float line_progress,
+                           const std::wstring& translation) {
   lines_ = lines;
   line_progress_ = std::clamp(line_progress, 0.0f, 1.0f);
-  if (lines_.empty()) {
-    if (window_) InvalidateRect(window_, nullptr, TRUE);
-    return;
-  }
-  if (index_changed) {
-    if (animation_t_ < 1.0f) {
-      displayed_index_ = static_cast<int>(
-          std::round(Lerp(static_cast<float>(displayed_index_),
-                          static_cast<float>(current_index_),
-                          EaseInOutCubic(animation_t_))));
-    } else {
-      displayed_index_ = current_index_;
-    }
-    current_index_ = next_index;
-    animation_t_ = 0.0f;
-  }
-  if (window_) {
-    if (index_changed) SetTimer(window_, kLyricsTimerId, 16, nullptr);
-    InvalidateRect(window_, nullptr, TRUE);
-  }
+  current_translation_ = translation;
+  current_index_ = lines_.empty()
+      ? 0
+      : std::clamp(current_index, 0, static_cast<int>(lines_.size()) - 1);
+  if (window_) InvalidateRect(window_, nullptr, TRUE);
 }
 
 void LyricsOverlay::ApplyStyle(const LyricsOverlayStyle& style) {
   style_ = style;
+  style_.window_width = std::clamp(style_.window_width, kMinOverlayWidth, 1800);
+  style_.window_height = std::clamp(style_.window_height, kMinOverlayHeight, 360);
+  toolbar_visible_ = !style_.locked;
   if (!window_) return;
   ApplyWindowAttributes();
-  if (style_.has_position) {
-    SetWindowPos(window_, HWND_TOPMOST, style_.x, style_.y, 0, 0,
-                 SWP_NOSIZE | SWP_NOACTIVATE);
-  } else {
-    RECT work_area{};
-    SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
-    const int work_width = work_area.right - work_area.left;
-    const int width = std::min(kOverlayWidth, std::max(380, work_width / 3));
-    SetWindowPos(window_, HWND_TOPMOST, work_area.right - width, work_area.top,
-                 width, work_area.bottom - work_area.top, SWP_NOACTIVATE);
-  }
+  RECT work_area{};
+  SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
+  const int work_width = work_area.right - work_area.left;
+  const int work_height = work_area.bottom - work_area.top;
+  const int width = std::clamp(style_.window_width,
+                               std::min(kMinOverlayWidth, work_width),
+                               work_width);
+  const int height = std::clamp(style_.window_height,
+                                std::min(kMinOverlayHeight, work_height),
+                                work_height);
+  const int x = style_.has_position
+      ? style_.x
+      : work_area.left + (work_width - width) / 2;
+  const int y = style_.has_position
+      ? style_.y
+      : work_area.bottom - height - 32;
+  SetWindowPos(window_, style_.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+               x, y, width, height, SWP_NOACTIVATE);
+  ApplyWindowAttributes();
+  UpdateHandlePosition();
   InvalidateRect(window_, nullptr, TRUE);
 }
 
@@ -148,7 +153,15 @@ void LyricsOverlay::SetPositionCallback(PositionCallback callback) {
   position_callback_ = std::move(callback);
 }
 
+void LyricsOverlay::SetActionCallback(ActionCallback callback) {
+  action_callback_ = std::move(callback);
+}
+
 void LyricsOverlay::Destroy() {
+  if (drag_handle_) {
+    DestroyWindow(drag_handle_);
+    drag_handle_ = nullptr;
+  }
   if (!window_) return;
   DestroyWindow(window_);
   window_ = nullptr;
@@ -156,20 +169,41 @@ void LyricsOverlay::Destroy() {
 
 void LyricsOverlay::ApplyWindowAttributes() {
   RECT bounds{};
-  GetClientRect(window_, &bounds);
+  GetWindowRect(window_, &bounds);
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
   const int radius = std::max(0, style_.corner_radius);
   SetWindowRgn(
-      window_,
-      CreateRoundRectRgn(0, 0, bounds.right, bounds.bottom, radius, radius),
+      window_, CreateRoundRectRgn(0, 0, width, height, radius * 2, radius * 2),
       TRUE);
-  const LONG_PTR ex_style = GetWindowLongPtr(window_, GWL_EXSTYLE);
-  SetWindowLongPtr(window_, GWL_EXSTYLE, ex_style & ~WS_EX_TRANSPARENT);
+  LONG_PTR ex_style = GetWindowLongPtr(window_, GWL_EXSTYLE);
+  // Keep the drag handle interactive while the layered lyrics window passes clicks through.
+  if (style_.locked) {
+    ex_style |= WS_EX_TRANSPARENT;
+  } else {
+    ex_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+  }
+  SetWindowLongPtr(window_, GWL_EXSTYLE, ex_style);
   SetWindowPos(window_, nullptr, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                    SWP_FRAMECHANGED);
 }
 
-LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
+void LyricsOverlay::UpdateHandlePosition() {
+  if (!window_ || !drag_handle_) return;
+  RECT bounds{};
+  GetWindowRect(window_, &bounds);
+  const int height = bounds.bottom - bounds.top;
+  SetWindowPos(drag_handle_,
+               style_.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+               bounds.left, bounds.top + (height - 48) / 2, 18, 48,
+               SWP_NOACTIVATE);
+  if (style_.locked && IsWindowVisible(window_)) {
+    ShowWindow(drag_handle_, SW_SHOWNOACTIVATE);
+  } else {
+    ShowWindow(drag_handle_, SW_HIDE);
+  }
+}(HWND window, UINT message,
                                            WPARAM wparam, LPARAM lparam) {
   LyricsOverlay* overlay = reinterpret_cast<LyricsOverlay*>(
       GetWindowLongPtr(window, GWLP_USERDATA));
@@ -183,35 +217,152 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
     case WM_ERASEBKGND:
       return 1;
     case WM_PAINT:
-      if (overlay) overlay->Paint();
+      if (overlay) {
+        if (window == overlay->drag_handle_) {
+          overlay->PaintHandle();
+        } else {
+          overlay->Paint();
+        }
+      }
       return 0;
     case WM_NCHITTEST: {
       if (!overlay) return HTTRANSPARENT;
+      if (window == overlay->drag_handle_) return HTCAPTION;
       POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-      ScreenToClient(window, &point);
-      if (!overlay->style_.locked || point.x <= kDragHandleWidth) {
-        return HTCAPTION;
+      RECT bounds{};
+      GetWindowRect(window, &bounds);
+      point.x -= bounds.left;
+      point.y -= bounds.top;
+      const int width = bounds.right - bounds.left;
+      const int height = bounds.bottom - bounds.top;
+      if (overlay->style_.locked) {
+        return point.x <= kDragHandleWidth && point.y > 12 &&
+                       point.y < height - 12
+                   ? HTCAPTION
+                   : HTTRANSPARENT;
       }
-      return HTTRANSPARENT;
+      if (overlay->toolbar_visible_ &&
+          overlay->ToolbarButtonAt(point, width) >= 0) {
+        return HTCLIENT;
+      }
+      if (point.x >= width - kResizeBorder &&
+          point.y >= height - kResizeBorder) {
+        return HTBOTTOMRIGHT;
+      }
+      return HTCAPTION;
     }
-    case WM_EXITSIZEMOVE:
-      if (overlay && !overlay->style_.locked && overlay->position_callback_) {
-        RECT bounds{};
-        GetWindowRect(window, &bounds);
-        overlay->position_callback_(bounds.left, bounds.top);
+    case WM_MOUSEMOVE:
+    case WM_NCMOUSEMOVE:
+      if (overlay && !overlay->style_.locked) {
+        if (!overlay->toolbar_visible_) {
+          overlay->toolbar_visible_ = true;
+          InvalidateRect(window, nullptr, TRUE);
+        }
+        if (!overlay->tracking_mouse_leave_) {
+          TRACKMOUSEEVENT tracking{};
+          tracking.cbSize = sizeof(tracking);
+          tracking.dwFlags = TME_LEAVE;
+          if (message == WM_NCMOUSEMOVE) tracking.dwFlags |= TME_NONCLIENT;
+          tracking.hwndTrack = window;
+          overlay->tracking_mouse_leave_ = TrackMouseEvent(&tracking) != FALSE;
+        }
       }
       return 0;
-    case WM_TIMER:
-      if (overlay && wparam == kLyricsTimerId) {
-        overlay->animation_t_ += 0.016f / kLyricsAnimationSeconds;
-        if (overlay->animation_t_ >= 1.0f) {
-          overlay->animation_t_ = 1.0f;
-          overlay->displayed_index_ = overlay->current_index_;
-          KillTimer(window, kLyricsTimerId);
+    case WM_MOUSELEAVE:
+    case WM_NCMOUSELEAVE:
+      if (overlay) {
+        overlay->tracking_mouse_leave_ = false;
+        POINT cursor{};
+        RECT bounds{};
+        GetCursorPos(&cursor);
+        GetWindowRect(window, &bounds);
+        if (!PtInRect(&bounds, cursor) && !overlay->style_.locked &&
+            overlay->toolbar_visible_) {
+          overlay->toolbar_visible_ = false;
+          InvalidateRect(window, nullptr, TRUE);
         }
+      }
+      return 0;
+    case WM_LBUTTONUP: {
+      if (!overlay || overlay->style_.locked || !overlay->action_callback_) {
+        return 0;
+      }
+      RECT bounds{};
+      GetWindowRect(window, &bounds);
+      POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      ClientToScreen(window, &point);
+      point.x -= bounds.left;
+      point.y -= bounds.top;
+      const int button = overlay->ToolbarButtonAt(
+          point, bounds.right - bounds.left);
+      static const char* actions[kToolbarButtonCount] = {
+          "fontDown", "fontUp", "opacityDown", "opacityUp", "toggleZoom",
+          "toggleTranslation", "toggleAlwaysOnTop", "toggleLock", "close"};
+      if (button >= 0 && button < kToolbarButtonCount) {
+        overlay->action_callback_(actions[button]);
+      }
+      return 0;
+    }
+    case WM_EXITSIZEMOVE:
+      if (overlay && window == overlay->drag_handle_) {
+        RECT handle_bounds{};
+        RECT overlay_bounds{};
+        GetWindowRect(window, &handle_bounds);
+        GetWindowRect(overlay->window_, &overlay_bounds);
+        const int overlay_height = overlay_bounds.bottom - overlay_bounds.top;
+        SetWindowPos(
+            overlay->window_,
+            overlay->style_.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+            handle_bounds.left,
+            handle_bounds.top - (overlay_height - 48) / 2, 0, 0,
+            SWP_NOSIZE | SWP_NOACTIVATE);
+        GetWindowRect(overlay->window_, &overlay_bounds);
+        overlay->style_.has_position = true;
+        overlay->style_.x = overlay_bounds.left;
+        overlay->style_.y = overlay_bounds.top;
+        overlay->UpdateHandlePosition();
+        if (overlay->position_callback_) {
+          overlay->position_callback_(
+              overlay_bounds.left, overlay_bounds.top,
+              overlay_bounds.right - overlay_bounds.left, overlay_height);
+        }
+        return 0;
+      }
+      if (overlay && overlay->position_callback_) {
+        RECT bounds{};
+        GetWindowRect(window, &bounds);
+        overlay->style_.window_width = bounds.right - bounds.left;
+        overlay->style_.window_height = bounds.bottom - bounds.top;
+        overlay->style_.has_position = true;
+        overlay->style_.x = bounds.left;
+        overlay->style_.y = bounds.top;
+        overlay->ApplyWindowAttributes();
+        overlay->position_callback_(bounds.left, bounds.top,
+                                   bounds.right - bounds.left,
+                                   bounds.bottom - bounds.top);
+      }
+      return 0;
+    case WM_GETMINMAXINFO:
+      if (overlay && window == overlay->window_ &&
+          !overlay->style_.locked) {
+        auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
+        limits->ptMinTrackSize.x = kMinOverlayWidth;
+        limits->ptMinTrackSize.y = kMinOverlayHeight;
+      }
+      return 0;
+    case WM_SIZE:
+      if (overlay) {
+        if (window == overlay->drag_handle_) {
+          InvalidateRect(window, nullptr, TRUE);
+          return 0;
+        }
+        overlay->ApplyWindowAttributes();
+        overlay->UpdateHandlePosition();
         InvalidateRect(window, nullptr, TRUE);
       }
       return 0;
+    case WM_MOUSEACTIVATE:
+      return MA_NOACTIVATE;
     case WM_DESTROY:
       return 0;
   }
@@ -220,7 +371,7 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
 
 void LyricsOverlay::Paint() {
   RECT bounds{};
-  GetClientRect(window_, &bounds);
+  GetWindowRect(window_, &bounds);
   const int width = bounds.right - bounds.left;
   const int height = bounds.bottom - bounds.top;
   if (width <= 0 || height <= 0) return;
@@ -257,15 +408,8 @@ void LyricsOverlay::Paint() {
     Gdiplus::SolidBrush background_brush(background);
     graphics.FillPath(&background_brush, &background_path);
 
-    const float handle_height = 96.0f;
-    Gdiplus::RectF handle_rect(0.0f, (height - handle_height) / 2.0f, 9.0f,
-                              handle_height);
-    Gdiplus::GraphicsPath handle_path;
-    AddRoundedRectangle(handle_path, handle_rect, 4.5f);
-    Gdiplus::SolidBrush handle_brush(Gdiplus::Color(150, 92, 94, 98));
-    graphics.FillPath(&handle_brush, &handle_path);
-
     DrawLyricsWheel(graphics, width, height);
+    if (toolbar_visible_ && !style_.locked) DrawToolbar(graphics, width);
   }
 
   RECT window_bounds{};
@@ -286,80 +430,167 @@ void LyricsOverlay::Paint() {
   ReleaseDC(nullptr, screen_dc);
 }
 
+void LyricsOverlay::PaintHandle() {
+  if (!drag_handle_) return;
+  constexpr int width = 18;
+  constexpr int height = 48;
+  HDC screen_dc = GetDC(nullptr);
+  HDC mem_dc = CreateCompatibleDC(screen_dc);
+  BITMAPINFO bitmap_info{};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = width;
+  bitmap_info.bmiHeader.biHeight = -height;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+  void* bits = nullptr;
+  HBITMAP dib = CreateDIBSection(
+      screen_dc, &bitmap_info, DIB_RGB_COLORS, &bits, nullptr, 0);
+  HGDIOBJ previous = SelectObject(mem_dc, dib);
+  {
+    Gdiplus::Graphics graphics(mem_dc);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    Gdiplus::RectF handle_rect(0, 0, static_cast<float>(width),
+                               static_cast<float>(height));
+    Gdiplus::GraphicsPath handle_path;
+    AddRoundedRectangle(handle_path, handle_rect, 6.0f);
+    Gdiplus::SolidBrush handle_brush(Gdiplus::Color(205, 130, 134, 140));
+    graphics.FillPath(&handle_brush, &handle_path);
+  }
+  RECT bounds{};
+  GetWindowRect(drag_handle_, &bounds);
+  POINT destination{bounds.left, bounds.top};
+  POINT source{0, 0};
+  SIZE size{width, height};
+  BLENDFUNCTION blend{};
+  blend.BlendOp = AC_SRC_OVER;
+  blend.SourceConstantAlpha = 255;
+  blend.AlphaFormat = AC_SRC_ALPHA;
+  UpdateLayeredWindow(drag_handle_, screen_dc, &destination, &size, mem_dc,
+                      &source, 0, &blend, ULW_ALPHA);
+  SelectObject(mem_dc, previous);
+  DeleteObject(dib);
+  DeleteDC(mem_dc);
+  ReleaseDC(nullptr, screen_dc);
+}
+
 void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
                                     int height) {
   if (lines_.empty()) return;
-  const float base = animation_t_ < 1.0f
-      ? Lerp(static_cast<float>(displayed_index_),
-             static_cast<float>(current_index_),
-             EaseInOutCubic(animation_t_))
-      : static_cast<float>(current_index_);
-  const float center_y = height * 0.62f;
-  const float spacing = std::max(42.0f, style_.font_size * 1.85f);
-  const float max_distance = std::ceil(height / spacing / 2.0f) + 1.0f;
-  const float left_padding = 34.0f;
-  const float right_padding = 20.0f;
-
+  const int index = std::clamp(current_index_, 0,
+                               static_cast<int>(lines_.size()) - 1);
+  const float left_padding = 44.0f;
+  const float right_padding = 24.0f;
+  const float text_width = std::max(1.0f, width - left_padding - right_padding);
+  const float center_y = height * 0.43f;
+  const int font_size = style_.font_size + (style_.zoom_active_line ? 4 : 0);
   Gdiplus::FontFamily font_family(style_.font_family.c_str());
-  const Gdiplus::Color text_color(
+  Gdiplus::Font font(&font_family, static_cast<float>(font_size),
+                     Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+  Gdiplus::StringFormat format;
+  format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+  format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+  format.SetAlignment(
+      style_.align == DT_LEFT
+          ? Gdiplus::StringAlignmentNear
+          : style_.align == DT_RIGHT ? Gdiplus::StringAlignmentFar
+                                     : Gdiplus::StringAlignmentCenter);
+  format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+  Gdiplus::RectF current_rect(left_padding, center_y - font_size * 0.75f,
+                              text_width, font_size * 1.5f);
+  const Gdiplus::Color base_color(
       255, GetRValue(style_.text_color), GetGValue(style_.text_color),
       GetBValue(style_.text_color));
+  const Gdiplus::Color accent_color(255, 0, 198, 91);
+  Gdiplus::SolidBrush base_brush(base_color);
+  graphics.DrawString(lines_[index].c_str(), -1, &font, current_rect, &format,
+                      &base_brush);
 
-  for (int index = 0; index < static_cast<int>(lines_.size()); ++index) {
-    const float offset = static_cast<float>(index) - base;
-    const float distance = std::abs(offset);
-    if (distance > max_distance) continue;
-    const float y = center_y + offset * spacing;
-    if (y < -spacing || y > height + spacing) continue;
-    const bool is_center = distance < 0.5f;
-    const bool is_played = index < current_index_;
-    const int font_size = is_center ? style_.font_size + 4 : style_.font_size;
-    const float line_width = width - left_padding - right_padding;
-    const float line_height = spacing;
-    const float edge_fade = std::clamp(
-        std::min(y / (spacing * 1.5f),
-                 (height - y) / (spacing * 1.5f)),
-        0.18f, 1.0f);
-    const BYTE alpha = static_cast<BYTE>(
-        std::clamp((is_center ? 255.0f : (is_played ? 230.0f : 185.0f)) *
-                       edge_fade,
-                   0.0f, 255.0f));
-
-    Gdiplus::Font font(&font_family, static_cast<float>(font_size),
-                       is_center ? Gdiplus::FontStyleBold
-                                 : Gdiplus::FontStyleRegular,
-                       Gdiplus::UnitPixel);
-    const Gdiplus::Color base_color(
-        alpha, text_color.GetRed(), text_color.GetGreen(), text_color.GetBlue());
-    const Gdiplus::Color accent_color(alpha, 0, 198, 91);
-    Gdiplus::SolidBrush base_brush(is_played ? accent_color : base_color);
-    Gdiplus::StringFormat format;
-    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-    format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
-    format.SetAlignment(
-        style_.align == DT_LEFT
-            ? Gdiplus::StringAlignmentNear
-            : style_.align == DT_RIGHT ? Gdiplus::StringAlignmentFar
-                                       : Gdiplus::StringAlignmentCenter);
-    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-
-    Gdiplus::RectF text_rect(left_padding, y - line_height / 2.0f,
-                             line_width, line_height);
-    graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
-                        &base_brush);
-
-    if (is_center && line_progress_ > 0.0f) {
-      const Gdiplus::GraphicsState state = graphics.Save();
-      Gdiplus::RectF measured;
-      graphics.MeasureString(lines_[index].c_str(), -1, &font, text_rect,
-                             &format, &measured);
-      Gdiplus::RectF clip_rect(measured.X, y - line_height / 2.0f,
-                              measured.Width * line_progress_, line_height);
-      graphics.SetClip(clip_rect);
-      Gdiplus::SolidBrush accent_brush(accent_color);
-      graphics.DrawString(lines_[index].c_str(), -1, &font, text_rect, &format,
-                          &accent_brush);
-      graphics.Restore(state);
-    }
+  if (line_progress_ > 0.0f) {
+    const Gdiplus::GraphicsState state = graphics.Save();
+    Gdiplus::RectF measured;
+    graphics.MeasureString(lines_[index].c_str(), -1, &font, current_rect,
+                           &format, &measured);
+    Gdiplus::RectF clip_rect(measured.X, current_rect.Y,
+                            measured.Width * line_progress_, current_rect.Height);
+    graphics.SetClip(clip_rect);
+    Gdiplus::SolidBrush accent_brush(accent_color);
+    graphics.DrawString(lines_[index].c_str(), -1, &font, current_rect, &format,
+                        &accent_brush);
+    graphics.Restore(state);
   }
+
+  Gdiplus::Font translation_font(&font_family, 16.0f,
+                                 Gdiplus::FontStyleRegular,
+                                 Gdiplus::UnitPixel);
+  Gdiplus::RectF secondary_rect(left_padding, center_y + 20.0f, text_width,
+                                28.0f);
+  if (style_.show_translation && !current_translation_.empty()) {
+    Gdiplus::SolidBrush translation_brush(Gdiplus::Color(215, 225, 228, 232));
+    graphics.DrawString(current_translation_.c_str(), -1, &translation_font,
+                        secondary_rect, &format, &translation_brush);
+  } else if (index + 1 < static_cast<int>(lines_.size())) {
+    Gdiplus::SolidBrush next_brush(Gdiplus::Color(155, 225, 228, 232));
+    graphics.DrawString(lines_[index + 1].c_str(), -1, &translation_font,
+                        secondary_rect, &format, &next_brush);
+  }
+}
+
+void LyricsOverlay::DrawToolbar(Gdiplus::Graphics& graphics, int width) {
+  const int toolbar_width = kToolbarButtonCount * kToolbarButtonWidth +
+                            (kToolbarButtonCount - 1) * kToolbarButtonGap;
+  const int left = width - toolbar_width - kToolbarRight;
+  Gdiplus::RectF toolbar_rect(static_cast<float>(left - 6),
+                              static_cast<float>(kToolbarTop - 4),
+                              static_cast<float>(toolbar_width + 12), 40.0f);
+  Gdiplus::GraphicsPath toolbar_path;
+  AddRoundedRectangle(toolbar_path, toolbar_rect, 8.0f);
+  Gdiplus::SolidBrush toolbar_brush(Gdiplus::Color(236, 25, 27, 31));
+  graphics.FillPath(&toolbar_brush, &toolbar_path);
+
+  const wchar_t* labels[kToolbarButtonCount] = {
+      L"字号-", L"字号+", L"背景-", L"背景+", L"放大", L"译文", L"置顶",
+      L"锁定", L"关闭"};
+  const bool active[kToolbarButtonCount] = {
+      false, false, false, false, style_.zoom_active_line,
+      style_.show_translation, style_.always_on_top, style_.locked, false};
+  Gdiplus::FontFamily family(L"Microsoft YaHei");
+  Gdiplus::Font font(&family, 12.0f, Gdiplus::FontStyleBold,
+                     Gdiplus::UnitPixel);
+  Gdiplus::StringFormat format;
+  format.SetAlignment(Gdiplus::StringAlignmentCenter);
+  format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+  for (int index = 0; index < kToolbarButtonCount; ++index) {
+    const float x = static_cast<float>(left +
+        index * (kToolbarButtonWidth + kToolbarButtonGap));
+    Gdiplus::RectF button_rect(x, static_cast<float>(kToolbarTop),
+                               static_cast<float>(kToolbarButtonWidth), 30.0f);
+    Gdiplus::GraphicsPath button_path;
+    AddRoundedRectangle(button_path, button_rect, 6.0f);
+    Gdiplus::SolidBrush button_brush(active[index]
+        ? Gdiplus::Color(255, 48, 107, 83)
+        : Gdiplus::Color(210, 53, 57, 62));
+    graphics.FillPath(&button_brush, &button_path);
+    Gdiplus::SolidBrush label_brush(Gdiplus::Color(255, 245, 246, 247));
+    graphics.DrawString(labels[index], -1, &font, button_rect, &format,
+                        &label_brush);
+  }
+}
+
+int LyricsOverlay::ToolbarButtonAt(POINT point, int width) const {
+  if (!toolbar_visible_ || style_.locked || point.y < kToolbarTop - 4 ||
+      point.y > kToolbarTop + 34) {
+    return -1;
+  }
+  const int toolbar_width = kToolbarButtonCount * kToolbarButtonWidth +
+                            (kToolbarButtonCount - 1) * kToolbarButtonGap;
+  const int left = width - toolbar_width - kToolbarRight;
+  const int offset = point.x - left;
+  if (offset < 0) return -1;
+  const int stride = kToolbarButtonWidth + kToolbarButtonGap;
+  const int index = offset / stride;
+  if (index >= kToolbarButtonCount || offset % stride >= kToolbarButtonWidth) {
+    return -1;
+  }
+  return index;
 }

@@ -9,6 +9,8 @@ import 'package:window_manager/window_manager.dart';
 abstract interface class WindowLifecycleService {
   bool get closeToTray;
   Future<void> setCloseToTray(bool value);
+  Future<void> toggleWindow();
+  void setLyricsActionHandler(Future<void> Function(String action)? handler);
 }
 
 class DesktopWindowService
@@ -16,10 +18,16 @@ class DesktopWindowService
     implements WindowLifecycleService {
   static const _showWindowKey = 'show-window';
   static const _exitKey = 'exit';
+  static const _lyricsToggleKey = 'lyrics-toggle';
+  static const _lyricsLockKey = 'lyrics-lock';
+  static const _lyricsFontDownKey = 'lyrics-font-down';
+  static const _lyricsFontUpKey = 'lyrics-font-up';
+  static const _lyricsResetKey = 'lyrics-reset';
   static const _trayIcon = 'windows/runner/resources/app_icon.ico';
 
   bool _closeToTray = true;
   bool _exiting = false;
+  Future<void> Function(String action)? _lyricsActionHandler;
   File? _settingsFile;
 
   @override
@@ -39,6 +47,12 @@ class DesktopWindowService
         items: [
           MenuItem(key: _showWindowKey, label: '显示 WCMusic'),
           MenuItem.separator(),
+          MenuItem(key: _lyricsToggleKey, label: '显示 / 隐藏桌面歌词'),
+          MenuItem(key: _lyricsLockKey, label: '锁定 / 解锁歌词窗口'),
+          MenuItem(key: _lyricsFontDownKey, label: '缩小歌词字号'),
+          MenuItem(key: _lyricsFontUpKey, label: '放大歌词字号'),
+          MenuItem(key: _lyricsResetKey, label: '重置歌词窗口位置'),
+          MenuItem.separator(),
           MenuItem(key: _exitKey, label: '退出'),
         ],
       ),
@@ -50,6 +64,21 @@ class DesktopWindowService
     _closeToTray = value;
     if (Platform.isWindows) await windowManager.setPreventClose(value);
     await _saveSettings();
+  }
+
+  @override
+  void setLyricsActionHandler(Future<void> Function(String action)? handler) {
+    _lyricsActionHandler = handler;
+  }
+
+  @override
+  Future<void> toggleWindow() async {
+    if (!Platform.isWindows) return;
+    if (await windowManager.isVisible()) {
+      await windowManager.hide();
+      return;
+    }
+    await _showWindow();
   }
 
   @override
@@ -68,6 +97,21 @@ class DesktopWindowService
     switch (menuItem.key) {
       case _showWindowKey:
         unawaited(_showWindow());
+        return;
+      case _lyricsToggleKey:
+        unawaited(_lyricsActionHandler?.call('toggle'));
+        return;
+      case _lyricsLockKey:
+        unawaited(_lyricsActionHandler?.call('lock'));
+        return;
+      case _lyricsFontDownKey:
+        unawaited(_lyricsActionHandler?.call('fontDown'));
+        return;
+      case _lyricsFontUpKey:
+        unawaited(_lyricsActionHandler?.call('fontUp'));
+        return;
+      case _lyricsResetKey:
+        unawaited(_lyricsActionHandler?.call('reset'));
         return;
       case _exitKey:
         unawaited(_exitApplication());

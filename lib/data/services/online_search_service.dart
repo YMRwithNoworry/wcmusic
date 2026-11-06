@@ -7,6 +7,10 @@ import '../../domain/models/track.dart';
 
 enum OnlineSearchChannel { kuwo, kugou, qqMusic, netease }
 
+abstract interface class ClosableOnlineSearchService {
+  void close();
+}
+
 extension OnlineSearchChannelLabel on OnlineSearchChannel {
   String get label => switch (this) {
     OnlineSearchChannel.kuwo => '酷我音乐',
@@ -45,7 +49,8 @@ abstract interface class OnlineSearchService {
   Future<Track?> matchTrackToSources(Track track, Set<String> sourceKeys);
 }
 
-class MultiSourceOnlineSearchService implements OnlineSearchService {
+class MultiSourceOnlineSearchService
+    implements OnlineSearchService, ClosableOnlineSearchService {
   MultiSourceOnlineSearchService({
     HttpClient Function()? clientFactory,
     String Function(Uri)? proxyResolver,
@@ -133,6 +138,15 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
   final Uri _kugouRankingTracksEndpoint;
   final Uri _kuwoRankingTracksEndpoint;
   final Uri _kuwoSongInfoEndpoint;
+  final Map<String, HttpClient> _clientsByProxy = {};
+
+  @override
+  void close() {
+    for (final client in _clientsByProxy.values) {
+      client.close(force: true);
+    }
+    _clientsByProxy.clear();
+  }
 
   // 判断是否应该绕过代理（国内音乐服务）
   static bool _shouldBypassProxy(Uri uri) {
@@ -864,11 +878,13 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
     String proxy, {
     required bool relaxed,
   }) async {
-    final client = _clientFactory()
-      ..connectionTimeout = const Duration(seconds: 10)
-      ..findProxy = (_) => proxy;
-    try {
-      final request = await client.getUrl(uri);
+    final client = _clientsByProxy.putIfAbsent(proxy, () {
+      final created = _clientFactory()
+        ..connectionTimeout = const Duration(seconds: 10)
+        ..findProxy = (_) => proxy;
+      return created;
+    });
+    final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'WCMusic/1.0');
       request.headers.set(HttpHeaders.refererHeader, _refererFor(uri));
@@ -882,9 +898,6 @@ class MultiSourceOnlineSearchService implements OnlineSearchService {
       final body = await utf8.decoder.bind(response).join();
       final normalized = body.replaceFirst('\ufeff', '');
       return relaxed ? json5Decode(normalized) : jsonDecode(normalized);
-    } finally {
-      client.close(force: true);
-    }
   }
 
   String _refererFor(Uri uri) {

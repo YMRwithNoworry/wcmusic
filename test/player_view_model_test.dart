@@ -136,6 +136,36 @@ void main() {
     expect(overlay.currentIndex, 1);
   });
 
+  test('tray lyric actions update lock, size, and saved window bounds', () async {
+    final overlay = _FakeFloatingLyricsService();
+    final lifecycle = FakeWindowLifecycleService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      floatingLyricsService: overlay,
+      windowLifecycleService: lifecycle,
+      playerService: FakePlayerService(),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+    await Future<void>.delayed(Duration.zero);
+
+    final dispatch = lifecycle.lyricsActionHandler!;
+    await dispatch('fontUp');
+    expect(overlay.savedStyle?.fontSize, 26);
+    await dispatch('lock');
+    expect(overlay.savedStyle?.locked, isTrue);
+    await viewModel.updateLyricsStyle(
+      viewModel.lyricsStyle.copyWith(positionX: 120, positionY: 240),
+    );
+    await dispatch('reset');
+    expect(overlay.savedStyle?.positionX, isNull);
+    expect(overlay.savedStyle?.positionY, isNull);
+    expect(overlay.savedStyle?.windowWidth, 1000);
+    expect(overlay.savedStyle?.windowHeight, 140);
+  });
+
   test('migrates the legacy desktop lyrics defaults', () {
     final style = LyricsOverlayStyle.fromJson(const {
       'fontFamily': 'Microsoft YaHei UI',
@@ -148,14 +178,29 @@ void main() {
       'locked': true,
     });
 
-    expect(style.alignment, 'right');
+    expect(style.fontFamily, 'Microsoft YaHei');
+    expect(style.alignment, 'center');
     expect(style.fontSize, 24);
     expect(style.backgroundColor, 0xFF141416);
     expect(style.opacity, 0.92);
-    expect(style.cornerRadius, 0);
+    expect(style.cornerRadius, 8);
     expect(style.positionX, isNull);
     expect(style.positionY, isNull);
-    expect(style.toJson()['layoutVersion'], 2);
+    expect(style.toJson()['layoutVersion'], 3);
+  });
+
+  test('preserves a selected lyrics font while migrating only old defaults', () {
+    final selected = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 2,
+      'fontFamily': 'SimHei',
+    });
+    final legacy = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 2,
+      'fontFamily': 'Microsoft YaHei UI',
+    });
+
+    expect(selected.fontFamily, 'SimHei');
+    expect(legacy.fontFamily, 'Microsoft YaHei');
   });
 
   test('prefers a full track url resolved by an imported source', () async {
@@ -578,7 +623,45 @@ void main() {
     expect(viewModel.message, contains('无损 flac 已下载到'));
   });
 
-  test('downloads network tracks to cache before playing', () async {
+  test(
+    'reuses the current playback URL for a same-quality download',
+    () async {
+      const track = Track(
+        id: 'reuse-current-url',
+        title: '当前歌曲',
+        artist: '测试歌手',
+        album: '测试专辑',
+        duration: Duration(minutes: 3),
+        uri: 'https://audio.example/preview.m4a',
+        source: TrackSource.wy,
+        sourceId: 'reuse-42',
+      );
+      final sourceRepository = _FullTrackSourceRepository();
+      final downloader = _FakeTrackDownloadService();
+      final viewModel = PlayerViewModel(
+        musicRepository: MemoryMusicRepository(initialTracks: const [track]),
+        sourceRepository: sourceRepository,
+        onlineSearchService: FakeOnlineSearchService(),
+        playerService: FakePlayerService(),
+        downloadService: downloader,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.load();
+
+      await viewModel.playTrack(track);
+      expect(sourceRepository.resolveCalls, 1);
+
+      await viewModel.downloadTrack(track);
+
+      expect(sourceRepository.resolveCalls, 1);
+      expect(
+        downloader.downloadedTrack?.uri,
+        'https://audio.example/full.flac',
+      );
+    },
+  );
+
+  test('streams network tracks without waiting for a full cache download', () async {
     const track = Track(
       id: 'network-play',
       title: '网络歌曲',
@@ -601,9 +684,9 @@ void main() {
 
     await viewModel.playTrack(track);
 
-    expect(downloader.downloadedTrack?.id, 'network-play');
-    expect(player.playedTrack?.uri, downloader.cachedPath);
-    expect(viewModel.current?.uri, downloader.cachedPath);
+    expect(downloader.downloadedTrack, isNull);
+    expect(player.playedTrack?.uri, track.uri);
+    expect(viewModel.current?.uri, track.uri);
   });
 
   test('updates and persists the desktop lyrics style', () async {
@@ -821,13 +904,19 @@ class _FakeLyricService implements LyricService {
 }
 
 class _FakeFloatingLyricsService implements FloatingLyricsService {
+  final StreamController<String> _events = StreamController<String>.broadcast();
   String currentLine = '';
   String nextLine = '';
+  String? currentTranslation;
+  String? nextTranslation;
   List<String> lines = const [];
   int currentIndex = -1;
   double lineProgress = 0;
   LyricsOverlayStyle? style;
   LyricsOverlayStyle? savedStyle;
+
+  @override
+  Stream<String> get events => _events.stream;
 
   @override
   bool get isSupported => true;
@@ -840,12 +929,16 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
     required String title,
     required String currentLine,
     required String nextLine,
+    String? currentTranslation,
+    String? nextTranslation,
     List<String> lines = const [],
     int currentIndex = -1,
     double lineProgress = 0,
   }) async {
     this.currentLine = currentLine;
     this.nextLine = nextLine;
+    this.currentTranslation = currentTranslation;
+    this.nextTranslation = nextTranslation;
     this.lines = lines;
     this.currentIndex = currentIndex;
     this.lineProgress = lineProgress;
@@ -867,7 +960,9 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    await _events.close();
+  }
 }
 
 class _FullTrackSourceRepository implements SourceRepository {
@@ -877,6 +972,7 @@ class _FullTrackSourceRepository implements SourceRepository {
   Track? resolvedTrack;
   String? selectedId;
   String? resolvedQuality;
+  int resolveCalls = 0;
 
   @override
   Future<List<SourceScript>> loadSources() async => [
@@ -906,6 +1002,7 @@ class _FullTrackSourceRepository implements SourceRepository {
     bool background = false,
   }) async {
     resolvedTrack = track;
+    resolveCalls++;
     resolvedQuality = quality;
     return 'https://audio.example/full.flac';
   }
