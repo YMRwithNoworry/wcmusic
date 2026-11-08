@@ -114,17 +114,28 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   }
 
   Future<void> _handleNativeCall(MethodCall call) async {
-    if (call.method != 'positionChanged') return;
-    final arguments = call.arguments;
-    if (arguments is! Map) return;
-    final x = (arguments['x'] as num?)?.toDouble();
-    final y = (arguments['y'] as num?)?.toDouble();
-    if (x == null || y == null) return;
-    final current = await loadStyle();
-    _style = current.copyWith(positionX: x, positionY: y);
-    await saveStyle(_style!);
+    if (call.method == 'positionChanged') {
+      final arguments = call.arguments;
+      if (arguments is! Map) return;
+      final x = (arguments['x'] as num?)?.toDouble();
+      final y = (arguments['y'] as num?)?.toDouble();
+      if (x == null || y == null) return;
+      final current = await loadStyle();
+      _style = current.copyWith(positionX: x, positionY: y);
+      await saveStyle(_style!);
+      return;
+    }
+    if (call.method == 'lockChanged') {
+      final arguments = call.arguments;
+      if (arguments is! Map) return;
+      final locked = arguments['locked'] as bool?;
+      if (locked == null) return;
+      final current = await loadStyle();
+      _style = current.copyWith(locked: locked);
+      await saveStyle(_style!);
+      return;
+    }
   }
-
   Future<File> _settingsFileFor() async {
     if (_settingsFile != null) return _settingsFile!;
     final directory = await _directoryProvider();

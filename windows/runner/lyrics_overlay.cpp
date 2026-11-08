@@ -151,6 +151,10 @@ void LyricsOverlay::SetPositionCallback(PositionCallback callback) {
   position_callback_ = std::move(callback);
 }
 
+void LyricsOverlay::SetLockCallback(LockCallback callback) {
+  lock_callback_ = std::move(callback);
+}
+
 void LyricsOverlay::Destroy() {
   if (!window_) return;
   DestroyWindow(window_);
@@ -188,6 +192,30 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
     case WM_PAINT:
       if (overlay) overlay->Paint();
       return 0;
+    case WM_RBUTTONUP: {
+      if (!overlay) return 0;
+      POINT cursor{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      ClientToScreen(window, &cursor);
+      HMENU menu = CreatePopupMenu();
+      AppendMenu(menu, MF_STRING, 1, overlay->style_.locked ? L"解锁并移动歌词" : L"锁定歌词");
+      AppendMenu(menu, MF_STRING, 2, L"重置位置");
+      const int choice = TrackPopupMenu(
+          menu, TPM_RETURNCMD | TPM_NONOTIFY, cursor.x, cursor.y, 0, window,
+          nullptr);
+      DestroyMenu(menu);
+      if (choice == 1) {
+        overlay->style_.locked = !overlay->style_.locked;
+        overlay->ApplyWindowAttributes();
+        if (overlay->lock_callback_) {
+          overlay->lock_callback_(overlay->style_.locked);
+        }
+        InvalidateRect(window, nullptr, TRUE);
+      } else if (choice == 2) {
+        overlay->style_.has_position = false;
+        overlay->ApplyStyle(overlay->style_);
+      }
+      return 0;
+    }
     case WM_NCHITTEST: {
       if (!overlay) return HTTRANSPARENT;
       POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
@@ -218,7 +246,6 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
     case WM_DESTROY:
       return 0;
   }
-  return DefWindowProc(window, message, wparam, lparam);
 }
 
 void LyricsOverlay::Paint() {

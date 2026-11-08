@@ -180,6 +180,14 @@ bool FlutterWindow::OnCreate() {
         "positionChanged",
         std::make_unique<flutter::EncodableValue>(std::move(map)));
   });
+  lyrics_overlay_->SetLockCallback([this](bool locked) {
+    if (!lyrics_channel_) return;
+    flutter::EncodableMap map;
+    map[flutter::EncodableValue("locked")] = flutter::EncodableValue(locked);
+    lyrics_channel_->InvokeMethod(
+        "lockChanged",
+        std::make_unique<flutter::EncodableValue>(std::move(map)));
+  });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

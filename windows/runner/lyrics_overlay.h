@@ -24,7 +24,7 @@ struct LyricsOverlayStyle {
 
 class LyricsOverlay {
  public:
-  using PositionCallback = std::function<void(int x, int y)>;
+  using LockCallback = std::function<void(bool locked)>;
 
   LyricsOverlay();
   ~LyricsOverlay();
@@ -35,7 +35,7 @@ class LyricsOverlay {
   void Update(const std::vector<std::wstring>& lines, int current_index,
               float line_progress);
   void ApplyStyle(const LyricsOverlayStyle& style);
-  void SetPositionCallback(PositionCallback callback);
+  void SetLockCallback(LockCallback callback);
   void Destroy();
 
  private:
@@ -53,7 +53,7 @@ class LyricsOverlay {
   float animation_t_ = 1.0f;
   float line_progress_ = 0.0f;
   LyricsOverlayStyle style_;
-  PositionCallback position_callback_;
+  LockCallback lock_callback_;
 };
 
 #endif  // RUNNER_LYRICS_OVERLAY_H_
