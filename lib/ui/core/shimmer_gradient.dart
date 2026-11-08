@@ -18,7 +18,7 @@ class ShimmerGradient extends StatefulWidget {
 
 class _ShimmerGradientState extends State<ShimmerGradient>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+  bool? _disableAnimations;
 
   @override
   void initState() {
@@ -27,18 +27,29 @@ class _ShimmerGradientState extends State<ShimmerGradient>
       vsync: this,
       duration: const Duration(milliseconds: 2800),
     );
-    if (widget.enabled) _controller.repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final disableAnimations = MediaQuery.of(context).disableAnimations;
+    if (_disableAnimations != disableAnimations) {
+      _disableAnimations = disableAnimations;
+      _syncAnimation();
+    }
   }
 
   @override
   void didUpdateWidget(ShimmerGradient oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.enabled != oldWidget.enabled) {
-      if (widget.enabled) {
-        _controller.repeat();
-      } else {
-        _controller.stop();
-      }
+    if (widget.enabled != oldWidget.enabled) _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (widget.enabled && _disableAnimations != true) {
+      _controller.repeat();
+    } else {
+      _controller.stop();
     }
   }
 
