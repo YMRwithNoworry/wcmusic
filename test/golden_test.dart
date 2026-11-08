@@ -20,7 +20,7 @@ void main() {
     Size size,
     String golden, {
     Future<void> Function(WidgetTester tester)? beforeCapture,
-    bool disableAnimations = false,
+    bool disableAnimations = true,
   }) async {
     if (!fontLoaded) {
       final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
@@ -117,7 +117,6 @@ void main() {
         tester,
         const Size(1440, 900),
         'goldens/now_playing_desktop.png',
-        disableAnimations: true,
         beforeCapture: (tester) async {
           final context = tester.element(find.byType(MaterialApp));
           final viewModel = context.read<PlayerViewModel>();
