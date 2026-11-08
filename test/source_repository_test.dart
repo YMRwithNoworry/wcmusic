@@ -197,8 +197,8 @@ void main() {
     );
 
     final source = (await repository.loadSources()).single;
-
-    expect(script, contains('@version 1.2.0'));
+    expect(script, contains('@version 0.0.0'));
+    expect(source.version, '0.0.0');
     expect(source.id, 'wcmusic-built-in-屿溪-终章');
     expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);
