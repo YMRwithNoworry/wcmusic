@@ -96,7 +96,7 @@ flutter build apk --release --target-platform android-arm64
 
 Windows 桌面端发布可执行文件为 `desktop/src-tauri/target/release/wcmusic-desktop.exe`，使用 `nu build_desktop.nu` 构建。
 
-自动发布由 [Release 工作流](.github/workflows/release.yml) 完成：普通分支推送 → 递增版本并锁定源码提交 → Windows / Android 构建 → GitHub Release → 同步官网版本、下载链接与日志 → 部署 https://wcmusic.pages.dev/。机器人写回的提交带 `[skip ci]`，避免重复构建。Android 构建失败时仍发布 Windows，官网保留上一个实际可下载的 APK。
+自动发布由 [Release 工作流](.github/workflows/release.yml) 完成：普通分支推送 → 递增版本并锁定源码提交 → Windows / Android 构建 → GitHub Release → 同步官网版本、下载链接与日志 → 部署 https://wcmusic.pages.dev/。机器人写回的提交带 `[skip ci]`，避免重复构建。发布任务要求 Windows 和 Android 均构建成功；任一失败都不会发布，也不会回退到旧 APK。
 
 仓库 Settings → Secrets and variables → Actions 需要以下配置：
 

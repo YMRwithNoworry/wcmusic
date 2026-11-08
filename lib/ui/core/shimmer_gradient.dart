@@ -18,6 +18,8 @@ class ShimmerGradient extends StatefulWidget {
 
 class _ShimmerGradientState extends State<ShimmerGradient>
     with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
   bool? _disableAnimations;
 
   @override
