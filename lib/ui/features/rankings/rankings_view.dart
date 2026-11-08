@@ -35,9 +35,6 @@ class _RankingsViewState extends State<RankingsView> {
     final viewModel = context.watch<PlayerViewModel>();
     return PageScaffold(
       title: '排行榜',
-      subtitle: viewModel.selectedRanking == null
-          ? '查看各音乐平台的实时榜单'
-          : '${viewModel.rankingChannel.label} · ${viewModel.selectedRanking!.name}',
       actions: [
         IconButton.filledTonal(
           onPressed: viewModel.isLoadingRankings

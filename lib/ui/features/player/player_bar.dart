@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/breathing_widget.dart';
 import '../../core/organic_artwork.dart';
+import '../../core/shimmer_gradient.dart';
 import 'playback_mode_button.dart';
 import 'playback_controls.dart';
 import 'player_view_model.dart';
@@ -18,16 +19,18 @@ class PlayerBar extends StatelessWidget {
     final track = viewModel.current;
     if (track == null) return const SizedBox.shrink();
     final compact = MediaQuery.sizeOf(context).width < 560;
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      child: InkWell(
-        onTap: onOpen,
-        child: SafeArea(
-          top: false,
-          bottom: false,
-          child: SizedBox(
-            height: compact ? 132 : 148,
-            child: Column(
+    return ShimmerGradient(
+      enabled: viewModel.isPlaying,
+      child: Material(
+        color: Theme.of(context).colorScheme.surface,
+        child: InkWell(
+          onTap: onOpen,
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: SizedBox(
+              height: compact ? 132 : 148,
+              child: Column(
               children: [
                 Expanded(
                   child: Row(

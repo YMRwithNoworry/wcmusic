@@ -15,7 +15,6 @@ class LibraryView extends StatelessWidget {
     final viewModel = context.watch<PlayerViewModel>();
     return PageScaffold(
       title: '曲库',
-      subtitle: '${viewModel.tracks.length} 首声音，安静地留在这里',
       actions: [
         IconButton.filledTonal(
           onPressed: () => _createFolder(context),
@@ -28,25 +27,39 @@ class LibraryView extends StatelessWidget {
           tooltip: '添加本地音乐',
         ),
       ],
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
-            onChanged: viewModel.setQuery,
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: '搜索歌曲、艺术家或专辑',
+          if (viewModel.folders.isNotEmpty)
+            SizedBox(
+              width: 220,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _FolderList(viewModel: viewModel),
+                ],
+              ),
+            ),
+          if (viewModel.folders.isNotEmpty) const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              children: [
+                TextField(
+                  onChanged: viewModel.setQuery,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: '搜索歌曲、艺术家或专辑',
+                  ),
+                ),
+                const SizedBox(height: 18),
+                if (viewModel.visibleTracks.isEmpty)
+                  const _EmptyLibrary()
+                else
+                  for (final track in viewModel.visibleTracks)
+                    _TrackRow(track: track),
+              ],
             ),
           ),
-          if (viewModel.folders.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _FolderBar(viewModel: viewModel),
-          ],
-          const SizedBox(height: 18),
-          if (viewModel.visibleTracks.isEmpty)
-            const _EmptyLibrary()
-          else
-            for (final track in viewModel.visibleTracks)
-              _TrackRow(track: track),
         ],
       ),
     );
@@ -106,34 +119,57 @@ class LibraryView extends StatelessWidget {
   }
 }
 
-class _FolderBar extends StatelessWidget {
-  const _FolderBar({required this.viewModel});
+class _FolderList extends StatelessWidget {
+  const _FolderList({required this.viewModel});
 
   final PlayerViewModel viewModel;
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          ChoiceChip(
-            label: const Text('全部歌曲'),
-            selected: viewModel.selectedFolderId == null,
-            onSelected: (_) => viewModel.selectFolder(null),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          selected: viewModel.selectedFolderId == null,
+          onTap: () => viewModel.selectFolder(null),
+          leading: const Icon(Icons.music_note),
+          title: const Text('全部歌曲'),
+          trailing: Text(
+            '${viewModel.tracks.length}',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          for (final folder in viewModel.folders) ...[
-            const SizedBox(width: 8),
-            InputChip(
-              label: Text('${folder.name} (${folder.trackIds.length})'),
-              selected: viewModel.selectedFolderId == folder.id,
-              onSelected: (_) => viewModel.selectFolder(folder.id),
-              onDeleted: () => _confirmDelete(context, folder.id),
-              deleteButtonTooltipMessage: '删除文件夹',
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        const Divider(height: 16),
+        for (final folder in viewModel.folders)
+          ListTile(
+            selected: viewModel.selectedFolderId == folder.id,
+            onTap: () => viewModel.selectFolder(folder.id),
+            leading: const Icon(Icons.folder_outlined),
+            title: Text(
+              folder.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ],
-      ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${folder.trackIds.length}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  onPressed: () => _confirmDelete(context, folder.id),
+                  tooltip: '删除文件夹',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+      ],
     );
   }
 

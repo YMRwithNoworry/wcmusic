@@ -22,62 +22,86 @@ Future<void> showTrackFavoriteMenu(
   final supportsQualitySelection =
       track.source != TrackSource.local &&
       (track.sourceId?.isNotEmpty ?? false);
+  final box = context.findRenderObject() as RenderBox?;
+  if (box == null) return;
+  final overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+  final position = box.localToGlobal(
+    Offset.zero,
+    ancestor: overlay,
+  );
   final action = await showMenu<String>(
     context: context,
-    position: _menuPosition(context),
+    position: RelativeRect.fromLTRB(
+      position.dx,
+      position.dy,
+      overlay.size.width - position.dx,
+      overlay.size.height - position.dy,
+    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    elevation: 8,
     items: [
       if (supportsQualitySelection)
         for (final quality in PlaybackQuality.values)
           PopupMenuItem(
             value: '__download_${quality.name}',
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.download_outlined),
-                const SizedBox(width: 12),
-                Text('下载 · ${quality.label}'),
+                const Icon(Icons.download_outlined, size: 20),
+                const SizedBox(width: 10),
+                Text('下载 · ${quality.label}', style: const TextStyle(fontSize: 14)),
               ],
             ),
           )
       else
         const PopupMenuItem(
           value: '__download_original__',
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.download_outlined),
-              SizedBox(width: 12),
-              Text('下载 · 原始音质'),
+              Icon(Icons.download_outlined, size: 20),
+              SizedBox(width: 10),
+              Text('下载 · 原始音质', style: TextStyle(fontSize: 14)),
             ],
           ),
         ),
-      const PopupMenuDivider(),
+      const PopupMenuDivider(height: 1),
       if (removableFolder?.trackIds.contains(track.id) ?? false)
         const PopupMenuItem(
           value: '__remove__',
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.folder_off_outlined),
-              SizedBox(width: 12),
-              Text('移出当前文件夹'),
+              Icon(Icons.folder_off_outlined, size: 20),
+              SizedBox(width: 10),
+              Text('移出当前文件夹', style: TextStyle(fontSize: 14)),
             ],
           ),
         ),
       for (final folder in viewModel.folders)
         PopupMenuItem(
           value: folder.id,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 folder.trackIds.contains(track.id)
                     ? Icons.check_circle_outline
                     : Icons.folder_outlined,
+                size: 20,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Flexible(
                 child: Text(
                   folder.trackIds.contains(track.id)
                       ? '${folder.name}（已收藏）'
                       : '收藏到 ${folder.name}',
                   overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14),
                 ),
               ),
             ],
@@ -85,11 +109,13 @@ Future<void> showTrackFavoriteMenu(
         ),
       const PopupMenuItem(
         value: '__new__',
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.create_new_folder_outlined),
-            SizedBox(width: 12),
-            Text('新建文件夹并收藏'),
+            Icon(Icons.create_new_folder_outlined, size: 20),
+            SizedBox(width: 10),
+            Text('新建文件夹并收藏', style: TextStyle(fontSize: 14)),
           ],
         ),
       ),
@@ -149,15 +175,3 @@ Future<String?> _promptFolderName(BuildContext context) async {
   return name == null || name.isEmpty ? null : name;
 }
 
-RelativeRect _menuPosition(BuildContext context) {
-  final box = context.findRenderObject() as RenderBox?;
-  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
-  if (box == null || overlay == null || !box.hasSize) return RelativeRect.fill;
-  return RelativeRect.fromRect(
-    Rect.fromPoints(
-      box.localToGlobal(Offset.zero),
-      box.localToGlobal(box.size.bottomRight(Offset.zero)),
-    ),
-    Offset.zero & overlay.size,
-  );
-}

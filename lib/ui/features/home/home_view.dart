@@ -24,7 +24,7 @@ class HomeView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _TopLine(trackCount: viewModel.tracks.length),
+              const _TopLine(),
               const SizedBox(height: 28),
               if (featured != null) _Featured(trackId: featured.id),
               const SizedBox(height: 44),
@@ -421,24 +421,14 @@ class _PlatformPlaylistTile extends StatelessWidget {
 }
 
 class _TopLine extends StatelessWidget {
-  const _TopLine({required this.trackCount});
-
-  final int trackCount;
+  const _TopLine();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            '让声音自然生长',
-            style: Theme.of(context).textTheme.displayLarge,
-            maxLines: 2,
-          ),
-        ),
-        const SizedBox(width: 18),
-        Text('$trackCount 首', style: Theme.of(context).textTheme.bodyLarge),
-      ],
+    return Text(
+      '让声音自然生长',
+      style: Theme.of(context).textTheme.displayLarge,
+      maxLines: 2,
     );
   }
 }
