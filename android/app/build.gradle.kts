@@ -7,7 +7,7 @@ plugins {
 android {
     namespace = "com.wcmusic.app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "28.2.13012046"
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

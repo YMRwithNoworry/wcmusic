@@ -136,9 +136,9 @@ jobs:
           workspaces: native/wcmusic_core
       - name: 安装 Android NDK 与 cargo-ndk
         run: |
-          sdkmanager "ndk;28.2.13012046"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13012046" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13012046" >> "$GITHUB_ENV"
+          sdkmanager "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           cargo install cargo-ndk --locked
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: flutter pub get
