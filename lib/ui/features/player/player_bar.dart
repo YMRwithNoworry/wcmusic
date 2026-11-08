@@ -125,6 +125,7 @@ class PlayerBar extends StatelessWidget {
           ),
         ),
       ),
+      ),
     );
   }
 }

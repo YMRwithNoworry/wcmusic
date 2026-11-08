@@ -54,10 +54,10 @@ class _ShimmerGradientState extends State<ShimmerGradient>
     
     final colors = widget.colors ??
         [
-          Theme.of(context).colorScheme.surface.withOpacity(0.3),
-          Theme.of(context).colorScheme.primary.withOpacity(0.15),
-          Theme.of(context).colorScheme.tertiary.withOpacity(0.12),
-          Theme.of(context).colorScheme.surface.withOpacity(0.3),
+          Theme.of(context).colorScheme.surface.withValues(alpha: 0.3),
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+          Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.12),
+          Theme.of(context).colorScheme.surface.withValues(alpha: 0.3),
         ];
 
     return AnimatedBuilder(

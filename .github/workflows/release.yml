@@ -151,17 +151,18 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: flutter pub get
       - name: 构建 Flutter Android arm64 APK
-        run: |
-          if ! flutter build apk --release --target-platform android-arm64 2>&1 | tee "$RUNNER_TEMP/android-build.log"; then
-            while IFS= read -r line; do
-              echo "::error title=Android build::$line"
-            done < <(tail -n 30 "$RUNNER_TEMP/android-build.log")
-            exit 1
-          fi
+        run: flutter build apk --release --target-platform android-arm64
       - name: 收集 APK
         run: |
+          mapfile -t apks < <(find build/app/outputs -type f -name '*.apk' -print)
+          if (( ${#apks[@]} != 1 )); then
+            printf 'Expected exactly one APK from the arm64 release build; found %s\n' "${#apks[@]}"
+            printf '%s\n' "${apks[@]}"
+            exit 1
+          fi
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/wcmusic-android-arm64.apk
+          cp "${apks[0]}" dist/wcmusic-android-arm64.apk
+          test -s dist/wcmusic-android-arm64.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android
