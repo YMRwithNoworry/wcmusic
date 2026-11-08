@@ -869,6 +869,7 @@ class PlayerViewModel extends ChangeNotifier {
     try {
       await floatingLyricsService.setStyle(style);
       await floatingLyricsService.saveStyle(style);
+      _syncLyrics(position);
     } on Object catch (error) {
       message = '更新歌词样式失败：$error';
       notifyListeners();
@@ -928,17 +929,27 @@ class PlayerViewModel extends ChangeNotifier {
     currentLyricIndex = nextIndex;
     final track = current;
     if (track == null) return;
-    final currentLine = nextIndex < 0 ? track.title : lyrics[nextIndex].text;
+    String displayText(LyricLine line) {
+      final translation = line.translation?.trim();
+      return lyricsStyle.showTranslation &&
+              translation != null &&
+              translation.isNotEmpty
+          ? translation
+          : line.text;
+    }
+    final currentLine = nextIndex < 0
+        ? track.title
+        : displayText(lyrics[nextIndex]);
     final followingIndex = nextIndex + 1;
-    final nextLine = followingIndex >= 0 && followingIndex < lyrics.length
-        ? lyrics[followingIndex].text
+    final nextLine = followingIndex < lyrics.length
+        ? displayText(lyrics[followingIndex])
         : '';
     const radius = 5;
     final windowStart = (nextIndex - radius).clamp(0, lyrics.length - 1);
     final windowEnd = (nextIndex + radius + 1).clamp(0, lyrics.length);
     final windowLines = [
       for (var index = windowStart; index < windowEnd; index++)
-        lyrics[index].text,
+        displayText(lyrics[index]),
     ];
     final lineStart = nextIndex >= 0 ? lyrics[nextIndex].time : Duration.zero;
     final lineEnd = followingIndex < lyrics.length

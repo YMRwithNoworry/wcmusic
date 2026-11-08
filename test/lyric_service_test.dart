@@ -19,7 +19,7 @@ void main() {
     expect(lines.last.time, const Duration(milliseconds: 5500));
   });
 
-  test('loads lyrics from Kuwo, Kugou, QQ and Netease formats', () async {
+  test('loads lyrics and platform translations for supported sources', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
@@ -30,7 +30,11 @@ void main() {
             jsonEncode({
               'data': {
                 'lrclist': [
-                  {'time': '1.25', 'lineLyric': '酷我歌词'},
+                  {
+                    'time': '1.25',
+                    'lineLyric': '酷我歌词',
+                    'translateLyric': 'Kuwo translation',
+                  },
                 ],
               },
             }),
@@ -47,14 +51,23 @@ void main() {
           request.response.write(
             jsonEncode({
               'content': base64Encode(utf8.encode('[00:02.00]酷狗歌词')),
+              'trans_content': base64Encode(
+                utf8.encode('[00:02.00]Kugou translation'),
+              ),
             }),
           );
         case '/qq':
-          request.response.write(jsonEncode({'lyric': '[00:03.00]QQ 歌词'}));
+          request.response.write(
+            jsonEncode({
+              'lyric': '[00:03.00]QQ 歌词',
+              'trans': '[00:03.00]QQ translation',
+            }),
+          );
         case '/netease':
           request.response.write(
             jsonEncode({
               'lrc': {'lyric': '[00:04.00]网易歌词'},
+              'tlyric': {'lyric': '[00:04.00]Netease translation'},
             }),
           );
       }
@@ -76,9 +89,13 @@ void main() {
     final netease = await service.loadLyrics(_track(TrackSource.wy));
 
     expect(kuwo.single.text, '酷我歌词');
+    expect(kuwo.single.translation, 'Kuwo translation');
     expect(kugou.single.text, '酷狗歌词');
+    expect(kugou.single.translation, 'Kugou translation');
     expect(qq.single.text, 'QQ 歌词');
+    expect(qq.single.translation, 'QQ translation');
     expect(netease.single.text, '网易歌词');
+    expect(netease.single.translation, 'Netease translation');
   });
 }
 

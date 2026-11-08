@@ -18,6 +18,7 @@ Future<void> main() async {
   await windowService.initialize();
   final builtInSources = <String, String>{};
   for (final asset in [
+    'yuxi_final_source.js',
     'HelloWorld音源(中秋快乐).js',
     'HYWmusic_公益版V1.2.0.js',
     '安妮独家音源 v5.js',
@@ -27,13 +28,9 @@ Future<void> main() async {
     '墨澜音乐源v2.3.5.js',
     '星海音乐源 v2.3.17.js',
   ]) {
-    try {
-      final script = await rootBundle.loadString('assets/sources/$asset');
-      final name = asset.replaceFirst(RegExp(r'\.js$'), '');
-      builtInSources[name] = script;
-    } on Object {
-      // Skip missing sources
-    }
+    final script = await rootBundle.loadString('assets/sources/$asset');
+    final name = asset.replaceFirst(RegExp(r'\.js$'), '');
+    builtInSources[name] = script;
   }
   runApp(
     ChangeNotifierProvider(

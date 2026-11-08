@@ -8,6 +8,7 @@ class LyricsOverlayStyle {
     this.opacity = 0.92,
     this.cornerRadius = 0,
     this.locked = true,
+    this.showTranslation = false,
     this.positionX,
     this.positionY,
   });
@@ -20,6 +21,7 @@ class LyricsOverlayStyle {
   final double opacity;
   final double cornerRadius;
   final bool locked;
+  final bool showTranslation;
   final double? positionX;
   final double? positionY;
 
@@ -32,6 +34,7 @@ class LyricsOverlayStyle {
     double? opacity,
     double? cornerRadius,
     bool? locked,
+    bool? showTranslation,
     double? positionX,
     double? positionY,
   }) => LyricsOverlayStyle(
@@ -43,6 +46,7 @@ class LyricsOverlayStyle {
     opacity: opacity ?? this.opacity,
     cornerRadius: cornerRadius ?? this.cornerRadius,
     locked: locked ?? this.locked,
+    showTranslation: showTranslation ?? this.showTranslation,
     positionX: positionX ?? this.positionX,
     positionY: positionY ?? this.positionY,
   );
@@ -57,6 +61,7 @@ class LyricsOverlayStyle {
     'opacity': opacity,
     'cornerRadius': cornerRadius,
     'locked': locked,
+    'showTranslation': showTranslation,
     'positionX': positionX,
     'positionY': positionY,
   };
@@ -83,6 +88,7 @@ class LyricsOverlayStyle {
       opacity: needsAppleMusicMigration ? 0.92 : opacity ?? 0.92,
       cornerRadius: needsAppleMusicMigration ? 0 : cornerRadius ?? 0,
       locked: json['locked'] as bool? ?? true,
+      showTranslation: json['showTranslation'] as bool? ?? false,
       positionX: needsAppleMusicMigration
           ? null
           : (json['positionX'] as num?)?.toDouble(),

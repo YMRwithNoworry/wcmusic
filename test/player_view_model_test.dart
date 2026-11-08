@@ -131,9 +131,13 @@ void main() {
     player.emitPosition(const Duration(seconds: 6));
     await Future<void>.delayed(Duration.zero);
 
-    expect(overlay.currentLine, '第二句');
-    expect(overlay.nextLine, isEmpty);
     expect(overlay.currentIndex, 1);
+
+    await viewModel.updateLyricsStyle(
+      viewModel.lyricsStyle.copyWith(showTranslation: true),
+    );
+    expect(overlay.currentLine, '第二句翻译');
+    expect(overlay.lines, contains('第二句翻译'));
   });
 
   test('migrates the legacy desktop lyrics defaults', () {
@@ -155,7 +159,19 @@ void main() {
     expect(style.cornerRadius, 0);
     expect(style.positionX, isNull);
     expect(style.positionY, isNull);
+    expect(style.showTranslation, isFalse);
     expect(style.toJson()['layoutVersion'], 2);
+  });
+
+  test('persists the lyrics translation display preference', () {
+    final style = LyricsOverlayStyle.fromJson(const {
+      'layoutVersion': 2,
+      'showTranslation': true,
+    });
+
+    expect(style.showTranslation, isTrue);
+    expect(style.copyWith(showTranslation: false).showTranslation, isFalse);
+    expect(style.toJson()['showTranslation'], isTrue);
   });
 
   test('prefers a full track url resolved by an imported source', () async {
@@ -815,8 +831,12 @@ class _PositionPlayerService extends FakePlayerService {
 class _FakeLyricService implements LyricService {
   @override
   Future<List<LyricLine>> loadLyrics(Track track) async => const [
-    LyricLine(time: Duration.zero, text: '第一句'),
-    LyricLine(time: Duration(seconds: 5), text: '第二句'),
+    LyricLine(time: Duration.zero, text: '第一句', translation: 'First line'),
+    LyricLine(
+      time: Duration(seconds: 5),
+      text: '第二句',
+      translation: '第二句翻译',
+    ),
   ];
 }
 

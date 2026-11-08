@@ -84,6 +84,8 @@ class OnlineLyricService implements LyricService {
         LyricLine(
           time: Duration(milliseconds: (time * 1000).round()),
           text: lyric,
+          translation: _text(value['translateLyric']) ??
+              _text(value['translation']),
         ),
       );
     }
@@ -125,7 +127,15 @@ class OnlineLyricService implements LyricService {
     );
     final content = download is Map ? _text(download['content']) : null;
     if (content == null) return const [];
-    return parseLrc(utf8.decode(base64Decode(content)));
+    final lyrics = parseLrc(utf8.decode(base64Decode(content)));
+    final translatedContent =
+        download is Map ? _text(download['trans_content']) : null;
+    return translatedContent == null
+        ? lyrics
+        : _withTranslations(
+            lyrics,
+            parseLrc(utf8.decode(base64Decode(translatedContent))),
+          );
   }
 
   Future<List<LyricLine>> _loadQq(String sourceId) async {
@@ -139,8 +149,11 @@ class OnlineLyricService implements LyricService {
         },
       ),
     );
-    final lyric = decoded is Map ? _text(decoded['lyric']) : null;
-    return lyric == null ? const [] : parseLrc(lyric);
+    if (decoded is! Map) return const [];
+    return _withTranslations(
+      parseLrc(_text(decoded['lyric']) ?? ''),
+      parseLrc(_text(decoded['trans']) ?? ''),
+    );
   }
 
   Future<List<LyricLine>> _loadNetease(String sourceId) async {
@@ -156,8 +169,14 @@ class OnlineLyricService implements LyricService {
       ),
     );
     final lrc = decoded is Map ? decoded['lrc'] : null;
+    final tlyric = decoded is Map ? decoded['tlyric'] : null;
     final lyric = lrc is Map ? _text(lrc['lyric']) : null;
-    return lyric == null ? const [] : parseLrc(lyric);
+    final translation = tlyric is Map ? _text(tlyric['lyric']) : null;
+    if (lyric == null) return const [];
+    return _withTranslations(
+      parseLrc(lyric),
+      parseLrc(translation ?? ''),
+    );
   }
 
   Future<dynamic> _getJson(Uri uri) async {
@@ -204,6 +223,24 @@ class OnlineLyricService implements LyricService {
     final text = value.trim();
     return text.isEmpty ? null : text;
   }
+}
+
+List<LyricLine> _withTranslations(
+  List<LyricLine> lyrics,
+  List<LyricLine> translations,
+) {
+  if (lyrics.isEmpty || translations.isEmpty) return lyrics;
+  final translatedByTime = <int, String>{
+    for (final line in translations) line.time.inMilliseconds: line.text,
+  };
+  return [
+    for (final line in lyrics)
+      LyricLine(
+        time: line.time,
+        text: line.text,
+        translation: translatedByTime[line.time.inMilliseconds],
+      ),
+  ];
 }
 
 List<LyricLine> parseLrc(String content) {

@@ -44,6 +44,14 @@ class _SettingsViewState extends State<SettingsView> {
                 title: Text(isAndroid ? '悬浮窗歌词' : '桌面歌词'),
                 subtitle: Text(isAndroid ? '在其他应用上方同步显示歌词' : '在桌面置顶窗口中同步显示歌词'),
               ),
+              SwitchListTile(
+                value: viewModel.lyricsStyle.showTranslation,
+                onChanged: (value) => viewModel.updateLyricsStyle(
+                  viewModel.lyricsStyle.copyWith(showTranslation: value),
+                ),
+                title: const Text('显示平台歌词翻译'),
+                subtitle: const Text('有翻译时显示翻译；无翻译时保留原歌词'),
+              ),
               if (!isAndroid) const LyricsStyleControls(),
               SwitchListTile(
                 value: viewModel.spatialAudioEnabled,
