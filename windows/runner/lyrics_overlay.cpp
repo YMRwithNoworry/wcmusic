@@ -192,16 +192,24 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
     case WM_PAINT:
       if (overlay) overlay->Paint();
       return 0;
-    case WM_RBUTTONUP: {
+    case WM_RBUTTONUP:
+    case WM_NCRBUTTONUP: {
       if (!overlay) return 0;
-      POINT cursor{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-      ClientToScreen(window, &cursor);
+      POINT cursor{};
+      if (!GetCursorPos(&cursor)) return 0;
       HMENU menu = CreatePopupMenu();
-      AppendMenu(menu, MF_STRING, 1, overlay->style_.locked ? L"解锁并移动歌词" : L"锁定歌词");
-      AppendMenu(menu, MF_STRING, 2, L"重置位置");
+      if (!menu) return 0;
+      const wchar_t* toggle_label =
+          overlay->style_.locked ? L"解锁并移动歌词" : L"固定歌词";
+      if (!AppendMenu(menu, MF_STRING, 1, toggle_label)) {
+        DestroyMenu(menu);
+        return 0;
+      }
+      SetForegroundWindow(window);
       const int choice = TrackPopupMenu(
           menu, TPM_RETURNCMD | TPM_NONOTIFY, cursor.x, cursor.y, 0, window,
           nullptr);
+      PostMessage(window, WM_NULL, 0, 0);
       DestroyMenu(menu);
       if (choice == 1) {
         overlay->style_.locked = !overlay->style_.locked;
@@ -210,9 +218,6 @@ LRESULT CALLBACK LyricsOverlay::WindowProc(HWND window, UINT message,
           overlay->lock_callback_(overlay->style_.locked);
         }
         InvalidateRect(window, nullptr, TRUE);
-      } else if (choice == 2) {
-        overlay->style_.has_position = false;
-        overlay->ApplyStyle(overlay->style_);
       }
       return 0;
     }

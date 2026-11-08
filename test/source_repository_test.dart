@@ -186,10 +186,11 @@ void main() {
     );
   });
 
-  testWidgets('packages the built-in Paojiao source asset', (_) async {
-    final script = await rootBundle.loadString(
-      'assets/sources/yuxi_final_source.js',
+  testWidgets('packages the built-in Paojiao source asset', (tester) async {
+    final script = await tester.runAsync(
+      () => rootBundle.loadString('assets/sources/yuxi_final_source.js'),
     );
+    if (script == null) throw StateError('无法加载内置音源脚本');
     final repository = MemorySourceRepository(
       nativeCore: _UnavailableNativeCore(),
       builtInScripts: {'屿溪-终章': script},

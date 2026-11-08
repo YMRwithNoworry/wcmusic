@@ -21,6 +21,8 @@ abstract interface class FloatingLyricsService {
   Future<LyricsOverlayStyle> loadStyle();
   Future<void> saveStyle(LyricsOverlayStyle style);
   Future<void> dispose();
+
+  void setLockChangedCallback(void Function(bool locked)? callback);
 }
 
 class PlatformFloatingLyricsService implements FloatingLyricsService {
@@ -34,12 +36,18 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
   bool _enabled = false;
   bool _handlerRegistered = false;
   LyricsOverlayStyle? _style;
+  void Function(bool locked)? _lockChangedCallback;
   File? _settingsFile;
 
   void _ensureHandler() {
     if (_handlerRegistered) return;
     _handlerRegistered = true;
     _channel.setMethodCallHandler(_handleNativeCall);
+  }
+
+  @override
+  void setLockChangedCallback(void Function(bool locked)? callback) {
+    _lockChangedCallback = callback;
   }
 
   @override
@@ -131,11 +139,13 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
       final locked = arguments['locked'] as bool?;
       if (locked == null) return;
       final current = await loadStyle();
-      _style = current.copyWith(locked: locked);
-      await saveStyle(_style!);
+      final updated = current.copyWith(locked: locked);
+      _lockChangedCallback?.call(locked);
+      await saveStyle(updated);
       return;
     }
   }
+
   Future<File> _settingsFileFor() async {
     if (_settingsFile != null) return _settingsFile!;
     final directory = await _directoryProvider();
@@ -160,6 +170,7 @@ class PlatformFloatingLyricsService implements FloatingLyricsService {
 
   @override
   Future<void> dispose() async {
+    _lockChangedCallback = null;
     if (_handlerRegistered) {
       try {
         _channel.setMethodCallHandler(null);

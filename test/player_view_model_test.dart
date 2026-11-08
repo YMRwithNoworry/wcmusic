@@ -650,6 +650,23 @@ void main() {
     expect(viewModel.lyricsStyle.fontSize, 36);
   });
 
+  test('syncs the lyrics lock preference after a native overlay change', () {
+    final overlay = _FakeFloatingLyricsService();
+    final viewModel = PlayerViewModel(
+      musicRepository: MemoryMusicRepository(),
+      sourceRepository: MemorySourceRepository(),
+      onlineSearchService: FakeOnlineSearchService(),
+      playerService: FakePlayerService(),
+      floatingLyricsService: overlay,
+    );
+    addTearDown(viewModel.dispose);
+
+    overlay.emitLockChanged(false);
+    expect(viewModel.lyricsStyle.locked, isFalse);
+    overlay.emitLockChanged(true);
+    expect(viewModel.lyricsStyle.locked, isTrue);
+  });
+
   test('creates folders and favorites tracks into them', () async {
     final repository = MemoryMusicRepository(initialTracks: testLibraryTracks);
     final viewModel = PlayerViewModel(
@@ -849,8 +866,17 @@ class _FakeFloatingLyricsService implements FloatingLyricsService {
   LyricsOverlayStyle? style;
   LyricsOverlayStyle? savedStyle;
 
+  void Function(bool locked)? _lockChangedCallback;
+
   @override
   bool get isSupported => true;
+
+  @override
+  void setLockChangedCallback(void Function(bool locked)? callback) {
+    _lockChangedCallback = callback;
+  }
+
+  void emitLockChanged(bool locked) => _lockChangedCallback?.call(locked);
 
   @override
   Future<bool> setEnabled(bool enabled) async => enabled;

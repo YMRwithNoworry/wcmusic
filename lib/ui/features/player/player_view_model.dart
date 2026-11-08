@@ -40,6 +40,11 @@ class PlayerViewModel extends ChangeNotifier {
        floatingLyricsService =
            floatingLyricsService ?? PlatformFloatingLyricsService(),
        downloadService = downloadService ?? TrackDownloadService() {
+    this.floatingLyricsService.setLockChangedCallback((locked) {
+      if (lyricsStyle.locked == locked) return;
+      lyricsStyle = lyricsStyle.copyWith(locked: locked);
+      notifyListeners();
+    });
     _playingSubscription = this.playerService.playing.listen((value) {
       isPlaying = value;
       notifyListeners();
@@ -1144,6 +1149,7 @@ class PlayerViewModel extends ChangeNotifier {
     unawaited(_volumeSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
     unawaited(_errorSubscription?.cancel());
+    floatingLyricsService.setLockChangedCallback(null);
     unawaited(playerService.dispose());
     unawaited(floatingLyricsService.dispose());
     super.dispose();
