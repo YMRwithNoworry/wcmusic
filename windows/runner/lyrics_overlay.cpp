@@ -12,12 +12,15 @@ constexpr wchar_t kWindowClassName[] = L"WCMusicLyricsOverlay";
 constexpr int kOverlayWidth = 480;
 constexpr int kDragHandleWidth = 18;
 constexpr UINT_PTR kLyricsTimerId = 0x4C59;
-constexpr float kLyricsAnimationSeconds = 0.38f;
+constexpr float kLyricsAnimationSeconds = 0.55f;
 
-float EaseInOutCubic(float value) {
-  return value < 0.5f
-      ? 4.0f * value * value * value
-      : static_cast<float>(1 - std::pow(-2 * value + 2, 3) / 2);
+float EaseOutExpo(float value) {
+  return value >= 1.0f ? 1.0f : 1.0f - std::pow(2.0f, -10.0f * value);
+}
+
+float EaseOutQuart(float value) {
+  const float inv = 1.0f - value;
+  return 1.0f - inv * inv * inv * inv;
 }
 
 float Lerp(float from, float to, float value) {
@@ -113,7 +116,7 @@ void LyricsOverlay::Update(const std::vector<std::wstring>& lines,
       displayed_index_ = static_cast<int>(
           std::round(Lerp(static_cast<float>(displayed_index_),
                           static_cast<float>(current_index_),
-                          EaseInOutCubic(animation_t_))));
+                          EaseOutQuart(animation_t_))));
     } else {
       displayed_index_ = current_index_;
     }
@@ -242,7 +245,9 @@ void LyricsOverlay::Paint() {
   {
     Gdiplus::Graphics graphics(mem_dc);
     graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
-    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
 
     Gdiplus::RectF full(0, 0, static_cast<float>(width),
                         static_cast<float>(height));
@@ -292,7 +297,7 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
   const float base = animation_t_ < 1.0f
       ? Lerp(static_cast<float>(displayed_index_),
              static_cast<float>(current_index_),
-             EaseInOutCubic(animation_t_))
+             EaseOutQuart(animation_t_))
       : static_cast<float>(current_index_);
   const float center_y = height * 0.62f;
   const float spacing = std::max(42.0f, style_.font_size * 1.85f);
@@ -300,7 +305,9 @@ void LyricsOverlay::DrawLyricsWheel(Gdiplus::Graphics& graphics, int width,
   const float left_padding = 34.0f;
   const float right_padding = 20.0f;
 
-  Gdiplus::FontFamily font_family(style_.font_family.c_str());
+  Gdiplus::FontFamily font_family(style_.font_family.empty()
+                                   ? L"Microsoft YaHei UI"
+                                   : style_.font_family.c_str());
   const Gdiplus::Color text_color(
       255, GetRValue(style_.text_color), GetGValue(style_.text_color),
       GetBValue(style_.text_color));
