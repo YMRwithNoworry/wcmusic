@@ -90,7 +90,15 @@ jobs:
           workspaces: native/wcmusic_core
       - run: flutter pub get
       - name: Dart 静态分析
-        run: flutter analyze
+        shell: pwsh
+        run: |
+          $output = & flutter analyze 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Write-Output
+          if ($exitCode -ne 0) {
+            $output | Select-Object -Last 30 | ForEach-Object { Write-Output "::error title=Dart analyze::$_" }
+            exit $exitCode
+          }
       - name: Flutter 测试
         run: flutter test
       - name: Rust 核心测试
@@ -143,7 +151,13 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: flutter pub get
       - name: 构建 Flutter Android arm64 APK
-        run: flutter build apk --release --target-platform android-arm64
+        run: |
+          if ! flutter build apk --release --target-platform android-arm64 2>&1 | tee "$RUNNER_TEMP/android-build.log"; then
+            while IFS= read -r line; do
+              echo "::error title=Android build::$line"
+            done < <(tail -n 30 "$RUNNER_TEMP/android-build.log")
+            exit 1
+          fi
       - name: 收集 APK
         run: |
           mkdir -p dist
