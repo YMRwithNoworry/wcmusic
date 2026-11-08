@@ -171,13 +171,12 @@ void main() {
   test('loads the bundled source with its internal display name', () async {
     final repository = MemorySourceRepository(
       nativeCore: _FakeNativeCore(),
-      builtInScript: _script,
-      builtInSourceName: '屿溪-终章',
+      builtInScripts: {'屿溪-终章': _script},
     );
 
     final source = (await repository.loadSources()).single;
 
-    expect(source.id, MemorySourceRepository.builtInSourceId);
+    expect(source.id, 'wcmusic-built-in-屿溪-终章');
     expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);
     expect(source.sourceKeys, ['kw']);
@@ -193,14 +192,13 @@ void main() {
     );
     final repository = MemorySourceRepository(
       nativeCore: _UnavailableNativeCore(),
-      builtInScript: script,
-      builtInSourceName: '屿溪-终章',
+      builtInScripts: {'屿溪-终章': script},
     );
 
     final source = (await repository.loadSources()).single;
 
     expect(script, contains('@version 1.2.0'));
-    expect(source.id, MemorySourceRepository.builtInSourceId);
+    expect(source.id, 'wcmusic-built-in-屿溪-终章');
     expect(source.name, '屿溪-终章');
     expect(source.isBuiltIn, isTrue);
   });
@@ -210,8 +208,7 @@ void main() {
     () async {
       final repository = MemorySourceRepository(
         nativeCore: _UnavailableNativeCore(),
-        builtInScript: _quotedKeysScript,
-        builtInSourceName: '屿溪-终章',
+        builtInScripts: {'屿溪-终章': _quotedKeysScript},
       );
 
       final source = (await repository.loadSources()).single;
@@ -224,8 +221,7 @@ void main() {
   test('keeps the bundled source when validation rejects the script', () async {
     final repository = MemorySourceRepository(
       nativeCore: _RejectingNativeCore(),
-      builtInScript: _quotedKeysScript,
-      builtInSourceName: '屿溪-终章',
+      builtInScripts: {'屿溪-终章': _quotedKeysScript},
     );
 
     final source = (await repository.loadSources()).single;

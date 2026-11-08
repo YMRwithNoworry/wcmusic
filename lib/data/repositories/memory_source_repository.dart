@@ -6,22 +6,20 @@ import '../services/source_resolver.dart';
 import '../services/source_storage.dart';
 
 class MemorySourceRepository implements SourceRepository {
-  static const builtInSourceId = 'wcmusic-built-in-source';
+  static const builtInSourceIdPrefix = 'wcmusic-built-in-';
   static const builtInSourceKeys = ['kg', 'kw', 'mg', 'tx', 'wy'];
 
   MemorySourceRepository({
     this._parser = const SourceScriptParser(),
     NativeCoreBridge? nativeCore,
     this._storage,
-    this.builtInScript,
-    this.builtInSourceName = '内置音源',
+    this.builtInScripts = const {},
   }) : _nativeCore = nativeCore ?? NativeCoreBridge();
 
   final SourceScriptParser _parser;
   final NativeCoreBridge _nativeCore;
   final SourceStorage? _storage;
-  final String? builtInScript;
-  final String builtInSourceName;
+  final Map<String, String> builtInScripts;
   final List<SourceScript> _sources = [];
   String? _selectedSourceId;
   bool _loaded = false;
@@ -78,7 +76,9 @@ class MemorySourceRepository implements SourceRepository {
   @override
   Future<void> deleteSource(String id) async {
     await _ensureLoaded();
-    if (id == builtInSourceId) throw StateError('内置音源不可删除');
+    if (id.startsWith(builtInSourceIdPrefix)) {
+      throw StateError('内置音源不可删除');
+    }
     _sources.removeWhere((source) => source.id == id);
     if (_selectedSourceId == id) _selectedSourceId = null;
     await _persist();
@@ -152,33 +152,34 @@ class MemorySourceRepository implements SourceRepository {
     _sources
       ..clear()
       ..addAll(stored.map(_decode));
-    final bundledScript = builtInScript;
-    if (bundledScript != null) {
-      final nativeResult = _nativeCore.validateSource(bundledScript);
+    for (final entry in builtInScripts.entries) {
+      final name = entry.key;
+      final script = entry.value;
+      final nativeResult = _nativeCore.validateSource(script);
       final data = nativeResult != null && nativeResult['ok'] == true
           ? nativeResult['data']
           : null;
       final manifest = data is Map<String, dynamic> ? data : null;
-      var parsed = _parser.parse(bundledScript, manifest: manifest);
+      var parsed = _parser.parse(script, manifest: manifest);
       if (parsed.sourceKeys.isEmpty) {
         parsed = _parser.parse(
-          bundledScript,
+          script,
           manifest: {
-            'metadata': {'name': builtInSourceName},
+            'metadata': {'name': name},
             'sources': [
               for (final key in builtInSourceKeys) {'key': key},
             ],
           },
         );
       }
+      final sourceId = 'wcmusic-built-in-$name';
       _sources.removeWhere(
-        (source) =>
-            source.id == builtInSourceId || source.name == builtInSourceName,
+        (source) => source.id == sourceId || source.name == name,
       );
       _sources.add(
         SourceScript(
-          id: builtInSourceId,
-          name: builtInSourceName,
+          id: sourceId,
+          name: name,
           version: parsed.version,
           author: parsed.author,
           description: parsed.description,

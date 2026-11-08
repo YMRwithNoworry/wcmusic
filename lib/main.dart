@@ -16,17 +16,32 @@ Future<void> main() async {
   MediaKit.ensureInitialized();
   final windowService = DesktopWindowService();
   await windowService.initialize();
-  final builtInSourceScript = await rootBundle.loadString(
-    'assets/sources/yuxi_final_source.js',
-  );
+  final builtInSources = <String, String>{};
+  for (final asset in [
+    'HelloWorld音源(中秋快乐).js',
+    'HYWmusic_公益版V1.2.0.js',
+    '安妮独家音源 v5.js',
+    '独家音源-v7.js',
+    '回避聚合V0.0.1.js',
+    '裤佬SVIP音源(二改整合版) v3.0.0.js',
+    '墨澜音乐源v2.3.5.js',
+    '星海音乐源 v2.3.17.js',
+  ]) {
+    try {
+      final script = await rootBundle.loadString('assets/sources/$asset');
+      final name = asset.replaceFirst(RegExp(r'\.js$'), '');
+      builtInSources[name] = script;
+    } on Object {
+      // Skip missing sources
+    }
+  }
   runApp(
     ChangeNotifierProvider(
       create: (_) => PlayerViewModel(
         musicRepository: FileMusicRepository(),
         sourceRepository: MemorySourceRepository(
           storage: FileSourceStorage(),
-          builtInScript: builtInSourceScript,
-          builtInSourceName: '屿溪-终章',
+          builtInScripts: builtInSources,
         ),
         onlineSearchService: MultiSourceOnlineSearchService(),
         windowLifecycleService: windowService,

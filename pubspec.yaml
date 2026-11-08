@@ -71,7 +71,7 @@ flutter:
   uses-material-design: true
   assets:
     - windows/runner/resources/app_icon.ico
-    - assets/sources/yuxi_final_source.js
+    - assets/sources/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
