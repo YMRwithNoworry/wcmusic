@@ -151,7 +151,13 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: flutter pub get
       - name: 构建 Flutter Android arm64 APK
-        run: flutter build apk --release --target-platform android-arm64
+        run: |
+          if ! flutter build apk --release --target-platform android-arm64 2>&1 | tee "$RUNNER_TEMP/android-build.log"; then
+            while IFS= read -r line; do
+              echo "::error title=Android build::$line"
+            done < <(tail -n 40 "$RUNNER_TEMP/android-build.log")
+            exit 1
+          fi
       - name: 收集 APK
         run: |
           mapfile -t apks < <(find build/app/outputs -type f -name '*.apk' -print)
