@@ -152,6 +152,7 @@ jobs:
       - run: flutter pub get
       - name: 构建 Flutter Android arm64 APK
         run: |
+          set -o pipefail
           if ! flutter build apk --release --target-platform android-arm64 2>&1 | tee "$RUNNER_TEMP/android-build.log"; then
             while IFS= read -r line; do
               echo "::error title=Android build::$line"
