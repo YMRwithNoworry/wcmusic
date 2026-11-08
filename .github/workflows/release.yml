@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/package.json desktop/package-lock.json pubspec.yaml
+          git add pubspec.yaml
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): $TAG [skip ci]"
             git pull --rebase origin "$GITHUB_REF_NAME"
@@ -72,50 +72,48 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   windows:
-    name: 构建 Windows 包
+    name: 构建 Flutter Windows 包
     needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.sha }}
-      - uses: actions/setup-node@v4
+      - uses: subosito/flutter-action@v2
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          flutter-version: "3.44.8"
+          channel: stable
+          cache: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
-      - name: 安装前端依赖
-        working-directory: desktop
-        run: npm ci
-      - name: 构建前端
-        working-directory: desktop
-        run: npm run build
-      - name: Rust 测试
-        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib
-      - name: 构建 Tauri 桌面端
-        run: cargo build --locked --release --features custom-protocol --manifest-path desktop/src-tauri/Cargo.toml
-      - name: 打包 ZIP
+          workspaces: native/wcmusic_core
+      - run: flutter pub get
+      - name: Dart 静态分析
+        run: flutter analyze
+      - name: Flutter 测试
+        run: flutter test
+      - name: Rust 核心测试
+        run: cargo test --manifest-path native/wcmusic_core/Cargo.toml
+      - name: 构建 Flutter Windows
+        run: flutter build windows --release
+      - name: 打包 Windows 目录
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item desktop\src-tauri\target\release\wcmusic-desktop.exe dist\wcmusic-desktop.exe
-          Compress-Archive -Path dist\wcmusic-desktop.exe -DestinationPath dist\wcmusic-windows-x64.zip -Force
+          $bundle = "build\windows\x64\runner\Release"
+          if (-not (Test-Path "$bundle\wcmusic.exe")) { throw "Flutter Windows executable not found: $bundle\wcmusic.exe" }
+          Compress-Archive -Path "$bundle\*" -DestinationPath dist\wcmusic-windows-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/wcmusic-windows-x64.zip
           if-no-files-found: error
 
-  # Android 构建失败时仍发布 Windows；官网沿用上个实际存在的 APK。
   android:
-    name: 构建 Android 包
+    name: 构建 Flutter Android 包
     needs: version
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +122,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - uses: android-actions/setup-android@v3
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.44.8"
@@ -135,10 +134,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native/wcmusic_core
-      - name: 安装 cargo-ndk
-        run: cargo install cargo-ndk --locked
+      - name: 安装 Android NDK 与 cargo-ndk
+        run: |
+          sdkmanager "ndk;28.2.13012046"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13012046" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked
       - run: flutter pub get
-      - name: 构建 APK
+      - name: 构建 Flutter Android arm64 APK
         run: flutter build apk --release --target-platform android-arm64
       - name: 收集 APK
         run: |
@@ -153,7 +155,6 @@ jobs:
   release:
     name: 发布 Release 并同步官网源码
     needs: [version, windows, android]
-    if: ${{ always() && needs.version.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -168,37 +169,20 @@ jobs:
           name: windows
           path: dist
       - uses: actions/download-artifact@v4
-        if: ${{ needs.android.result == 'success' }}
-        continue-on-error: true
         with:
           name: android
           path: dist
-      - name: 检查资产
-        id: assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.version.outputs.tag }}
+      - name: 检查构建资产
         run: |
           set -euo pipefail
           test -s dist/wcmusic-windows-x64.zip
-          if [ -s dist/wcmusic-android-arm64.apk ]; then
-            echo "android=true" >> "$GITHUB_OUTPUT"
-            echo "android_url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/wcmusic-android-arm64.apk" >> "$GITHUB_OUTPUT"
-          else
-            echo "android=false" >> "$GITHUB_OUTPUT"
-            url=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "wcmusic-android-arm64.apk")][0].browser_download_url // ""')
-            test -n "$url" || { echo "::error::未找到可用的历史 APK"; exit 1; }
-            echo "android_url=$url" >> "$GITHUB_OUTPUT"
-            echo "::warning::Android 未出包，官网保留历史 APK：$url"
-          fi
+          test -s dist/wcmusic-android-arm64.apk
       - name: 生成 Release 说明与官网改动
         env:
           VERSION: ${{ needs.version.outputs.version }}
           PREVIOUS: ${{ needs.version.outputs.previous }}
-          ANDROID: ${{ steps.assets.outputs.android }}
-          ANDROID_URL: ${{ steps.assets.outputs.android_url }}
         run: |
-          node scripts/release/sync-site.mjs --version "$VERSION" --repo "$GITHUB_REPOSITORY" --previous "v$PREVIOUS" --android "$ANDROID" --android-url "$ANDROID_URL" --notes release-notes.md
+          node scripts/release/sync-site.mjs --version "$VERSION" --repo "$GITHUB_REPOSITORY" --previous "v$PREVIOUS" --notes release-notes.md
       - name: 发布 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -207,8 +191,7 @@ jobs:
           SOURCE_SHA: ${{ needs.version.outputs.sha }}
         run: |
           set -euo pipefail
-          assets=(dist/wcmusic-windows-x64.zip)
-          if [ -s dist/wcmusic-android-arm64.apk ]; then assets+=(dist/wcmusic-android-arm64.apk); fi
+          assets=(dist/wcmusic-windows-x64.zip dist/wcmusic-android-arm64.apk)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --clobber
             gh release edit "$TAG" --title "WCMusic $VERSION" --notes-file release-notes.md --latest

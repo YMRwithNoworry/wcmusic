@@ -3,11 +3,9 @@
 //
 // 用法：
 //   node scripts/release/sync-site.mjs --version 1.2.4 --repo YMRwithNoworry/wcmusic \
-//     [--previous v1.2.3] [--android true] [--android-url <apk 地址>] [--notes release-notes.md]
+//     [--previous v1.2.3] [--notes release-notes.md]
 //
-// 只在发布成功之后调用：官网的下载链接必须指向已经存在的 Release。
-// Android 任务在 CI 里是「尽力而为」，没出包时用 --android-url 传上一个真的带 APK 的
-// Release 地址，官网的 Android 按钮就不会指到一个不存在的文件上。
+// 只在两个 Flutter 平台构建成功后调用；官网链接始终指向本次 Release。
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -23,23 +21,14 @@ function arg(name, fallback = null) {
 const version = arg("version");
 const repo = arg("repo", "YMRwithNoworry/wcmusic");
 const previous = arg("previous");
-const withAndroid = arg("android", "true") === "true";
-const androidUrl = arg("android-url", "");
 const notesPath = arg("notes");
 if (!version) throw new Error("缺少 --version");
 
 const tag = "v" + version;
 const downloadBase = "https://github.com/" + repo + "/releases/download/" + tag + "/";
 const APK_NAME = "wcmusic-android-arm64.apk";
-
-/** Android 按钮指向哪个版本：本轮出包就是新版本，否则沿用那个 Release 的版本号。 */
-function androidReleaseVersion() {
-  if (withAndroid) return version;
-  const match = /\/download\/v([0-9]+\.[0-9]+\.[0-9]+)\//.exec(androidUrl);
-  return match ? match[1] : null;
-}
-const androidVersion = androidReleaseVersion();
-const targetAndroidUrl = withAndroid ? downloadBase + APK_NAME : androidUrl;
+const androidVersion = version;
+const targetAndroidUrl = downloadBase + APK_NAME;
 
 function escapeHtml(text) {
   return text
@@ -139,21 +128,19 @@ rewrite(INDEX, (html) =>
   ),
 );
 
-// 2) Android 下载链接：只有确实知道该指向哪个 Release 时才改。
-if (targetAndroidUrl) {
-  rewrite(INDEX, (html) =>
-    html.replace(
-      /(href=")https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk(")/g,
-      "$1" + targetAndroidUrl + "$2",
-    ),
-  );
-  rewrite(APP_JS, (js) =>
-    js.replace(
-      /https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk/g,
-      targetAndroidUrl,
-    ),
-  );
-}
+// 2) Android 下载链接始终指向本次成功构建的 APK。
+rewrite(INDEX, (html) =>
+  html.replace(
+    /(href=")https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk(")/g,
+    "$1" + targetAndroidUrl + "$2",
+  ),
+);
+rewrite(APP_JS, (js) =>
+  js.replace(
+    /https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/v[0-9.]+\/wcmusic-android-arm64\.apk/g,
+    targetAndroidUrl,
+  ),
+);
 
 // 3) 版本号与首屏文案。
 rewrite(INDEX, (html) => {
@@ -163,11 +150,9 @@ rewrite(INDEX, (html) => {
     .replace(/(<p class="version">)v[0-9.]+(<\/p>)/, "$1" + tag + "$2")
     .replace(/(<p class="hero-note">[^<]*Windows )[0-9.]+/, "$1" + version)
     .replace(/(<p>)\d{4} 年 \d{1,2} 月 \d{1,2} 日(<\/p>)/, "$1" + chineseDate() + "$2");
-  if (androidVersion) {
-    out = out
-      .replace(/(<p class="file-meta">版本 )[0-9.]+( · arm64-v8a<\/p>)/, "$1" + androidVersion + "$2")
-      .replace(/(<p class="hero-note">[^<]*· Android )[0-9.]+/, "$1" + androidVersion);
-  }
+  out = out
+    .replace(/(<p class="file-meta">版本 )[0-9.]+( · arm64-v8a<\/p>)/, "$1" + androidVersion + "$2")
+    .replace(/(<p class="hero-note">[^<]*· Android )[0-9.]+/, "$1" + androidVersion);
   return out;
 });
 
@@ -193,18 +178,16 @@ rewrite(INDEX, (html) => {
   return lines.slice(0, start + 1).concat(block, lines.slice(end)).join("\n");
 });
 
-// 5) Release 说明。
 if (notesPath) {
-  const androidLine = withAndroid
-    ? "- **Android arm64**：[wcmusic-android-arm64.apk](" + downloadBase + APK_NAME + ") — Android 8.0+"
-    : "- **Android arm64**：本次未产出新的 APK，官网仍指向 " + (androidUrl || "上一个带 APK 的版本");
+  const androidLine =
+    "- **Android arm64**：[wcmusic-android-arm64.apk](" + downloadBase + APK_NAME + ") — Android 8.0+";
   const notes = [
     "## WCMusic " + version,
     "",
     changelogMarkdown(),
     "",
     "### 下载",
-    "- **Windows x64**：[wcmusic-windows-x64.zip](" + downloadBase + "wcmusic-windows-x64.zip) — 解压后运行单个 exe，无需安装",
+    "- **Windows x64**：[wcmusic-windows-x64.zip](" + downloadBase + "wcmusic-windows-x64.zip) — 解压后运行，无需安装",
     androidLine,
     "",
   ];
@@ -215,6 +198,5 @@ if (notesPath) {
 }
 
 console.log(
-  "官网已同步到 " + tag + "（仓库 " + repo + "，提交 " + items.length + " 条，Android " +
-    (androidVersion || "保持原样") + "）",
+  "官网已同步到 " + tag + "（仓库 " + repo + "，提交 " + items.length + " 条，Android " + androidVersion + "）",
 );
