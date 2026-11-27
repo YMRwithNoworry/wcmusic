@@ -261,7 +261,6 @@ fn key_label(key: &str) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,10 +272,19 @@ mod tests {
             let parsed = binding_to_vk(binding);
             assert!(parsed.is_ok(), "{binding} 应该可以解析：{parsed:?}");
         }
-        assert_eq!(binding_to_vk("ctrl-alt-p"), Ok((MOD_CONTROL | MOD_ALT, 0x50)));
-        assert_eq!(binding_to_vk("ctrl-alt-left"), Ok((MOD_CONTROL | MOD_ALT, 0x25)));
+        assert_eq!(
+            binding_to_vk("ctrl-alt-p"),
+            Ok((MOD_CONTROL | MOD_ALT, 0x50))
+        );
+        assert_eq!(
+            binding_to_vk("ctrl-alt-left"),
+            Ok((MOD_CONTROL | MOD_ALT, 0x25))
+        );
         assert_eq!(binding_to_vk("f5"), Ok((0, 0x74)));
-        assert_eq!(binding_to_vk("ctrl-shift-space"), Ok((MOD_CONTROL | MOD_SHIFT, 0x20)));
+        assert_eq!(
+            binding_to_vk("ctrl-shift-space"),
+            Ok((MOD_CONTROL | MOD_SHIFT, 0x20))
+        );
         assert_eq!(binding_to_vk("win-h"), Ok((MOD_WIN, 0x48)));
     }
 
@@ -299,7 +307,10 @@ mod tests {
     #[test]
     fn formats_labels_for_people() {
         assert_eq!(binding_label("ctrl-alt-p"), "Ctrl + Alt + P");
-        assert_eq!(binding_label("ctrl-alt-shift-left"), "Ctrl + Alt + Shift + ←");
+        assert_eq!(
+            binding_label("ctrl-alt-shift-left"),
+            "Ctrl + Alt + Shift + ←"
+        );
         assert_eq!(binding_label("ctrl-alt-space"), "Ctrl + Alt + 空格");
         assert_eq!(binding_label(""), "未设置");
     }
@@ -394,7 +405,7 @@ pub fn bindings_from(settings: &crate::settings::HotKeySettings) -> Vec<(HotKeyA
 
 #[cfg(windows)]
 mod windows {
-    use super::{Command, HotKeyAction, EVENT_SENDER, binding_label, binding_to_vk};
+    use super::{Command, EVENT_SENDER, HotKeyAction, binding_label, binding_to_vk};
     use std::mem::zeroed;
     use std::ptr::{null, null_mut};
     use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -408,7 +419,8 @@ mod windows {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, HWND_MESSAGE,
-        PM_NOREMOVE, PM_REMOVE, PeekMessageW, RegisterClassW, TranslateMessage, WM_HOTKEY, WNDCLASSW,
+        PM_NOREMOVE, PM_REMOVE, PeekMessageW, RegisterClassW, TranslateMessage, WM_HOTKEY,
+        WNDCLASSW,
     };
 
     const CLASS_NAME: &[u16] = &[
@@ -417,10 +429,7 @@ mod windows {
     ];
 
     /// 消息循环：轮询窗口消息 + 收注册指令，两者互不阻塞。
-    pub fn run(
-        commands: Receiver<Command>,
-        errors: Arc<Mutex<Vec<(HotKeyAction, String)>>>,
-    ) {
+    pub fn run(commands: Receiver<Command>, errors: Arc<Mutex<Vec<(HotKeyAction, String)>>>) {
         unsafe {
             // 先取一次消息，确保线程拥有消息队列。
             let mut message = zeroed();
@@ -551,7 +560,10 @@ mod service_tests {
     fn bindings_follow_the_enabled_switch() {
         let mut settings = crate::settings::HotKeySettings::default();
         settings.enabled = false;
-        assert!(bindings_from(&settings).is_empty(), "关闭时不注册任何快捷键");
+        assert!(
+            bindings_from(&settings).is_empty(),
+            "关闭时不注册任何快捷键"
+        );
 
         settings.enabled = true;
         let bindings = bindings_from(&settings);
@@ -575,8 +587,7 @@ mod registration_tests {
     /// 这条会临时占用系统全局快捷键，测试进程退出即释放。
     #[test]
     fn default_bindings_register_and_report_conflicts() {
-        let service =
-            HotKeyService::start(|_action| {}).expect("Windows 上应当能启动快捷键服务");
+        let service = HotKeyService::start(|_action| {}).expect("Windows 上应当能启动快捷键服务");
         let settings = crate::settings::HotKeySettings {
             enabled: true,
             ..Default::default()

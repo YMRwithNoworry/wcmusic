@@ -164,7 +164,8 @@ impl SourceStore {
 
 /// 从文件导入：读文本 → 校验 → 存下并设为当前音源。
 pub fn import_from_path(store: &mut SourceStore, path: &str) -> Result<SourceView, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| format!("读取音源文件失败：{error}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("读取音源文件失败：{error}"))?;
     let name = std::path::Path::new(path)
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())

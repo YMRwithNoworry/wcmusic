@@ -8,7 +8,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
 use wcmusic_core::{Track, TrackSource};
 
 use crate::audio::{
@@ -20,8 +19,9 @@ use crate::source;
 const TICK: Duration = Duration::from_millis(100);
 
 /// 播放状态快照（前端每几百毫秒拉一次）。
-#[derive(Serialize)]
+#[derive(PartialEq)]
 pub struct PlaybackSnapshot {
+    pub request_id: u64,
     pub playing: bool,
     /// 当前播放位置（毫秒）。
     pub position_ms: u64,
@@ -39,6 +39,7 @@ pub struct PlaybackSnapshot {
 
 /// 播放线程与前端共享的状态。
 struct Shared {
+    request_id: u64,
     current: Option<Track>,
     volume: f32,
     spatial: bool,
@@ -53,6 +54,7 @@ struct Shared {
 /// 发给播放线程的命令。
 enum Command {
     Play {
+        request_id: u64,
         track: Track,
         quality: String,
         use_proxy: bool,
@@ -68,15 +70,17 @@ enum Command {
     Shutdown,
 }
 
-/// 播放器句柄：本身只持有 channel 与共享状态，可以放进 Tauri 的全局 State。
+/// 播放器句柄：音频设备只由工作线程持有。
 pub struct Playback {
     tx: Sender<Command>,
     shared: Arc<Mutex<Shared>>,
+    request_id: u64,
 }
 
 impl Playback {
     pub fn new(volume: f32, spatial: bool, spatial_strength: u32) -> Self {
         let shared = Arc::new(Mutex::new(Shared {
+            request_id: 0,
             current: None,
             volume: volume.clamp(0.0, 1.0),
             spatial,
@@ -93,7 +97,11 @@ impl Playback {
             .name("wcmusic-audio".to_owned())
             .spawn(move || player_thread(rx, thread_shared))
             .expect("启动音频线程失败");
-        Self { tx, shared }
+        Self {
+            tx,
+            shared,
+            request_id: 0,
+        }
     }
 
     fn send(&self, command: Command) -> Result<(), String> {
@@ -106,12 +114,12 @@ impl Playback {
     ///
     /// `script` 是当前生效的音源脚本（内置或导入的）。
     pub fn play(
-        &self,
+        &mut self,
         track: Track,
         quality: &str,
         use_proxy: bool,
         script: String,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         if track.source == TrackSource::Local {
             return Err("本地歌曲文件不可用".to_owned());
         }
@@ -121,12 +129,16 @@ impl Playback {
         if track.source_id.is_none() {
             return Err("搜索结果缺少平台歌曲 ID".to_owned());
         }
+        let request_id = self.request_id.wrapping_add(1);
         self.send(Command::Play {
+            request_id,
             track,
             quality: quality.to_owned(),
             use_proxy,
             script,
-        })
+        })?;
+        self.request_id = request_id;
+        Ok(request_id)
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -179,6 +191,7 @@ impl Playback {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         PlaybackSnapshot {
+            request_id: shared.request_id,
             playing: shared.playing,
             position_ms: shared.position_ms,
             finished: shared.finished,
@@ -214,11 +227,21 @@ fn player_thread(rx: Receiver<Command>, shared: Arc<Mutex<Shared>>) {
 fn handle(command: Command, player: &mut Option<AudioPlayer>, shared: &Arc<Mutex<Shared>>) {
     match command {
         Command::Play {
+            request_id,
             track,
             quality,
             use_proxy,
             script,
-        } => start(track, &quality, use_proxy, script, player, shared),
+        } => {
+            if let Some(active) = player.as_mut() {
+                active.stop();
+            }
+            set(shared, |state| {
+                state.request_id = request_id;
+                state.current = Some(track.clone());
+            });
+            start(track, &quality, use_proxy, script, player, shared);
+        }
         Command::Pause => {
             if let Some(player) = player.as_ref() {
                 let _ = player.pause();
@@ -344,6 +367,7 @@ fn fail(shared: &Arc<Mutex<Shared>>, message: &str) {
     set(shared, |state| {
         state.loading = false;
         state.playing = false;
+        state.finished = false;
         state.error = Some(message.to_owned());
     });
 }
@@ -366,6 +390,9 @@ fn refresh(player: &Option<AudioPlayer>, shared: &Arc<Mutex<Shared>>) {
     let position = player.position().unwrap_or_default();
     let finished = player.has_finished();
     set(shared, |state| {
+        if state.current.is_none() || (!state.playing && state.error.is_some()) {
+            return;
+        }
         state.position_ms = position.as_millis() as u64;
         state.finished = finished;
         if finished {
@@ -374,18 +401,11 @@ fn refresh(player: &Option<AudioPlayer>, shared: &Arc<Mutex<Shared>>) {
     });
 }
 
-/// 下载（并缓存）某首歌的封面，返回可以直接放进 `<img src>` 的 data URL。
-///
-/// 走 `%TEMP%\wcmusic-artwork` 落盘缓存，命中缓存就不再发请求。
-pub fn artwork_data_url(track: &Track, use_proxy: bool) -> Result<Option<String>, String> {
-    let Some(uri) = track.artwork_uri.clone() else {
+/// 下载并缓存封面；直接返回本地路径，避免为原生 UI 编码 data URL。
+pub fn artwork_path(track: &Track, use_proxy: bool) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(uri) = track.artwork_uri.as_deref() else {
         return Ok(None);
     };
     let cache_id = format!("{:?}-{}", track.source, track.id);
-    let path = download_artwork(&uri, &cache_id, use_proxy)?;
-    let bytes = std::fs::read(&path).map_err(|error| format!("读取封面失败：{error}"))?;
-    Ok(Some(format!(
-        "data:image/jpeg;base64,{}",
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
-    )))
+    download_artwork(uri, &cache_id, use_proxy).map(|path| Some(path.into()))
 }

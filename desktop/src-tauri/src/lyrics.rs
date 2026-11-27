@@ -21,7 +21,6 @@ use wcmusic_core::{Track, TrackSource};
 
 const LYRICS_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
-
 const PANEL_TOP: f32 = 42.0;
 const PANEL_LEFT: f32 = 14.0;
 const PANEL_HEIGHT: f32 = 208.0;
@@ -329,12 +328,11 @@ pub fn parse_lrc_with_translation(content: &str, translation: &str) -> Vec<Lyric
 
     // 时间戳整体错位时（两边行数一致）退化为按行序配对。
     let leftover_lines: Vec<usize> = (0..lines.len()).filter(|index| !paired[*index]).collect();
-    let leftover_translations: Vec<usize> =
-        (0..translated.len()).filter(|index| !used[*index]).collect();
+    let leftover_translations: Vec<usize> = (0..translated.len())
+        .filter(|index| !used[*index])
+        .collect();
     if !leftover_lines.is_empty() && leftover_lines.len() == leftover_translations.len() {
-        for (&line_index, &translation_index) in
-            leftover_lines.iter().zip(&leftover_translations)
-        {
+        for (&line_index, &translation_index) in leftover_lines.iter().zip(&leftover_translations) {
             if let Some(text) = usable_translation(&translated[translation_index].text) {
                 if text != lines[line_index].text.trim() {
                     lines[line_index].translation = Some(text.to_owned());
@@ -394,13 +392,19 @@ fn parse_lrc_lines(content: &str) -> Vec<LyricLine> {
 }
 
 pub fn fetch_lyrics(track: &Track, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
-    if matches!(track.source, TrackSource::Local | TrackSource::Mg | TrackSource::Custom) {
+    if matches!(
+        track.source,
+        TrackSource::Local | TrackSource::Mg | TrackSource::Custom
+    ) {
         return Ok(Vec::new());
     }
-    let source_id = track.source_id.as_deref()
+    let source_id = track
+        .source_id
+        .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&track.id);
-    let source_id = source_id.trim()
+    let source_id = source_id
+        .trim()
         .trim_start_matches("kw-")
         .trim_start_matches("kg-")
         .trim_start_matches("tx-")
@@ -421,7 +425,10 @@ pub fn fetch_lyrics(track: &Track, use_proxy: bool) -> Result<Vec<LyricLine>, St
 }
 
 /// 在正文已经加载后补充翻译；翻译失败不影响正文。
-pub fn translate_lyrics(mut lines: Vec<LyricLine>, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
+pub fn translate_lyrics(
+    mut lines: Vec<LyricLine>,
+    use_proxy: bool,
+) -> Result<Vec<LyricLine>, String> {
     if needs_auto_translation(&lines) {
         let _ = translate_lines(&mut lines, use_proxy);
     }
@@ -681,7 +688,11 @@ fn translate_batch_google(texts: &[String], use_proxy: bool) -> Result<Vec<Strin
         .map(|line| line.trim().to_owned())
         .collect();
     if lines.len() != texts.len() {
-        return Err(format!("翻译行数不匹配（{} / {}）", lines.len(), texts.len()));
+        return Err(format!(
+            "翻译行数不匹配（{} / {}）",
+            lines.len(),
+            texts.len()
+        ));
     }
     Ok(lines)
 }
@@ -876,12 +887,7 @@ fn decode_qq_lyric(value: Option<&Value>) -> Option<String> {
 fn load_netease(source_id: &str, use_proxy: bool) -> Result<Vec<LyricLine>, String> {
     let value = get_json(
         "https://music.163.com/api/song/lyric",
-        &[
-            ("id", source_id),
-            ("lv", "-1"),
-            ("kv", "-1"),
-            ("tv", "-1"),
-        ],
+        &[("id", source_id), ("lv", "-1"), ("kv", "-1"), ("tv", "-1")],
         "https://music.163.com/",
         use_proxy,
     )?;
@@ -1623,7 +1629,10 @@ mod tests {
         // 歌词行的左右内边距、工具条的右边距、面板的左边距都取同一常量，
         // 这里把它固定下来，避免以后又各自写死不同的数值。
         assert_eq!(CONTENT_INSET, 14.0);
-        assert_eq!(PANEL_LEFT, CONTENT_INSET, "设置面板左边距要和歌词内边距一致");
+        assert_eq!(
+            PANEL_LEFT, CONTENT_INSET,
+            "设置面板左边距要和歌词内边距一致"
+        );
     }
 
     #[test]
@@ -1676,16 +1685,18 @@ mod tests {
 
         // 往右下拖：歌词不能被推出右下角。窗口右边缘允许越过屏幕，
         // 但保护范围必须还在屏内。
-        let (x, y) =
-            clamp_lyric_position(5000.0, 5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3);
+        let (x, y) = clamp_lyric_position(
+            5000.0, 5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3,
+        );
         assert!(x + gl + gw <= area.0 + area.2 + 1e-3, "歌词右缘不能出屏");
         assert!(y + gt + gh <= area.1 + area.3 + 1e-3, "歌词下缘不能出屏");
         // 因为保护范围在窗口正中，窗口底部允许超出屏幕。
         assert!(y + 260.0 > area.1 + area.3, "工具条应当允许被推出屏幕");
 
         // 往左上拖：歌词上缘不能出屏，但工具条（窗口顶部）可以。
-        let (x2, y2) =
-            clamp_lyric_position(-5000.0, -5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3);
+        let (x2, y2) = clamp_lyric_position(
+            -5000.0, -5000.0, gl, gt, gw, gh, area.0, area.1, area.2, area.3,
+        );
         assert!(x2 + gl >= area.0 - 1e-3, "歌词左缘不能出屏");
         assert!(y2 + gt >= area.1 - 1e-3, "歌词上缘不能出屏");
         assert!(y2 < area.1, "工具条应当允许被推出屏幕上方");
@@ -1696,8 +1707,7 @@ mod tests {
         let guard = lyric_guard_rect(980.0, 260.0, 28.0, true);
         let (gl, gt, gw, gh) = guard;
         // 工作区比保护范围还小：贴边处理，不 panic、不翻转上下界。
-        let (x, y) =
-            clamp_lyric_position(500.0, 500.0, gl, gt, gw, gh, 0.0, 0.0, 300.0, 100.0);
+        let (x, y) = clamp_lyric_position(500.0, 500.0, gl, gt, gw, gh, 0.0, 0.0, 300.0, 100.0);
         assert!(x.is_finite() && y.is_finite());
         assert!(x <= 0.0 + 1e-3);
         // 非有限坐标原样返回。
@@ -1745,7 +1755,11 @@ mod tests {
                         .iter()
                         .filter(|line| line.translation.is_some())
                         .count();
-                    println!("{label}: 原文行数 {} / 带翻译行数 {}", lines.len(), translated);
+                    println!(
+                        "{label}: 原文行数 {} / 带翻译行数 {}",
+                        lines.len(),
+                        translated
+                    );
                     for line in lines.iter().take(8) {
                         println!(
                             "  {:>7}ms  {:?}  ->  {:?}",

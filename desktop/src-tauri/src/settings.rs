@@ -29,7 +29,12 @@ pub enum PlaybackMode {
 impl PlaybackMode {
     /// 点图标时的循环顺序：顺序 → 列表循环 → 随机循环 → 单曲循环。
     /// 与 Flutter 端 `PlaybackModeButton` 保持一致。
-    pub const ALL: [Self; 4] = [Self::Sequence, Self::ListLoop, Self::Shuffle, Self::SingleLoop];
+    pub const ALL: [Self; 4] = [
+        Self::Sequence,
+        Self::ListLoop,
+        Self::Shuffle,
+        Self::SingleLoop,
+    ];
 
     /// 切换到下一档。
     pub fn next(self) -> Self {
@@ -313,12 +318,18 @@ fn migrate_legacy_lyrics(value: &mut serde_json::Value) {
         return;
     }
     let mut lyrics = LyricsStyle::default();
-    if let Some(family) = object.get("lyrics_font_family").and_then(|item| item.as_str()) {
+    if let Some(family) = object
+        .get("lyrics_font_family")
+        .and_then(|item| item.as_str())
+    {
         if !family.trim().is_empty() {
             lyrics.font_family = family.to_owned();
         }
     }
-    if let Some(size) = object.get("lyrics_font_size").and_then(|item| item.as_f64()) {
+    if let Some(size) = object
+        .get("lyrics_font_size")
+        .and_then(|item| item.as_f64())
+    {
         lyrics.font_size = size as f32;
     }
     if let Some(karaoke) = object.get("lyrics_karaoke").and_then(|item| item.as_bool()) {
@@ -347,7 +358,10 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("wcmusic-settings-{name}-{}.json", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "wcmusic-settings-{name}-{}.json",
+            std::process::id()
+        ))
     }
 
     fn sample_playlist() -> wcmusic_core::PlatformPlaylist {
@@ -511,7 +525,12 @@ mod tests {
             settings.save_to(&path).unwrap();
 
             let loaded = AppSettings::load_from(Some(&path)).unwrap();
-            assert_eq!(loaded.playback_mode, mode, "{} 未能round-trip", mode.label());
+            assert_eq!(
+                loaded.playback_mode,
+                mode,
+                "{} 未能round-trip",
+                mode.label()
+            );
             let _ = fs::remove_file(&path);
         }
     }

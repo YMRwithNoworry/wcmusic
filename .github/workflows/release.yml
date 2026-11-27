@@ -72,7 +72,7 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   windows:
-    name: 构建 Flutter Windows 包
+    name: 构建原生 GPUI Windows 包
     needs: version
     runs-on: windows-latest
     steps:
@@ -87,7 +87,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native/wcmusic_core
+          workspaces: desktop/src-tauri
       - run: flutter pub get
       - name: Dart 静态分析
         shell: pwsh
@@ -103,21 +103,23 @@ jobs:
         run: flutter test
       - name: Rust 核心测试
         run: cargo test --manifest-path native/wcmusic_core/Cargo.toml
-      - name: 构建 Flutter Windows
-        run: flutter build windows --release
-      - name: 打包 Windows 目录
+      - name: 构建 GPUI Windows
+        run: cargo build --locked --release --jobs 2 --manifest-path desktop/src-tauri/Cargo.toml
+      - name: 打包 Windows 可执行文件
         shell: pwsh
         run: |
+          $exe = "desktop\src-tauri\target\release\wcmusic-desktop.exe"
+          if (-not (Test-Path $exe)) { throw "Native GPUI Windows executable not found: $exe" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $bundle = "build\windows\x64\runner\Release"
-          if (-not (Test-Path "$bundle\wcmusic.exe")) { throw "Flutter Windows executable not found: $bundle\wcmusic.exe" }
-          Compress-Archive -Path "$bundle\*" -DestinationPath dist\wcmusic-windows-x64.zip -Force
+          $staging = Join-Path $env:RUNNER_TEMP "wcmusic-windows-x64"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $staging "wcmusic-desktop.exe")
+          Compress-Archive -Path "$staging\*" -DestinationPath "dist\wcmusic-windows-x64.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/wcmusic-windows-x64.zip
           if-no-files-found: error
-
   android:
     name: 构建 Flutter Android 包
     needs: version

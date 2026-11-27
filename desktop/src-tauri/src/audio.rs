@@ -5,8 +5,8 @@
 //! 空间音频在文件末尾的内部子模块 `spatial` 里。
 
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use spatial::SpatialSource;
@@ -517,10 +517,10 @@ impl AudioPlayer {
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
         // 新 sink 默认音量是 1.0，先把用户设置的音量套上再出声。
         self.volume.apply_to(&sink);
-        sink.append(SpatialSource::new(
-            source,
-            Arc::clone(&self.spatial_audio_enabled),
-        ).with_strength(Arc::clone(&self.spatial_strength)));
+        sink.append(
+            SpatialSource::new(source, Arc::clone(&self.spatial_audio_enabled))
+                .with_strength(Arc::clone(&self.spatial_strength)),
+        );
         sink.play();
         self.sink = Some(sink);
         Ok(())
@@ -533,10 +533,10 @@ impl AudioPlayer {
         let sink =
             Sink::try_new(&self.handle).map_err(|error| format!("无法创建音频输出: {error}"))?;
         self.volume.apply_to(&sink);
-        sink.append(SpatialSource::new(
-            source,
-            Arc::clone(&self.spatial_audio_enabled),
-        ).with_strength(Arc::clone(&self.spatial_strength)));
+        sink.append(
+            SpatialSource::new(source, Arc::clone(&self.spatial_audio_enabled))
+                .with_strength(Arc::clone(&self.spatial_strength)),
+        );
         sink.play();
         self.sink = Some(sink);
         Ok(())
@@ -547,7 +547,8 @@ impl AudioPlayer {
     }
 
     pub fn set_spatial_strength(&self, strength: u32) {
-        self.spatial_strength.store(strength.min(100), Ordering::Relaxed);
+        self.spatial_strength
+            .store(strength.min(100), Ordering::Relaxed);
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -780,12 +781,12 @@ fn artwork_target_size(width: u32, height: u32) -> Option<(u32, u32)> {
 }
 #[cfg(test)]
 mod tests {
+    use super::spatial::SpatialSource;
     use super::{
         ARTWORK_MAX_EDGE, AudioStream, MemorySource, StreamingSource, artwork_pixels_allowed,
         artwork_target_size, clamp_seek_target, lock, normalize_artwork, samples_to_skip,
         sink_finished,
     };
-    use super::spatial::SpatialSource;
     use rodio::{Sink, Source};
     use std::io::{Cursor, Read, Seek, SeekFrom};
     use std::sync::Arc;
@@ -903,7 +904,6 @@ mod tests {
         assert_eq!(source.count(), 8_000);
     }
 
-
     /// 分批、带间隔地吐字节，模拟「还在下载」的响应体。
     struct TrickleReader {
         bytes: Vec<u8>,
@@ -965,8 +965,10 @@ mod tests {
     #[test]
     fn streaming_seek_from_end_needs_a_known_length() {
         let bytes = silent_wav(8_000, 2, 100);
-        let mut known =
-            AudioStream::spawn(Box::new(Cursor::new(bytes.clone())), Some(bytes.len() as u64));
+        let mut known = AudioStream::spawn(
+            Box::new(Cursor::new(bytes.clone())),
+            Some(bytes.len() as u64),
+        );
         assert_eq!(known.seek(SeekFrom::End(0)).unwrap(), bytes.len() as u64);
 
         let mut unknown = AudioStream::spawn(Box::new(Cursor::new(bytes)), None);
@@ -1024,7 +1026,6 @@ mod tests {
         assert!(!sink_finished(None));
     }
 
-
     fn memory_source_seek_past_end_saturates() {
         let mut source = MemorySource::from_bytes(Arc::new(silent_wav(8_000, 2, 8_000)))
             .expect("in-memory wav should decode");
@@ -1068,7 +1069,10 @@ mod tests {
     fn artwork_is_reencoded_as_jpeg() {
         let normalized = normalize_artwork(&png_bytes(64, 64)).expect("封面应当被接受");
 
-        assert_eq!(image::guess_format(&normalized).ok(), Some(image::ImageFormat::Jpeg));
+        assert_eq!(
+            image::guess_format(&normalized).ok(),
+            Some(image::ImageFormat::Jpeg)
+        );
     }
 
     #[test]
@@ -1079,14 +1083,20 @@ mod tests {
 
     #[test]
     fn artwork_target_size_only_shrinks() {
-        assert_eq!(artwork_target_size(ARTWORK_MAX_EDGE, ARTWORK_MAX_EDGE), None);
+        assert_eq!(
+            artwork_target_size(ARTWORK_MAX_EDGE, ARTWORK_MAX_EDGE),
+            None
+        );
         assert_eq!(artwork_target_size(0, 0), None);
         // 平台最常见的 400×400 也会缩到上限：640 KB -> 400 KB。
         assert_eq!(
             artwork_target_size(400, 400),
             Some((ARTWORK_MAX_EDGE, ARTWORK_MAX_EDGE))
         );
-        assert_eq!(artwork_target_size(1000, 500), Some((ARTWORK_MAX_EDGE, 160)));
+        assert_eq!(
+            artwork_target_size(1000, 500),
+            Some((ARTWORK_MAX_EDGE, 160))
+        );
     }
 }
 
@@ -1206,10 +1216,12 @@ mod spatial {
             } else {
                 0.0
             };
-            let cross_delay = ((CROSSTALK_ITD_SECONDS * sample_rate as f32).round() as usize).max(1);
+            let cross_delay =
+                ((CROSSTALK_ITD_SECONDS * sample_rate as f32).round() as usize).max(1);
             let to_samples = |delay: &f32| ((delay * sample_rate as f32).round() as usize).max(1);
             let early_delays_left: Vec<usize> = EARLY_DELAYS_LEFT.iter().map(to_samples).collect();
-            let early_delays_right: Vec<usize> = EARLY_DELAYS_RIGHT.iter().map(to_samples).collect();
+            let early_delays_right: Vec<usize> =
+                EARLY_DELAYS_RIGHT.iter().map(to_samples).collect();
             let reflection_len = early_delays_left
                 .iter()
                 .chain(early_delays_right.iter())
@@ -1250,7 +1262,9 @@ mod spatial {
         pub fn with_strength(mut self, strength: Arc<AtomicU32>) -> Self {
             self.blend = if self.enabled.load(Ordering::Relaxed) {
                 strength.load(Ordering::Relaxed).min(100) as f32 / 100.0
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             self.strength = strength;
             self
         }
@@ -1270,7 +1284,9 @@ mod spatial {
             let enabled = self.enabled.load(Ordering::Relaxed);
             let target = if enabled {
                 self.strength.load(Ordering::Relaxed).min(100) as f32 / 100.0
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             let previous_blend = self.blend;
             self.blend += (target - self.blend).clamp(-self.blend_step, self.blend_step);
             if self.blend == 0.0 {
@@ -1316,7 +1332,8 @@ mod spatial {
                 .zip(self.early_delays_right.iter())
                 .enumerate()
             {
-                let read_left = (self.reflection_index + reflection_len - delay_left) % reflection_len;
+                let read_left =
+                    (self.reflection_index + reflection_len - delay_left) % reflection_len;
                 let read_right =
                     (self.reflection_index + reflection_len - delay_right) % reflection_len;
                 early_left += self.reflection[read_left] * EARLY_GAINS_LEFT[tap];
@@ -1331,7 +1348,10 @@ mod spatial {
             self.tail_low_right += (direct_right - self.tail_low_right) * self.tail_highpass_coeff;
             let mut tail = [0.0; 2];
             self.room.tick(
-                &[direct_left - self.tail_low_left, direct_right - self.tail_low_right],
+                &[
+                    direct_left - self.tail_low_left,
+                    direct_right - self.tail_low_right,
+                ],
                 &mut tail,
             );
 
@@ -1339,7 +1359,8 @@ mod spatial {
             let spatial_left = DRY_GAIN * direct_left + early_left + TAIL_GAIN * tail[0];
             let spatial_right = DRY_GAIN * direct_right + early_right + TAIL_GAIN * tail[1];
             self.frame[0] = (left + self.blend * (soft_clip(spatial_left) - left)).clamp(-1.0, 1.0);
-            self.frame[1] = (right + self.blend * (soft_clip(spatial_right) - right)).clamp(-1.0, 1.0);
+            self.frame[1] =
+                (right + self.blend * (soft_clip(spatial_right) - right)).clamp(-1.0, 1.0);
             true
         }
 
@@ -1439,8 +1460,11 @@ mod spatial {
         fn zero_strength_is_exact_bypass_even_when_enabled() {
             let samples = vec![0.2, -0.3, 0.7, -0.6, 0.0, 0.1];
             let output: Vec<_> = SpatialSource::new(
-                SamplesBuffer::new(2, 48_000, samples.clone()), control(true),
-            ).with_strength(Arc::new(AtomicU32::new(0))).collect();
+                SamplesBuffer::new(2, 48_000, samples.clone()),
+                control(true),
+            )
+            .with_strength(Arc::new(AtomicU32::new(0)))
+            .collect();
             assert_eq!(output, samples);
         }
 
@@ -1450,7 +1474,8 @@ mod spatial {
             let dry: Vec<_> = SpatialSource::new(input(), control(false)).collect();
             let full: Vec<_> = SpatialSource::new(input(), control(true)).collect();
             let half: Vec<_> = SpatialSource::new(input(), control(true))
-                .with_strength(Arc::new(AtomicU32::new(50))).collect();
+                .with_strength(Arc::new(AtomicU32::new(50)))
+                .collect();
             assert_eq!(dry.len(), half.len());
             for ((dry, full), half) in dry.iter().zip(&full).zip(&half) {
                 assert!((half - (dry + full) * 0.5).abs() < 1e-6);
@@ -1487,7 +1512,6 @@ mod spatial {
             }
             SamplesBuffer::new(channels, sample_rate, samples)
         }
-
 
         /// 生成一段冲激响应，返回逐帧的 (左, 右)。
         fn impulse_response(channels: u16, rate: u32, seconds: usize) -> Vec<(f32, f32)> {
@@ -1814,7 +1838,8 @@ mod spatial {
             let samples: Vec<_> = (0..100)
                 .flat_map(|frame| [frame as f32, -(frame as f32)])
                 .collect();
-            let mut source = SpatialSource::new(SamplesBuffer::new(2, 100, samples), control(false));
+            let mut source =
+                SpatialSource::new(SamplesBuffer::new(2, 100, samples), control(false));
             assert_eq!(source.next(), Some(0.0));
             source.try_seek(Duration::from_millis(500)).unwrap();
             assert_eq!(source.next(), Some(-50.0));
@@ -1848,5 +1873,4 @@ mod spatial {
             assert_eq!(source.next(), None);
         }
     }
-
 }

@@ -5,7 +5,7 @@
 //   node scripts/release/sync-site.mjs --version 1.2.4 --repo YMRwithNoworry/wcmusic \
 //     [--previous v1.2.3] [--notes release-notes.md]
 //
-// 只在两个 Flutter 平台构建成功后调用；官网链接始终指向本次 Release。
+// Only called after the native Windows and Flutter Android builds succeed; site links target this Release.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

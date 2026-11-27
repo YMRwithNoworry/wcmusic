@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 /// 项目仓库（与「关于」页展示的地址一致）。
 pub const REPOSITORY_URL: &str = "https://github.com/YMRwithNoworry/wcmusic";
 
-
 /// GitHub 发布列表接口（取第一条即最新发布）。
 ///
 /// 不用 `/releases/latest`：仓库还没发布过版本时它返回 404，而列表接口会正常
@@ -23,7 +22,7 @@ const LATEST_RELEASE_ENDPOINT: &str =
 /// 检测结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateCheck {
-    /// 当前版本（`CARGO_PKG_VERSION`）。
+    /// 当前版本（桌面构建时从 `pubspec.yaml` 读取）。
     pub current_version: String,
     /// 远端最新版本（已去掉前缀 `v`）。接口没有发布版本时为 None。
     pub latest_version: Option<String>,
@@ -88,7 +87,8 @@ fn fetch_latest_release(use_proxy: bool) -> Result<String, String> {
 ///
 /// 跳过草稿与预发布：它们不该提示普通用户升级。
 fn parse_latest_release(body: &str) -> Option<serde_json::Value> {
-    let value: serde_json::Value = serde_json::from_str(body.trim_start_matches('\u{feff}')).ok()?;
+    let value: serde_json::Value =
+        serde_json::from_str(body.trim_start_matches('\u{feff}')).ok()?;
     match value {
         serde_json::Value::Array(entries) => entries.into_iter().find(is_published_release),
         // 兼容单个发布对象（例如 /releases/latest 的返回）。
@@ -141,7 +141,8 @@ fn normalize_version(tag: &str) -> String {
 /// 解析不出版本号的标签（例如带 `-beta` 后缀或纯日期）一律视为「不比当前新」，
 /// 避免误报提示用户升级。
 pub fn is_newer_version(candidate: &str, current: &str) -> bool {
-    let (Some(candidate), Some(current)) = (parse_version(candidate), parse_version(current)) else {
+    let (Some(candidate), Some(current)) = (parse_version(candidate), parse_version(current))
+    else {
         return false;
     };
     let length = candidate.len().max(current.len());
@@ -215,7 +216,10 @@ mod tests {
 
         // 单个发布对象（/releases/latest 的形状）同样能解析。
         let single = r#"{"tag_name":"v1.4.0","html_url":"https://example.com/v1.4.0"}"#;
-        assert_eq!(normalize_version(&parse_latest_tag(single).unwrap()), "1.4.0");
+        assert_eq!(
+            normalize_version(&parse_latest_tag(single).unwrap()),
+            "1.4.0"
+        );
     }
 
     #[test]

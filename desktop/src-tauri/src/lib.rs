@@ -1,14 +1,6 @@
-//! WCMusic 桌面端（Tauri 2 + React）的 Rust 后端。
-//!
-//! 前端在 `desktop/src`，通过 `#[tauri::command]` 调用这里；曲库索引、SQLite、
-//! 音源 QuickJS 运行时、洛雪备份/M3U 解析等重活全部复用共享核心 `wcmusic_core`。
-//!
-//! 模块：`audio` 播放器与下载、`lyrics` 歌词与外观、`settings` 设置持久化、
-//! `hotkey` 快捷键、`source` 音源脚本、`online` 在线内容、`playback` 播放控制、
-//! `update` 更新检查、`tray` 托盘、`state` 运行期状态、`commands` 命令面。
+//! WCMusic 原生 Windows 客户端。GPUI Kit 界面直接调用 Rust 服务。
 
 mod audio;
-mod commands;
 mod hotkey;
 mod lyrics;
 mod online;
@@ -16,89 +8,50 @@ mod playback;
 mod settings;
 mod source;
 mod state;
-mod tray;
+mod ui;
 mod update;
 
-use tauri::{Emitter, Manager};
+pub(crate) const VERSION: &str = env!("WCMUSIC_VERSION");
 
 pub fn run() {
-    tauri::Builder::default()
-        .manage(state::AppState::load())
-        .setup(|app| {
-            tray::setup(app)?;
-            // 全局快捷键：收到动作就发给前端，由前端执行（播放队列与状态都在前端）。
-            let handle = app.handle().clone();
-            if let Some(service) = hotkey::HotKeyService::start(move |action| {
-                let _ = handle.emit("wcmusic://hotkey", action);
-            }) {
-                app.state::<state::AppState>().install_hotkeys(service);
+    use std::borrow::Cow;
+
+    use gpui_kit::component::TitleBar;
+    use gpui_kit::component::theme::ThemeMode;
+    use gpui_kit::*;
+    gpui_kit::application()
+        .with_assets(assets::AllAssets)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            if let Err(error) = cx.text_system().add_fonts(vec![
+                Cow::Borrowed(include_bytes!("../../../assets/fonts/MiSans-Regular.ttf")),
+                Cow::Borrowed(include_bytes!("../../../assets/fonts/MiSans-Medium.ttf")),
+                Cow::Borrowed(include_bytes!("../../../assets/fonts/MiSans-Semibold.ttf")),
+                Cow::Borrowed(include_bytes!("../../../assets/fonts/MiSans-Bold.ttf")),
+            ]) {
+                eprintln!("注册 MiSans 字体失败：{error}");
             }
-            // 设置里开着桌面歌词就把窗口建出来（与旧桌面端一致）。
-            let settings = app.state::<state::AppState>().settings();
-            if settings.lyrics_enabled {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(error) = commands::show_lyrics_window(&handle, &settings.lyrics) {
-                        eprintln!("创建桌面歌词窗口失败：{error}");
-                    }
-                });
-            }
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            // 主窗口关闭收进托盘，音频继续；歌词窗口关闭则释放原生覆盖层。
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    api.prevent_close();
-                    if let Err(error) = commands::hide_main_window(window.app_handle()) {
-                        eprintln!("收进托盘失败：{error}");
-                    }
-                } else if window.label() == "lyrics" {
-                    // 歌词窗口真正关闭；不能保留透明置顶窗口拦截鼠标。
-                    if let Err(error) = commands::close_lyrics_window(window.app_handle()) {
-                        eprintln!("关闭桌面歌词失败：{error}");
-                    }
-                }
-            }
-        })
-        .invoke_handler(tauri::generate_handler![
-            commands::app_info,
-            commands::get_settings,
-            commands::save_settings,
-            commands::search_online,
-            commands::load_rankings,
-            commands::load_ranking_tracks,
-            commands::load_playlists,
-            commands::load_playlist_tracks,
-            commands::play_track,
-            commands::playback_snapshot,
-            commands::toggle_playback,
-            commands::pause_playback,
-            commands::resume_playback,
-            commands::stop_playback,
-            commands::seek_playback,
-            commands::set_playback_volume,
-            commands::set_spatial_audio,
-            commands::track_artwork,
-            commands::playlist_folders,
-            commands::toggle_saved_playlist,
-            commands::toggle_saved_track,
-            commands::load_lyrics,
-            commands::translate_lyrics,
-            commands::lyrics_presets,
-            commands::list_sources,
-            commands::import_source_script,
-            commands::import_source_file,
-            commands::remove_source,
-            commands::select_source,
-            commands::check_update,
-            commands::open_external,
-            commands::hotkey_issues,
-            commands::hotkey_list,
-            commands::toggle_main_window,
-            commands::toggle_lyrics_window,
-            commands::lyrics_window_ready
-        ])
-        .run(tauri::generate_context!())
-        .expect("WCMusic 桌面端启动失败");
+            cx.set_app_identity("com.wcmusic.desktop", "WCMusic");
+            let state = std::sync::Arc::new(state::AppState::load());
+            let settings = state.settings();
+            let theme = if settings.dark_theme {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            };
+            ui::apply_brand_theme(theme, cx);
+            let mut options = TitleBar::window_options();
+            options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(1180.), px(760.)),
+                cx,
+            )));
+            options.window_min_size = Some(size(px(880.), px(560.)));
+            gpui_kit::open_window(options, cx, move |window, cx| {
+                let platform = ui::Platform::new(state.clone(), window, cx);
+                cx.new(|cx| ui::Desktop::new(state, settings, platform, window, cx))
+            })
+            .expect("WCMusic 主窗口创建失败");
+            cx.activate(true);
+        });
 }

@@ -1,7 +1,6 @@
 //! 在线内容：搜索、榜单目录、榜单曲目、平台歌单。
 //!
-//! 平台请求全部在共享核心 `wcmusic_core` 里实现，这里只做「错误转字符串」
-//! 与给前端命令用的薄封装。
+//! 平台请求由共享核心 `wcmusic_core` 实现，这里统一转换界面错误。
 
 use std::io::Read;
 use std::time::Duration;
@@ -12,7 +11,7 @@ use wcmusic_core::{
     load_ranking_tracks_with_proxy, load_rankings_with_proxy, search_online_with_proxy,
 };
 
-/// 平台错误统一转成字符串：Tauri 命令的 `Err` 必须能序列化。
+/// 把平台错误转换成界面可显示的文字。
 fn flatten<T>(result: Result<T, OnlineSearchError>) -> Result<T, String> {
     result.map_err(|error| error.to_string())
 }

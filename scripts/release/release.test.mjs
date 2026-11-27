@@ -54,7 +54,7 @@ function site(cwd) {
   for (const file of ['site/index.html', 'site/app.js']) writeFileSync(join(cwd, file), readFileSync(resolve(root, file)));
 }
 
-test('site and notes target both Flutter artifacts from the current release', () => fixture(cwd => {
+test('site and notes target native Windows and Flutter Android artifacts from the current release', () => fixture(cwd => {
   site(cwd);
   execute(cwd, 'scripts/release/sync-site.mjs', ['--version', '1.2.47', '--notes', join(cwd, 'notes.md')]);
   const html = readFileSync(join(cwd, 'site/index.html'), 'utf8');

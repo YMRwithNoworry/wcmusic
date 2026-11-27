@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Flutter pubspec.yaml is the release version source for Windows and Android.
+// pubspec.yaml is the release version source for the native Windows and Flutter Android apps.
 //
 // Usage: node scripts/release/bump-version.mjs [patch|minor|major|none]
 // Output (written to $GITHUB_OUTPUT): version=1.2.4 / tag=v1.2.4 / previous=1.2.3

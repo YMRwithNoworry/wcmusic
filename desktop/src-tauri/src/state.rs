@@ -1,4 +1,4 @@
-//! 应用运行期状态：设置与播放器，通过 Tauri 的 `State<AppState>` 注入给各命令。
+//! 桌面应用共享服务：播放器、设置、音源库与快捷键注册。
 
 use std::sync::Mutex;
 
@@ -7,7 +7,7 @@ use crate::playback::Playback;
 use crate::settings::AppSettings;
 use crate::source::SourceStore;
 
-/// 全局状态。命令里用 `State<'_, AppState>` 取。
+/// 由主窗口与后台任务共享的应用服务。
 pub struct AppState {
     settings: Mutex<AppSettings>,
     playback: Mutex<Playback>,
@@ -20,7 +20,11 @@ impl AppState {
     /// 启动时从 `%APPDATA%\wcmusic\settings.json` 读一次。
     pub fn load() -> Self {
         let settings = AppSettings::load();
-        let playback = Playback::new(1.0, settings.spatial_audio_enabled, settings.spatial_audio_strength);
+        let playback = Playback::new(
+            1.0,
+            settings.spatial_audio_enabled,
+            settings.spatial_audio_strength,
+        );
         Self {
             settings: Mutex::new(settings),
             playback: Mutex::new(playback),
@@ -68,7 +72,7 @@ impl AppState {
         action(&mut guard)
     }
 
-    /// 装上快捷键服务（`setup` 里拿到 `AppHandle` 之后调用），并按设置注册一次。
+    /// 装上全局快捷键服务并按设置注册一次。
     pub fn install_hotkeys(&self, service: HotKeyService) {
         {
             let mut slot = self
