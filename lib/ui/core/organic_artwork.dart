@@ -73,7 +73,10 @@ class _OrganicArtworkState extends State<OrganicArtwork>
     final fallback = AnimatedBuilder(
       animation: _breathAnimation,
       builder: (_, _) => CustomPaint(
-        painter: _ArtworkPainter(widget.seed.hashCode, _breathAnimation.value),
+        painter: _ArtworkPainter(
+          _stableSeed(widget.seed),
+          _breathAnimation.value,
+        ),
       ),
     );
     final uri = widget.artworkUri;
@@ -101,6 +104,15 @@ class _OrganicArtworkState extends State<OrganicArtwork>
     if (widget.size.isInfinite) return SizedBox.expand(child: artwork);
     return SizedBox.square(dimension: widget.size, child: artwork);
   }
+}
+
+int _stableSeed(String value) {
+  var hash = 0x811C9DC5;
+  for (final codeUnit in value.codeUnits) {
+    hash ^= codeUnit;
+    hash = (hash * 0x01000193) & 0x7FFFFFFF;
+  }
+  return hash;
 }
 
 class _ArtworkPainter extends CustomPainter {

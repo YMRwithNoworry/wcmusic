@@ -74,6 +74,7 @@ void main() {
         ),
       ),
       playerService: FakePlayerService(),
+      audioEffectSettingsStore: FakeAudioEffectSettingsStore(),
     );
     await viewModel.load();
     await tester.pumpWidget(

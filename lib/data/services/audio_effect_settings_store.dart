@@ -9,8 +9,11 @@ abstract interface class AudioEffectSettingsStore {
 }
 
 class FileAudioEffectSettingsStore implements AudioEffectSettingsStore {
+  bool get _isFlutterTest => Platform.environment['FLUTTER_TEST'] == 'true';
+
   @override
   Future<bool> loadSpatialAudio() async {
+    if (_isFlutterTest) return false;
     try {
       final file = await _settingsFile();
       if (!await file.exists()) return false;
@@ -23,6 +26,7 @@ class FileAudioEffectSettingsStore implements AudioEffectSettingsStore {
 
   @override
   Future<void> saveSpatialAudio(bool enabled) async {
+    if (_isFlutterTest) return;
     try {
       final file = await _settingsFile();
       await file.parent.create(recursive: true);
