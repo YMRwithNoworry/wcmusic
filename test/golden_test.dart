@@ -23,14 +23,13 @@ void main() {
     bool disableAnimations = true,
   }) async {
     if (!fontLoaded) {
-      final fontFile = File(r'C:\Windows\Fonts\simhei.ttf');
-      if (fontFile.existsSync()) {
-        final bytes = await tester.runAsync(fontFile.readAsBytes);
-        if (bytes == null) throw StateError('无法加载 golden 测试字体');
-        final loader = FontLoader('Segoe UI')
-          ..addFont(Future.value(ByteData.sublistView(bytes)));
-        await loader.load();
-      }
+      final fontFile = File('assets/fonts/MiSans-Regular.ttf');
+      if (!fontFile.existsSync()) throw StateError('无法加载 golden 测试字体');
+      final bytes = await tester.runAsync(fontFile.readAsBytes);
+      if (bytes == null) throw StateError('无法加载 golden 测试字体');
+      final loader = FontLoader('Segoe UI')
+        ..addFont(Future.value(ByteData.sublistView(bytes)));
+      await loader.load();
       fontLoaded = true;
     }
     tester.view.physicalSize = size;
