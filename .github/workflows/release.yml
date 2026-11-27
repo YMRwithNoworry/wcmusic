@@ -75,6 +75,7 @@ jobs:
     name: 构建原生 GPUI Windows 包
     needs: version
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:

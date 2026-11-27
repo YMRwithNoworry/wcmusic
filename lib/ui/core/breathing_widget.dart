@@ -32,24 +32,31 @@ class _BreathingWidgetState extends State<BreathingWidget>
     curve: Curves.easeInOut,
   );
 
+  bool? _disableAnimations;
+
   @override
-  void initState() {
-    super.initState();
-    if (widget.enabled) {
-      _controller.repeat(reverse: true);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (_disableAnimations != disableAnimations) {
+      _disableAnimations = disableAnimations;
+      _syncAnimation();
     }
   }
 
   @override
   void didUpdateWidget(BreathingWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.enabled != oldWidget.enabled) {
-      if (widget.enabled) {
-        _controller.repeat(reverse: true);
-      } else {
-        _controller.stop();
-        _controller.value = 0;
-      }
+    if (widget.enabled != oldWidget.enabled) _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (widget.enabled && _disableAnimations != true) {
+      _controller.repeat(reverse: true);
+    } else {
+      _controller
+        ..stop()
+        ..value = 0;
     }
   }
 
@@ -124,24 +131,31 @@ class _PulseWidgetState extends State<PulseWidget>
     ),
   );
 
+  bool? _disableAnimations;
+
   @override
-  void initState() {
-    super.initState();
-    if (widget.enabled) {
-      _controller.repeat();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (_disableAnimations != disableAnimations) {
+      _disableAnimations = disableAnimations;
+      _syncAnimation();
     }
   }
 
   @override
   void didUpdateWidget(PulseWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.enabled != oldWidget.enabled) {
-      if (widget.enabled) {
-        _controller.repeat();
-      } else {
-        _controller.stop();
-        _controller.value = 0;
-      }
+    if (widget.enabled != oldWidget.enabled) _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (widget.enabled && _disableAnimations != true) {
+      _controller.repeat();
+    } else {
+      _controller
+        ..stop()
+        ..value = 0;
     }
   }
 
