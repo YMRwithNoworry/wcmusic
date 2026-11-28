@@ -409,3 +409,12 @@ pub fn artwork_path(track: &Track, use_proxy: bool) -> Result<Option<std::path::
     let cache_id = format!("{:?}-{}", track.source, track.id);
     download_artwork(uri, &cache_id, use_proxy).map(|path| Some(path.into()))
 }
+
+/// 下载并缓存歌单、榜单等非曲目封面。
+pub fn artwork_path_for_uri(
+    uri: &str,
+    cache_id: &str,
+    use_proxy: bool,
+) -> Result<std::path::PathBuf, String> {
+    download_artwork(uri, cache_id, use_proxy).map(Into::into)
+}

@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,6 +9,7 @@ use gpui_kit::component::{
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
+    menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement,
     slider::{Slider, SliderEvent, SliderState, SliderValue},
     theme::{Colorize as _, Theme, ThemeMode},
@@ -20,7 +23,7 @@ use crate::lyrics::LyricLine;
 use crate::settings::{AppSettings, PlaybackMode, SavedPlaylist, SavedTrack};
 use crate::source::{self, SourceView};
 use crate::state::AppState;
-use crate::{VERSION, online};
+use crate::{VERSION, online, playback};
 
 mod overlay;
 mod platform;
@@ -57,35 +60,35 @@ pub(crate) fn apply_brand_theme(mode: ThemeMode, cx: &mut App) {
             danger,
         ) = if dark {
             (
-                color("#131924"),
-                color("#E8EEF7"),
-                color("#1B2331"),
-                color("#9AB5FF"),
-                color("#142548"),
-                color("#252E3E"),
-                color("#E8EEF7"),
-                color("#AAB4C5"),
-                color("#283752"),
-                color("#DCE6FF"),
-                color("#FFFFFF1A"),
-                color("#FFFFFF24"),
-                color("#D76060"),
+                color("#171A1F"),
+                color("#E5E7EB"),
+                color("#20242A"),
+                color("#78A9CF"),
+                color("#10283B"),
+                color("#282D34"),
+                color("#E5E7EB"),
+                color("#A2A8B0"),
+                color("#293742"),
+                color("#DBECF8"),
+                color("#FFFFFF17"),
+                color("#FFFFFF21"),
+                color("#CB5A5A"),
             )
         } else {
             (
-                color("#F4F6FA"),
-                color("#182235"),
                 color("#FFFFFF"),
-                color("#4569D4"),
+                color("#454A4F"),
                 color("#FFFFFF"),
-                color("#EEF1F6"),
-                color("#2D3A51"),
-                color("#657286"),
-                color("#E9EEFB"),
-                color("#304FA7"),
-                color("#1822351F"),
-                color("#18223529"),
-                color("#C54C4C"),
+                color("#558DB6"),
+                color("#FFFFFF"),
+                color("#F1F3F5"),
+                color("#4F555A"),
+                color("#91969B"),
+                color("#E2EDF5"),
+                color("#346D96"),
+                color("#DCE2E7"),
+                color("#D6E3EC"),
+                color("#C44F4F"),
             )
         };
 
@@ -132,7 +135,11 @@ pub(crate) fn apply_brand_theme(mode: ThemeMode, cx: &mut App) {
         theme.list_hover = accent;
         theme.list_active = accent;
         theme.list_active_border = primary;
-        theme.sidebar = background;
+        theme.sidebar = if dark {
+            color("#1B1E23")
+        } else {
+            color("#EAF1F6")
+        };
         theme.sidebar_foreground = foreground;
         theme.sidebar_accent = accent;
         theme.sidebar_accent_foreground = accent_foreground;
@@ -154,8 +161,8 @@ pub(crate) fn apply_brand_theme(mode: ThemeMode, cx: &mut App) {
         theme.scrollbar_thumb_hover = muted_foreground.opacity(0.6);
         theme.font_family = "MiSans".into();
         theme.font_size = px(13.0);
-        theme.radius = px(12.0);
-        theme.radius_lg = px(16.0);
+        theme.radius = px(4.0);
+        theme.radius_lg = px(6.0);
         theme.shadow = false;
     });
 }
@@ -172,19 +179,9 @@ enum Page {
 }
 
 impl Page {
-    const ALL: [(Self, &'static str); 7] = [
-        (Self::Home, "发现音乐"),
-        (Self::Search, "搜索音乐"),
-        (Self::Rankings, "排行榜"),
-        (Self::Favorites, "我的收藏"),
-        (Self::Sources, "音源管理"),
-        (Self::NowPlaying, "正在播放"),
-        (Self::Settings, "设置"),
-    ];
-
     const NAV: [(Self, &'static str); 6] = [
-        (Self::Home, "发现音乐"),
         (Self::Search, "搜索音乐"),
+        (Self::Home, "发现音乐"),
         (Self::Rankings, "排行榜"),
         (Self::Favorites, "我的收藏"),
         (Self::Sources, "音源管理"),
@@ -195,25 +192,13 @@ impl Page {
 impl Page {
     fn icon(self) -> IconName {
         match self {
-            Self::Home => IconName::House,
+            Self::Home => IconName::Music2,
             Self::Search => IconName::Search,
             Self::Rankings => IconName::ChartLine,
-            Self::Favorites => IconName::Music,
+            Self::Favorites => IconName::Heart,
             Self::Sources => IconName::Plug,
             Self::NowPlaying => IconName::ListMusic,
             Self::Settings => IconName::Settings,
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::Home => "从喜欢的平台发现歌单，也可以直接搜索歌曲或歌手。",
-            Self::Search => "搜索歌曲、歌手或专辑。",
-            Self::Rankings => "浏览平台榜单，找到正在上升的歌曲。",
-            Self::Favorites => "整理收藏的歌曲、歌单和播放队列。",
-            Self::Sources => "管理解析整曲地址所使用的音源。",
-            Self::NowPlaying => "查看当前歌曲与同步歌词。",
-            Self::Settings => "调整你的听歌习惯。更改后自动保存，无需额外确认。",
         }
     }
 }
@@ -233,6 +218,8 @@ pub(super) struct Desktop {
     ranking_tracks: Vec<Track>,
     selected_ranking: Option<PlatformRanking>,
     playlists: Vec<PlatformPlaylist>,
+    artwork: HashMap<String, Arc<PathBuf>>,
+    pending_artwork: HashSet<String>,
     selected_playlist: Option<PlatformPlaylist>,
     playlist_tracks: Vec<Track>,
     playlist_page: usize,
@@ -355,6 +342,8 @@ impl Desktop {
             ranking_tracks: Vec::new(),
             selected_ranking: None,
             playlists: Vec::new(),
+            artwork: HashMap::new(),
+            pending_artwork: HashSet::new(),
             selected_playlist: None,
             playlist_tracks: Vec::new(),
             playlist_page: 1,
@@ -612,7 +601,19 @@ impl Desktop {
             let _ = this.update(cx, |this, cx| {
                 if request_revision == this.request_revision {
                     match result {
-                        Ok(items) => this.playlists = items,
+                        Ok(items) => {
+                            this.playlists = items;
+                            for playlist in this.playlists.clone() {
+                                if let Some(uri) = playlist.artwork_uri.clone() {
+                                    this.load_artwork(
+                                        playlist_artwork_key(&playlist),
+                                        uri,
+                                        this.settings.use_network_proxy,
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
                         Err(error) => this.status = Some(error),
                     }
                     this.busy = false;
@@ -643,6 +644,16 @@ impl Desktop {
                                 .into_iter()
                                 .filter(|item| item.channel == channel)
                                 .collect();
+                            for ranking in this.rankings.clone() {
+                                if let Some(uri) = ranking.artwork_uri.clone() {
+                                    this.load_artwork(
+                                        ranking_artwork_key(&ranking),
+                                        uri,
+                                        this.settings.use_network_proxy,
+                                        cx,
+                                    );
+                                }
+                            }
                             this.selected_ranking = None;
                             this.ranking_tracks.clear();
                         }
@@ -677,6 +688,29 @@ impl Desktop {
                 }
             });
         }));
+    }
+
+    fn load_artwork(&mut self, key: String, uri: String, use_proxy: bool, cx: &mut Context<Self>) {
+        if self.artwork.contains_key(&key) || !self.pending_artwork.insert(key.clone()) {
+            return;
+        }
+
+        let cache_id = key.clone();
+        cx.spawn(async move |this, cx| {
+            let artwork = cx
+                .background_spawn(async move {
+                    playback::artwork_path_for_uri(&uri, &cache_id, use_proxy)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.pending_artwork.remove(&key);
+                if let Ok(path) = artwork {
+                    this.artwork.insert(key, Arc::new(path));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn open_playlist(&mut self, playlist: PlatformPlaylist, cx: &mut Context<Self>) {
@@ -717,6 +751,24 @@ impl Desktop {
         match page {
             Page::Home if self.playlists.is_empty() => self.load_playlists(false, cx),
             Page::Rankings if self.rankings.is_empty() => self.load_rankings(cx),
+            Page::Favorites => {
+                for playlist in self
+                    .settings
+                    .saved_playlists
+                    .iter()
+                    .map(|saved| saved.playlist.clone())
+                    .collect::<Vec<_>>()
+                {
+                    if let Some(uri) = playlist.artwork_uri.clone() {
+                        self.load_artwork(
+                            playlist_artwork_key(&playlist),
+                            uri,
+                            self.settings.use_network_proxy,
+                            cx,
+                        );
+                    }
+                }
+            }
             _ => {}
         }
         cx.notify();
@@ -750,6 +802,14 @@ impl Desktop {
     }
 
     fn toggle_playlist(&mut self, playlist: PlatformPlaylist, cx: &mut Context<Self>) {
+        if let Some(uri) = playlist.artwork_uri.clone() {
+            self.load_artwork(
+                playlist_artwork_key(&playlist),
+                uri,
+                self.settings.use_network_proxy,
+                cx,
+            );
+        }
         let settings = self.state.update_settings(|settings| {
             match settings
                 .saved_playlists
@@ -873,107 +933,215 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + 'static {
         let selected = self.page == page;
-        Button::new(label)
-            .icon(page.icon())
-            .label(label)
-            .small()
+        h_flex()
             .w_full()
-            .justify_start()
-            .custom(
-                ButtonCustomVariant::new(cx)
-                    .color(if selected {
-                        cx.theme().accent
-                    } else {
-                        cx.theme().transparent
-                    })
-                    .foreground(if selected {
-                        cx.theme().accent_foreground
-                    } else {
-                        cx.theme().muted_foreground
-                    })
-                    .hover(cx.theme().accent)
-                    .active(cx.theme().accent),
+            .h(px(64.))
+            .items_center()
+            .child(div().w(px(3.)).h(px(36.)).bg(if selected {
+                cx.theme().primary
+            } else {
+                cx.theme().transparent
+            }))
+            .child(
+                Button::new(label)
+                    .icon(page.icon())
+                    .large()
+                    .flex_1()
+                    .h(px(60.))
+                    .justify_center()
+                    .tooltip(label)
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .color(if selected {
+                                cx.theme().accent
+                            } else {
+                                cx.theme().transparent
+                            })
+                            .foreground(if selected {
+                                cx.theme().accent_foreground
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .hover(cx.theme().accent)
+                            .active(cx.theme().accent),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_page(page, cx))),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.set_page(page, cx)))
     }
 
     fn render_channel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .children(OnlineSearchChannel::ALL.into_iter().map(|channel| {
-                let selected = channel == self.channel;
-                Button::new(format!("channel-{channel:?}"))
-                    .label(channel.label())
-                    .when(selected, |button| button.outline())
-                    .when(!selected, |button| button.ghost())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_channel(channel, cx)))
-            }))
+        let selected_channel = self.channel;
+        let desktop = cx.entity().downgrade();
+
+        Button::new("channel-picker")
+            .ghost()
+            .small()
+            .label(selected_channel.label())
+            .icon(IconName::ChevronDown)
+            .tooltip("选择音源")
+            .dropdown_menu(move |menu, _, _| {
+                OnlineSearchChannel::ALL
+                    .into_iter()
+                    .fold(menu, |menu, channel| {
+                        let desktop = desktop.clone();
+                        menu.item(
+                            PopupMenuItem::new(channel.label())
+                                .checked(channel == selected_channel)
+                                .on_click(move |_, _, cx| {
+                                    let _ = desktop
+                                        .update(cx, |this, cx| this.set_channel(channel, cx));
+                                }),
+                        )
+                    })
+            })
     }
 
     fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let saved = &self.settings.saved_playlists;
-        let rows: Vec<_> = self
-            .playlists
-            .iter()
-            .cloned()
-            .map(|playlist| {
-                let title = playlist.name.clone();
-                let playlist_id = playlist.id.clone();
-                let open_playlist = playlist.clone();
-                let save_playlist = playlist.clone();
-                let meta = format!(
-                    "{} · {} 首",
-                    playlist.channel.label(),
-                    playlist.track_count.unwrap_or(0)
-                );
-                let is_saved = saved.iter().any(|item| item.matches(&playlist));
-                h_flex()
-                    .justify_between()
-                    .gap_3()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        v_flex().gap_1().child(title).child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(meta),
+        let mut columns: [Vec<AnyElement>; 3] = std::array::from_fn(|_| Vec::new());
+        for (index, playlist) in self.playlists.iter().cloned().enumerate() {
+            let key = playlist_artwork_key(&playlist);
+            let artwork = self.artwork.get(&key).cloned();
+            let has_artwork = artwork.is_some();
+            let open_playlist = playlist.clone();
+            let play_count = playlist
+                .play_count
+                .map(format_count)
+                .unwrap_or_else(|| format!("{} 首歌曲", playlist.track_count.unwrap_or_default()));
+            let title = playlist.name.clone();
+            let author = playlist.author.clone();
+            let channel = playlist.channel.label();
+            let id = playlist.id.clone();
+            let card = h_flex()
+                .h(px(148.))
+                .items_center()
+                .child(
+                    Button::new(format!("open-{id}"))
+                        .ghost()
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(140.))
+                        .justify_start()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_playlist(open_playlist.clone(), cx)
+                        }))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_start()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .size_32()
+                                        .flex_shrink_0()
+                                        .rounded(px(4.))
+                                        .overflow_hidden()
+                                        .bg(cx.theme().secondary)
+                                        .when_some(artwork, |view, path| {
+                                            view.child(
+                                                img(path.as_ref().clone())
+                                                    .size_full()
+                                                    .object_fit(ObjectFit::Cover),
+                                            )
+                                        })
+                                        .when(!has_artwork, |view| {
+                                            view.items_center().justify_center().child(
+                                                Icon::new(IconName::Music2)
+                                                    .small()
+                                                    .text_color(cx.theme().muted_foreground),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .items_start()
+                                        .child(
+                                            div().text_sm().font_medium().truncate().child(title),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .truncate()
+                                                .child(if author.is_empty() {
+                                                    channel.to_owned()
+                                                } else {
+                                                    author
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(play_count),
+                                        ),
+                                ),
                         ),
-                    )
-                    .child(
-                        Button::new(format!("open-{playlist_id}"))
-                            .label("打开")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_playlist(open_playlist.clone(), cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(format!("save-{playlist_id}"))
-                            .label(if is_saved { "已收藏" } else { "收藏" })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_playlist(save_playlist.clone(), cx)
-                            })),
-                    )
-            })
-            .collect();
+                )
+                .into_any_element();
+            columns[index % 3].push(card);
+        }
+
+        let playlist_columns =
+            h_flex()
+                .w_full()
+                .gap_3()
+                .children(columns.into_iter().map(|cards| {
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .children(cards)
+                        .into_any_element()
+                }));
+
         v_flex()
-            .gap_3()
-            .child(self.render_channel(cx))
+            .gap_2()
             .child(
-                h_flex().justify_between().child("平台热门歌单").child(
-                    Button::new("refresh-playlists")
-                        .label(if self.busy {
-                            "加载中…"
-                        } else {
-                            "换一批"
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| this.load_playlists(true, cx))),
-                ),
+                h_flex()
+                    .h(px(28.))
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_sm().font_medium().child("平台热门歌单"))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("refresh-playlists")
+                                    .ghost()
+                                    .small()
+                                    .label(if self.busy {
+                                        "加载中…"
+                                    } else {
+                                        "换一批"
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.load_playlists(true, cx)),
+                                    ),
+                            )
+                            .child(self.render_channel(cx)),
+                    ),
             )
-            .children(rows)
+            .child(playlist_columns)
+            .when(self.playlists.is_empty() && self.busy, |view| {
+                view.child(
+                    div()
+                        .py_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("正在加载推荐歌单…"),
+                )
+            })
             .when(self.playlists.is_empty() && !self.busy, |this| {
-                this.child("点击“换一批”加载平台推荐歌单。")
+                this.child(
+                    div()
+                        .py_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("暂时没有推荐歌单。"),
+                )
             })
             .children(self.render_playlist_detail(cx))
     }
@@ -981,6 +1149,12 @@ impl Desktop {
     fn render_playlist_detail(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let playlist = self.selected_playlist.as_ref()?;
         let tracks = &self.playlist_tracks;
+        let save_playlist = playlist.clone();
+        let is_saved = self
+            .settings
+            .saved_playlists
+            .iter()
+            .any(|saved| saved.matches(playlist));
         Some(
             v_flex()
                 .gap_2()
@@ -992,16 +1166,44 @@ impl Desktop {
                         .justify_between()
                         .child(playlist.name.clone())
                         .child(
-                            Button::new("close-playlist")
-                                .ghost()
-                                .label("返回歌单")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.invalidate_request();
-                                    this.selected_playlist = None;
-                                    this.playlist_tracks.clear();
-                                    this.status = None;
-                                    cx.notify();
-                                })),
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    Button::new("save-playlist")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Heart)
+                                        .tooltip(if is_saved {
+                                            "取消收藏歌单"
+                                        } else {
+                                            "收藏歌单"
+                                        })
+                                        .when(is_saved, |button| {
+                                            button.custom(
+                                                ButtonCustomVariant::new(cx)
+                                                    .color(cx.theme().transparent)
+                                                    .foreground(cx.theme().primary)
+                                                    .hover(cx.theme().accent)
+                                                    .active(cx.theme().accent),
+                                            )
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_playlist(save_playlist.clone(), cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("close-playlist")
+                                        .ghost()
+                                        .label("返回歌单")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.invalidate_request();
+                                            this.selected_playlist = None;
+                                            this.playlist_tracks.clear();
+                                            this.status = None;
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
                 )
                 .when(self.busy, |view| view.child("正在加载歌单…"))
@@ -1022,63 +1224,155 @@ impl Desktop {
 
     fn render_rankings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tracks = &self.ranking_tracks;
-        v_flex()
-            .gap_3()
-            .child(self.render_channel(cx))
+        h_flex()
+            .flex_1()
+            .min_h_0()
+            .items_stretch()
             .child(
-                Button::new("load-rankings")
-                    .label(if self.busy {
-                        "加载中…"
-                    } else {
-                        "加载排行榜"
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.load_rankings(cx))),
-            )
-            .children(self.rankings.iter().cloned().map(|ranking| {
-                let name = ranking.name.clone();
-                Button::new(format!("ranking-{}", ranking.id))
-                    .label(name)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_ranking(ranking.clone(), cx)),
+                v_flex()
+                    .w(px(184.))
+                    .flex_shrink_0()
+                    .min_h_0()
+                    .pr_2()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        Button::new("load-rankings")
+                            .ghost()
+                            .small()
+                            .w_full()
+                            .justify_start()
+                            .label(if self.busy {
+                                "正在加载…"
+                            } else {
+                                "排行榜"
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| this.load_rankings(cx))),
                     )
-            }))
-            .when_some(self.selected_ranking.as_ref(), |this, ranking| {
-                this.child(format!("{} · {} 首", ranking.name, tracks.len()))
-            })
-            .when(!tracks.is_empty(), |view| {
-                view.child(
-                    Button::new("play-ranking")
-                        .label("播放全部")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.play_tracks(this.ranking_tracks.clone().into(), 0, cx)
-                        })),
-                )
-                .children(self.track_rows(tracks, "ranking", cx))
-            })
+                    .children(self.rankings.iter().cloned().map(|ranking| {
+                        let active = self
+                            .selected_ranking
+                            .as_ref()
+                            .is_some_and(|selected| selected.id == ranking.id);
+                        let artwork = self.artwork.get(&ranking_artwork_key(&ranking)).cloned();
+                        let has_artwork = artwork.is_some();
+                        let name = ranking.name.clone();
+                        Button::new(format!("ranking-{}", ranking.id))
+                            .ghost()
+                            .small()
+                            .w_full()
+                            .justify_start()
+                            .when(active, |button| {
+                                button.custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(cx.theme().accent)
+                                        .foreground(cx.theme().primary)
+                                        .hover(cx.theme().accent)
+                                        .active(cx.theme().accent),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .size_10()
+                                            .flex_shrink_0()
+                                            .rounded(px(4.))
+                                            .overflow_hidden()
+                                            .bg(cx.theme().secondary)
+                                            .when_some(artwork, |view, path| {
+                                                view.child(
+                                                    img(path.as_ref().clone())
+                                                        .size_full()
+                                                        .object_fit(ObjectFit::Cover),
+                                                )
+                                            })
+                                            .when(!has_artwork, |view| {
+                                                view.items_center().justify_center().child(
+                                                    Icon::new(IconName::ChartLine)
+                                                        .small()
+                                                        .text_color(cx.theme().muted_foreground),
+                                                )
+                                            }),
+                                    )
+                                    .child(div().flex_1().truncate().child(name)),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_ranking(ranking.clone(), cx)
+                            }))
+                    })),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .pl_3()
+                    .when_some(self.selected_ranking.as_ref(), |view, ranking| {
+                        view.child(
+                            h_flex()
+                                .h(px(38.))
+                                .items_center()
+                                .justify_between()
+                                .child(div().text_base().font_medium().child(ranking.name.clone()))
+                                .child(
+                                    Button::new("play-ranking")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Play)
+                                        .label("播放全部")
+                                        .tooltip(format!("播放全部，{} 首", tracks.len()))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.play_tracks(
+                                                this.ranking_tracks.clone().into(),
+                                                0,
+                                                cx,
+                                            )
+                                        })),
+                                ),
+                        )
+                    })
+                    .children(self.track_rows(tracks, "ranking", cx))
+                    .when(tracks.is_empty() && !self.busy, |view| {
+                        view.child(
+                            div()
+                                .py_4()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("选择一个榜单查看歌曲。"),
+                        )
+                    }),
+            )
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .gap_3()
-            .child(self.render_channel(cx))
+            .gap_2()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(Input::new(&self.search_input))
-                    .child(
-                        Button::new("search")
-                            .primary()
-                            .label(if self.busy { "搜索中…" } else { "搜索" })
-                            .on_click(cx.listener(|this, _, _, cx| this.search(cx))),
-                    ),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("{} 条结果", self.search_results.len())),
+                h_flex().h(px(36.)).items_center().child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if self.busy {
+                            "正在搜索…".to_owned()
+                        } else {
+                            format!("{} 首歌曲", self.search_results.len())
+                        }),
+                ),
             )
             .children(self.track_rows(&self.search_results, "search", cx))
+            .when(self.search_results.is_empty() && !self.busy, |view| {
+                view.child(
+                    div()
+                        .py_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("输入歌曲名、歌手或专辑进行搜索。"),
+                )
+            })
     }
 
     fn render_favorites(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1090,55 +1384,134 @@ impl Desktop {
             .filter(|saved| &saved.folder == selected)
             .map(|saved| saved.track.clone())
             .collect();
-        v_flex()
-            .gap_3()
+        h_flex()
+            .flex_1()
+            .min_h_0()
+            .items_stretch()
             .child(
-                h_flex()
-                    .gap_2()
+                v_flex()
+                    .w(px(168.))
+                    .flex_shrink_0()
+                    .min_h_0()
+                    .pr_2()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
                     .children(self.folders.iter().cloned().map(|folder| {
                         let active = &folder == selected;
                         Button::new(format!("folder-{folder}"))
+                            .ghost()
+                            .small()
+                            .w_full()
+                            .justify_start()
                             .label(folder.clone())
-                            .when(active, |button| button.outline())
+                            .when(active, |button| {
+                                button.custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(cx.theme().accent)
+                                        .foreground(cx.theme().primary)
+                                        .hover(cx.theme().accent)
+                                        .active(cx.theme().accent),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.favorite_folder = folder.clone();
                                 cx.notify();
                             }))
                     })),
             )
-            .when(!tracks.is_empty(), |view| {
-                view.child(
-                    Button::new("play-folder")
-                        .label("播放此文件夹")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let tracks = this
-                                .settings
-                                .saved_tracks
-                                .iter()
-                                .filter(|saved| saved.folder == this.favorite_folder)
-                                .map(|saved| saved.track.clone())
-                                .collect::<Vec<_>>();
-                            this.play_tracks(tracks.into(), 0, cx);
-                        })),
-                )
-            })
-            .children(self.track_rows(&tracks, "favorite", cx))
             .child(
-                div()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .pt_3()
-                    .child("收藏的平台歌单"),
-            )
-            .children(self.settings.saved_playlists.iter().map(|saved| {
-                let playlist = saved.playlist.clone();
-                Button::new(format!("saved-playlist-{}", playlist.id))
-                    .label(format!("{} · {}", playlist.channel.label(), playlist.name))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_playlist(playlist.clone(), cx)),
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .pl_3()
+                    .child(
+                        h_flex()
+                            .h(px(38.))
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_base().font_medium().child(selected.clone()))
+                            .when(!tracks.is_empty(), |view| {
+                                view.child(
+                                    Button::new("play-folder")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Play)
+                                        .label("播放全部")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            let tracks = this
+                                                .settings
+                                                .saved_tracks
+                                                .iter()
+                                                .filter(|saved| {
+                                                    saved.folder == this.favorite_folder
+                                                })
+                                                .map(|saved| saved.track.clone())
+                                                .collect::<Vec<_>>();
+                                            this.play_tracks(tracks.into(), 0, cx);
+                                        })),
+                                )
+                            }),
                     )
-            }))
-            .children(self.render_playlist_detail(cx))
+                    .children(self.track_rows(&tracks, "favorite", cx))
+                    .child(
+                        div()
+                            .mt_3()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .text_sm()
+                            .font_medium()
+                            .child("收藏的平台歌单"),
+                    )
+                    .children(self.settings.saved_playlists.iter().map(|saved| {
+                        let playlist = saved.playlist.clone();
+                        let artwork = self.artwork.get(&playlist_artwork_key(&playlist)).cloned();
+                        let has_artwork = artwork.is_some();
+                        Button::new(format!("saved-playlist-{}", playlist.id))
+                            .ghost()
+                            .small()
+                            .w_full()
+                            .justify_start()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .size_10()
+                                            .flex_shrink_0()
+                                            .rounded(px(4.))
+                                            .overflow_hidden()
+                                            .bg(cx.theme().secondary)
+                                            .when_some(artwork, |view, path| {
+                                                view.child(
+                                                    img(path.as_ref().clone())
+                                                        .size_full()
+                                                        .object_fit(ObjectFit::Cover),
+                                                )
+                                            })
+                                            .when(!has_artwork, |view| {
+                                                view.items_center().justify_center().child(
+                                                    Icon::new(IconName::Music2)
+                                                        .small()
+                                                        .text_color(cx.theme().muted_foreground),
+                                                )
+                                            }),
+                                    )
+                                    .child(div().flex_1().truncate().child(format!(
+                                        "{} · {}",
+                                        playlist.channel.label(),
+                                        playlist.name
+                                    ))),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_playlist(playlist.clone(), cx)
+                            }))
+                    }))
+                    .children(self.render_playlist_detail(cx)),
+            )
     }
 
     fn render_sources(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1311,23 +1684,85 @@ impl Desktop {
                 });
                 let title = track.title.clone();
                 let artist = track.artist.clone();
+                let album = track.album.clone();
+                let duration = track.duration_ms;
                 let queue = queue.clone();
                 h_flex()
-                    .justify_between()
+                    .h(px(43.))
+                    .items_center()
                     .gap_2()
-                    .py_2()
+                    .px_1()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
+                        div()
+                            .w(px(28.))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{:02}", index + 1)),
+                    )
+                    .child(
                         Button::new(format!("{namespace}-play-{id}"))
-                            .label(format!("{title}  ·  {artist}"))
+                            .ghost()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(40.))
+                            .justify_start()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.play_tracks(queue.clone(), index, cx)
-                            })),
+                            }))
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .min_w_0()
+                                            .gap_1()
+                                            .child(div().truncate().text_sm().child(title))
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(artist),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(160.))
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(album),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(44.))
+                                            .text_right()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(format_time(duration)),
+                                    ),
+                            ),
                     )
                     .child(
                         Button::new(format!("{namespace}-save-{id}"))
-                            .label(if favorite { "已收藏" } else { "收藏" })
+                            .ghost()
+                            .small()
+                            .icon(IconName::Heart)
+                            .tooltip(if favorite { "取消收藏" } else { "收藏" })
+                            .when(favorite, |button| {
+                                button.custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(cx.theme().transparent)
+                                        .foreground(cx.theme().primary)
+                                        .hover(cx.theme().accent)
+                                        .active(cx.theme().accent),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle_track(track.clone(), cx)
                             })),
@@ -1364,20 +1799,30 @@ impl Desktop {
             IconName::VolumeOff
         };
         let mode = self.settings.playback_mode;
+        let favorite = current.is_some_and(|track| {
+            self.settings
+                .saved_tracks
+                .iter()
+                .any(|saved| saved.matches(&self.favorite_folder, track))
+        });
+
+        let audio_controls = cx.entity().downgrade();
+        let current_volume = snapshot.volume;
+        let spatial_audio_enabled = snapshot.spatial;
 
         h_flex()
             .w_full()
-            .h(px(100.))
+            .h(px(66.))
             .items_center()
-            .gap_5()
+            .gap_3()
             .border_t_1()
             .border_color(cx.theme().border.opacity(0.7))
             .bg(cx.theme().background)
-            .px_5()
+            .px_3()
             .child(
                 Button::new("current-track")
                     .ghost()
-                    .w_64()
+                    .w(px(256.))
                     .min_w_0()
                     .justify_start()
                     .gap_3()
@@ -1387,7 +1832,7 @@ impl Desktop {
                         div()
                             .size_12()
                             .flex_shrink_0()
-                            .rounded(px(10.))
+                            .rounded(px(4.))
                             .overflow_hidden()
                             .bg(cx.theme().muted)
                             .when_some(artwork, |view, path| {
@@ -1419,128 +1864,59 @@ impl Desktop {
                             ),
                     ),
             )
+            .child(div().flex_1().min_w_0())
             .child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
+                h_flex()
+                    .w(px(240.))
                     .items_center()
                     .gap_2()
                     .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Button::new("mode")
-                                    .ghost()
-                                    .small()
-                                    .icon(mode_icon(mode))
-                                    .label(mode.label())
-                                    .tooltip(format!("播放方式：{}，点击切换", mode.label()))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.settings.playback_mode =
-                                            this.settings.playback_mode.next();
-                                        this.save(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("previous")
-                                    .ghost()
-                                    .small()
-                                    .icon(IconName::SkipBack)
-                                    .tooltip("上一首")
-                                    .disabled(current.is_none())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.player.update(cx, |player, cx| {
-                                            player.advance(true, false, cx)
-                                        });
-                                    })),
-                            )
-                            .child(
-                                Button::new("toggle-play")
-                                    .primary()
-                                    .large()
-                                    .icon(play_icon)
-                                    .tooltip(if snapshot.playing { "暂停" } else { "播放" })
-                                    .disabled(current.is_none())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.player.update(cx, |player, cx| player.toggle(cx));
-                                    })),
-                            )
-                            .child(
-                                Button::new("next")
-                                    .ghost()
-                                    .small()
-                                    .icon(IconName::SkipForward)
-                                    .tooltip("下一首")
-                                    .disabled(current.is_none())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.player.update(cx, |player, cx| {
-                                            player.advance(false, false, cx)
-                                        });
-                                    })),
-                            ),
+                        div()
+                            .w(px(40.))
+                            .text_right()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format_time(position)),
                     )
                     .child(
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .w_10()
-                                    .text_right()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format_time(position)),
-                            )
-                            .child(
-                                Slider::new(&self.progress)
-                                    .flex_1()
-                                    .accessibility_label("播放进度")
-                                    .disabled(duration == 0),
-                            )
-                            .child(
-                                div()
-                                    .w_10()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format_time(duration)),
-                            ),
+                        Slider::new(&self.progress)
+                            .flex_1()
+                            .accessibility_label("播放进度")
+                            .disabled(duration == 0),
+                    )
+                    .child(
+                        div()
+                            .w(px(40.))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format_time(duration)),
                     ),
             )
             .child(
                 h_flex()
-                    .w_48()
-                    .justify_end()
                     .items_center()
                     .gap_1()
                     .child(
-                        Button::new("spatial")
+                        Button::new("player-favorite")
                             .ghost()
                             .small()
-                            .icon(IconName::AudioWaveform)
-                            .tooltip(if snapshot.spatial {
-                                "空间音效：已开启"
-                            } else {
-                                "空间音效：已关闭"
-                            })
-                            .when(snapshot.spatial, |button| {
+                            .icon(IconName::Heart)
+                            .tooltip(if favorite { "取消收藏" } else { "收藏" })
+                            .disabled(current.is_none())
+                            .when(favorite, |button| {
                                 button.custom(
                                     ButtonCustomVariant::new(cx)
-                                        .color(cx.theme().accent)
-                                        .foreground(cx.theme().accent_foreground)
+                                        .color(cx.theme().transparent)
+                                        .foreground(cx.theme().primary)
                                         .hover(cx.theme().accent)
                                         .active(cx.theme().accent),
                                 )
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings.spatial_audio_enabled =
-                                    !this.settings.spatial_audio_enabled;
-                                let enabled = this.settings.spatial_audio_enabled;
-                                let strength = this.settings.spatial_audio_strength;
-                                this.player
-                                    .update(cx, |player, _| player.set_spatial(enabled, strength));
-                                this.save(cx);
+                                let track = this.player.read(cx).snapshot.current.clone();
+                                if let Some(track) = track {
+                                    this.toggle_track(track, cx);
+                                }
                             })),
                     )
                     .child(
@@ -1554,41 +1930,120 @@ impl Desktop {
                             })),
                     )
                     .child(
-                        Button::new("mute")
+                        Button::new("volume-controls")
                             .ghost()
                             .small()
                             .icon(volume_icon)
-                            .tooltip(if snapshot.volume > 0.0 {
-                                "静音"
-                            } else {
-                                "恢复音量"
-                            })
+                            .tooltip("音量与音效")
+                            .dropdown_menu(move |menu, _, _| {
+                                let mute_target = audio_controls.clone();
+                                let lower_target = audio_controls.clone();
+                                let raise_target = audio_controls.clone();
+                                let spatial_target = audio_controls.clone();
+                                menu.item(
+                                    PopupMenuItem::new(if current_volume > 0.0 {
+                                        "静音"
+                                    } else {
+                                        "恢复音量"
+                                    })
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            let _ = mute_target.update(cx, |this, cx| {
+                                                this.player
+                                                    .update(cx, |player, cx| player.mute(cx));
+                                            });
+                                        },
+                                    ),
+                                )
+                                .item(PopupMenuItem::new("音量降低").on_click(move |_, _, cx| {
+                                    let _ = lower_target.update(cx, |this, cx| {
+                                        this.player.update(cx, |player, cx| {
+                                            player.set_volume(player.snapshot.volume - 0.05, cx)
+                                        });
+                                    });
+                                }))
+                                .item(PopupMenuItem::new("音量提高").on_click(move |_, _, cx| {
+                                    let _ = raise_target.update(cx, |this, cx| {
+                                        this.player.update(cx, |player, cx| {
+                                            player.set_volume(player.snapshot.volume + 0.05, cx)
+                                        });
+                                    });
+                                }))
+                                .item(
+                                    PopupMenuItem::new(if spatial_audio_enabled {
+                                        "关闭空间音效"
+                                    } else {
+                                        "开启空间音效"
+                                    })
+                                    .checked(spatial_audio_enabled)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            let _ = spatial_target.update(cx, |this, cx| {
+                                                this.settings.spatial_audio_enabled =
+                                                    !this.settings.spatial_audio_enabled;
+                                                let enabled = this.settings.spatial_audio_enabled;
+                                                let strength = this.settings.spatial_audio_strength;
+                                                this.player.update(cx, |player, _| {
+                                                    player.set_spatial(enabled, strength)
+                                                });
+                                                this.save(cx);
+                                            });
+                                        },
+                                    ),
+                                )
+                            }),
+                    )
+                    .child(
+                        Button::new("mode")
+                            .ghost()
+                            .small()
+                            .icon(mode_icon(mode))
+                            .tooltip(format!("播放方式：{}，点击切换", mode.label()))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.player.update(cx, |player, cx| player.mute(cx));
+                                this.settings.playback_mode = this.settings.playback_mode.next();
+                                this.save(cx);
                             })),
                     )
                     .child(
-                        Button::new("volume-down")
+                        Button::new("previous")
                             .ghost()
                             .small()
-                            .icon(IconName::Volume1)
-                            .tooltip("音量-")
+                            .icon(IconName::SkipBack)
+                            .tooltip("上一首")
+                            .disabled(current.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.player.update(cx, |player, cx| {
-                                    player.set_volume(player.snapshot.volume - 0.05, cx)
-                                });
+                                this.player
+                                    .update(cx, |player, cx| player.advance(true, false, cx));
                             })),
                     )
                     .child(
-                        Button::new("volume-up")
+                        Button::new("toggle-play")
+                            .ghost()
+                            .large()
+                            .icon(play_icon)
+                            .tooltip(if snapshot.playing { "暂停" } else { "播放" })
+                            .custom(
+                                ButtonCustomVariant::new(cx)
+                                    .color(cx.theme().transparent)
+                                    .foreground(cx.theme().primary)
+                                    .hover(cx.theme().accent)
+                                    .active(cx.theme().accent),
+                            )
+                            .disabled(current.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.player.update(cx, |player, cx| player.toggle(cx));
+                            })),
+                    )
+                    .child(
+                        Button::new("next")
                             .ghost()
                             .small()
-                            .icon(IconName::Volume2)
-                            .tooltip("音量+")
+                            .icon(IconName::SkipForward)
+                            .tooltip("下一首")
+                            .disabled(current.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.player.update(cx, |player, cx| {
-                                    player.set_volume(player.snapshot.volume + 0.05, cx)
-                                });
+                                this.player
+                                    .update(cx, |player, cx| player.advance(false, false, cx));
                             })),
                     ),
             )
@@ -1605,42 +2060,30 @@ impl Desktop {
         };
         v_flex()
             .flex_1()
+            .min_w_0()
             .min_h_0()
-            .gap_4()
-            .px_7()
-            .py_6()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div().text_2xl().font_semibold().child(
-                            Page::ALL
-                                .iter()
-                                .find(|(page, _)| *page == self.page)
-                                .map(|(_, name)| *name)
-                                .unwrap_or("WCMusic"),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(self.page.description()),
-                    )
-                    .when_some(self.status.as_ref(), |this, status| {
-                        this.child(
-                            div()
-                                .mt_2()
-                                .text_xs()
-                                .text_color(cx.theme().danger)
-                                .child(status.clone()),
-                        )
-                    }),
-            )
+            .when_some(self.status.as_ref(), |view, status| {
+                view.child(
+                    div()
+                        .px_4()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(status.clone()),
+                )
+            })
             .child(
                 v_flex()
                     .flex_1()
+                    .min_w_0()
                     .min_h_0()
+                    .px(px(14.))
+                    .pt(if self.page == Page::Home {
+                        px(24.)
+                    } else {
+                        px(10.)
+                    })
+                    .pb(px(10.))
                     .overflow_y_scrollbar()
                     .child(page),
             )
@@ -1653,42 +2096,67 @@ impl Render for Desktop {
         for &(page, label) in &Page::NAV {
             page_buttons.push(self.page_button(page, label, cx).into_any_element());
         }
-        let now_playing = self.player.read(cx).snapshot.current.is_some();
-        let now_playing_button = Button::new("now-playing")
-            .icon(Page::NowPlaying.icon())
-            .label("正在播放")
-            .small()
-            .w_full()
-            .justify_start()
-            .disabled(!now_playing)
-            .custom(
-                ButtonCustomVariant::new(cx)
-                    .color(if self.page == Page::NowPlaying {
-                        cx.theme().accent
-                    } else {
-                        cx.theme().transparent
-                    })
-                    .foreground(if self.page == Page::NowPlaying {
-                        cx.theme().accent_foreground
-                    } else {
-                        cx.theme().muted_foreground
-                    })
-                    .hover(cx.theme().accent)
-                    .active(cx.theme().accent),
-            )
-            .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::NowPlaying, cx)));
 
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
-                TitleBar::new().bg(cx.theme().background).px_5().child(
-                    div()
-                        .text_xs()
-                        .font_medium()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("WCMusic"),
+                TitleBar::new().bg(cx.theme().background).px_0().child(
+                    h_flex()
+                        .w_full()
+                        .h_full()
+                        .items_center()
+                        .child(
+                            div()
+                                .w(px(72.))
+                                .h_full()
+                                .items_center()
+                                .justify_center()
+                                .bg(cx.theme().sidebar)
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_semibold()
+                                        .text_color(cx.theme().primary)
+                                        .child("W C"),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .items_center()
+                                .justify_between()
+                                .gap_3()
+                                .px_3()
+                                .child(
+                                    h_flex()
+                                        .w(px(340.))
+                                        .h(px(28.))
+                                        .items_center()
+                                        .gap_1()
+                                        .rounded(px(4.))
+                                        .bg(cx.theme().input)
+                                        .px_1()
+                                        .child(Input::new(&self.search_input).flex_1())
+                                        .child(
+                                            Button::new("search")
+                                                .ghost()
+                                                .small()
+                                                .icon(IconName::Search)
+                                                .tooltip(if self.busy {
+                                                    "正在搜索"
+                                                } else {
+                                                    "搜索"
+                                                })
+                                                .on_click(
+                                                    cx.listener(|this, _, _, cx| this.search(cx)),
+                                                ),
+                                        ),
+                                ),
+                        ),
                 ),
             )
             .child(
@@ -1696,74 +2164,17 @@ impl Render for Desktop {
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    .gap_2()
-                    .pr_3()
-                    .pb_3()
                     .child(
                         v_flex()
-                            .w(px(184.))
+                            .w(px(72.))
                             .h_full()
-                            .gap_1()
-                            .px_3()
-                            .pt_4()
-                            .pb_2()
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .mb_5()
-                                    .child(
-                                        div()
-                                            .size_8()
-                                            .rounded(px(10.))
-                                            .bg(cx.theme().primary)
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                Icon::new(IconName::Music)
-                                                    .small()
-                                                    .text_color(cx.theme().primary_foreground),
-                                            ),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div().text_base().font_semibold().child("WCMusic"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child("随时听见喜欢"),
-                                            ),
-                                    ),
-                            )
+                            .items_center()
+                            .bg(cx.theme().sidebar)
+                            .child(div().w_full().h(px(4.)))
                             .children(page_buttons)
-                            .child(div().flex_1())
-                            .child(now_playing_button)
-                            .child(
-                                div()
-                                    .mt_3()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .px_2()
-                                    .child(format!("版本 {VERSION}")),
-                            ),
+                            .child(div().flex_1().min_h_0()),
                     )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .rounded(px(20.))
-                            .border_1()
-                            .border_color(cx.theme().border.opacity(0.6))
-                            .bg(cx.theme().popover)
-                            .overflow_hidden()
-                            .child(self.render_content(cx)),
-                    ),
+                    .child(self.render_content(cx)),
             )
             .child(self.render_player_bar(cx))
     }
@@ -1781,6 +2192,24 @@ fn mode_icon(mode: PlaybackMode) -> IconName {
 fn format_time(milliseconds: u64) -> String {
     let total_seconds = milliseconds / 1000;
     format!("{}:{:02}", total_seconds / 60, total_seconds % 60)
+}
+
+fn format_count(count: u64) -> String {
+    if count >= 100_000_000 {
+        format!("{:.1}亿", count as f64 / 100_000_000.0)
+    } else if count >= 10_000 {
+        format!("{:.1}万", count as f64 / 10_000.0)
+    } else {
+        format!("{count}次播放")
+    }
+}
+
+fn playlist_artwork_key(playlist: &PlatformPlaylist) -> String {
+    format!("playlist-{:?}-{}", playlist.channel, playlist.id)
+}
+
+fn ranking_artwork_key(ranking: &PlatformRanking) -> String {
+    format!("ranking-{:?}-{}", ranking.channel, ranking.id)
 }
 
 fn snapshot_mode(mode: PlaybackMode) -> &'static str {
